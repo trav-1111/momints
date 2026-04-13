@@ -23,7 +23,8 @@
       "permissions": [
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
-        "WRITE_EXTERNAL_STORAGE"
+        "WRITE_EXTERNAL_STORAGE",
+        "android.permission.CAMERA"
       ]
     },
     "ios": {
@@ -40,6 +41,12 @@
           "cameraPermissionText": "Momints needs camera access to capture photos for minting as NFTs"
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "b3603ed4-6ea4-4b24-957c-4c048d7158f6"
+      }
+    },
+    "owner": "trav_1111"
   }
 }
