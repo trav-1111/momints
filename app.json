@@ -1,0 +1,45 @@
+{
+  "expo": {
+    "scheme": "momints",
+    "userInterfaceStyle": "dark",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#0a0f1a"
+    },
+    "web": {
+      "output": "static"
+    },
+    "name": "Momints",
+    "slug": "momints",
+    "android": {
+      "package": "com.momints.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0f1a"
+      },
+      "permissions": [
+        "CAMERA",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "com.momints.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Momints needs camera access to capture photos for minting as NFTs",
+        "NSPhotoLibraryUsageDescription": "Momints needs photo library access to save photos"
+      }
+    },
+    "plugins": [
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "Momints needs camera access to capture photos for minting as NFTs"
+        }
+      ]
+    ]
+  }
+}

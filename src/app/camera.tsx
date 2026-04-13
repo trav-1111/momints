@@ -1,0 +1,307 @@
+import { useState, useRef, useCallback, useEffect } from 'react'
+import {
+  View,
+  Text,
+  Pressable,
+  StyleSheet,
+  Alert,
+  Linking,
+  Animated,
+  GestureResponderEvent,
+} from 'react-native'
+import { useRouter } from 'expo-router'
+import { useMobileWallet } from '@wallet-ui/react-native-kit'
+import {
+  Camera,
+  useCameraDevice,
+  useCameraPermission,
+  PhotoFile,
+} from 'react-native-vision-camera'
+import {
+  Gesture,
+  GestureDetector,
+  GestureUpdateEvent,
+  PinchGestureHandlerEventPayload,
+} from 'react-native-gesture-handler'
+import { Paths, File, Directory } from 'expo-file-system'
+import { usePhotoStore } from '../store/photos'
+import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
+
+export default function CameraScreen() {
+  const router = useRouter()
+  const { account, connect } = useMobileWallet()
+  const { hasPermission, requestPermission } = useCameraPermission()
+  const cameraRef = useRef<Camera>(null)
+
+  const [flash, setFlash] = useState<'off' | 'on'>('off')
+  const [isCapturing, setIsCapturing] = useState(false)
+  const [cameraPosition, setCameraPosition] = useState<'back' | 'front'>('back')
+  const [zoom, setZoom] = useState(1)
+  const baseZoomRef = useRef(1)
+  const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null)
+  const focusOpacity = useRef(new Animated.Value(0)).current
+
+  const photos = usePhotoStore((state) => state.photos)
+  const addPhoto = usePhotoStore((state) => state.addPhoto)
+
+  const walletAddress = account?.address?.toString() ?? null
+  const { domain } = useWalletDomain(walletAddress)
+
+  const frontDevice = useCameraDevice('front')
+  const backDevice = useCameraDevice('back')
+  const activeDevice = cameraPosition === 'front' ? frontDevice : backDevice
+
+  const supportsFlash = activeDevice?.hasFlash && cameraPosition === 'back'
+  const minZoom = activeDevice?.minZoom ?? 1
+  const maxZoom = Math.min(activeDevice?.maxZoom ?? 5, 10)
+
+  useEffect(() => {
+    if (!hasPermission) {
+      requestPermission()
+    }
+  }, [hasPermission, requestPermission])
+
+  useEffect(() => {
+    setZoom(1)
+    baseZoomRef.current = 1
+  }, [cameraPosition])
+
+  const handleCapture = useCallback(async () => {
+    if (!cameraRef.current || isCapturing) return
+
+    setIsCapturing(true)
+    try {
+      const photo: PhotoFile = await cameraRef.current.takePhoto({
+        flash: supportsFlash ? flash : 'off',
+        enableShutterSound: true,
+      })
+
+      const photosDir = new Directory(Paths.document, 'photos')
+      if (!photosDir.exists) {
+        photosDir.create()
+      }
+
+      const fileName = `photo_${Date.now()}.jpg`
+      const sourceFile = new File(`file://${photo.path}`)
+      const destFile = new File(photosDir, fileName)
+
+      sourceFile.move(destFile)
+
+      addPhoto(destFile.uri)
+    } catch (error) {
+      console.error('Failed to capture photo:', error)
+      Alert.alert('Error', 'Failed to capture photo. Please try again.')
+    } finally {
+      setIsCapturing(false)
+    }
+  }, [flash, isCapturing, addPhoto, supportsFlash])
+
+  const toggleFlash = useCallback(() => {
+    if (!supportsFlash) return
+    setFlash((prev) => (prev === 'off' ? 'on' : 'off'))
+  }, [supportsFlash])
+
+  const toggleCamera = useCallback(() => {
+    setCameraPosition((prev) => (prev === 'back' ? 'front' : 'back'))
+    if (flash === 'on') {
+      setFlash('off')
+    }
+  }, [flash])
+
+  const handleFocus = useCallback(
+    async (event: GestureResponderEvent) => {
+      if (!cameraRef.current || !activeDevice?.supportsFocus) return
+
+      const { locationX, locationY } = event.nativeEvent
+
+      setFocusPoint({ x: locationX, y: locationY })
+
+      focusOpacity.setValue(1)
+      Animated.sequence([
+        Animated.delay(500),
+        Animated.timing(focusOpacity, {
+          toValue: 0,
+          duration: 300,
+          useNativeDriver: true,
+        }),
+      ]).start(() => setFocusPoint(null))
+
+      try {
+        await cameraRef.current.focus({ x: locationX, y: locationY })
+      } catch (error) {
+        console.log('Focus not supported or failed:', error)
+      }
+    },
+    [activeDevice, focusOpacity]
+  )
+
+  const pinchGesture = Gesture.Pinch()
+    .onStart(() => {
+      baseZoomRef.current = zoom
+    })
+    .onUpdate((event: GestureUpdateEvent<PinchGestureHandlerEventPayload>) => {
+      const newZoom = Math.min(Math.max(baseZoomRef.current * event.scale, minZoom), maxZoom)
+      setZoom(newZoom)
+    })
+    .runOnJS(true)
+
+  const handleReview = useCallback(() => {
+    if (photos.length === 0) {
+      Alert.alert('No Photos', 'Take some photos first before reviewing.')
+      return
+    }
+    router.push('/review')
+  }, [photos.length, router])
+
+  const handleConnectWallet = useCallback(async () => {
+    try {
+      await connect()
+    } catch (error) {
+      console.error('Failed to connect wallet:', error)
+    }
+  }, [connect])
+
+  if (!hasPermission) {
+    return (
+      <View className="flex-1 bg-black items-center justify-center px-8">
+        <Text className="text-white text-xl text-center mb-4">
+          Camera permission is required
+        </Text>
+        <Pressable
+          onPress={() => Linking.openSettings()}
+          className="bg-purple-600 px-6 py-3 rounded-xl"
+        >
+          <Text className="text-white font-bold">Open Settings</Text>
+        </Pressable>
+      </View>
+    )
+  }
+
+  if (!activeDevice) {
+    return (
+      <View className="flex-1 bg-black items-center justify-center">
+        <Text className="text-white text-xl">No camera device found</Text>
+      </View>
+    )
+  }
+
+  return (
+    <View className="flex-1 bg-black">
+      <GestureDetector gesture={pinchGesture}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={handleFocus}>
+          <Camera
+            ref={cameraRef}
+            style={StyleSheet.absoluteFill}
+            device={activeDevice}
+            isActive={true}
+            photo={true}
+            zoom={zoom}
+          />
+
+          {/* Focus Indicator */}
+          {focusPoint && (
+            <Animated.View
+              style={{
+                position: 'absolute',
+                left: focusPoint.x - 40,
+                top: focusPoint.y - 40,
+                width: 80,
+                height: 80,
+                borderWidth: 2,
+                borderColor: '#FFD700',
+                borderRadius: 8,
+                opacity: focusOpacity,
+              }}
+            />
+          )}
+        </Pressable>
+      </GestureDetector>
+
+      {/* Zoom Indicator */}
+      {zoom > 1.1 && (
+        <View className="absolute top-1/2 right-4 bg-black/60 px-3 py-1 rounded-full">
+          <Text className="text-white text-sm font-bold">{zoom.toFixed(1)}x</Text>
+        </View>
+      )}
+
+      {/* Top Controls */}
+      <View className="absolute top-12 left-0 right-0 flex-row justify-between items-center px-6">
+        {/* Flash Toggle */}
+        <Pressable
+          onPress={toggleFlash}
+          disabled={!supportsFlash}
+          className={`w-12 h-12 rounded-full items-center justify-center ${
+            supportsFlash ? 'bg-black/50' : 'bg-black/30'
+          }`}
+          style={{ opacity: supportsFlash ? 1 : 0.4 }}
+        >
+          {supportsFlash ? (
+            <Text className="text-xl">{flash === 'on' ? '⚡' : '✕'}</Text>
+          ) : (
+            <Text className="text-gray-500 text-xl">⚡</Text>
+          )}
+        </Pressable>
+
+        {/* Wallet Status */}
+        {account && walletAddress ? (
+          <View className="bg-green-600/80 px-4 py-2 rounded-full">
+            <Text className="text-white text-sm font-medium">
+              {formatWalletDisplay(walletAddress, domain)}
+            </Text>
+          </View>
+        ) : (
+          <Pressable
+            onPress={handleConnectWallet}
+            className="bg-purple-600 px-4 py-2 rounded-full"
+          >
+            <Text className="text-white text-sm font-bold">Connect Wallet</Text>
+          </Pressable>
+        )}
+
+        {/* Camera Flip */}
+        <Pressable
+          onPress={toggleCamera}
+          className="w-12 h-12 bg-black/50 rounded-full items-center justify-center"
+        >
+          <Text className="text-white text-xl">🔄</Text>
+        </Pressable>
+      </View>
+
+      {/* Bottom Controls */}
+      <View className="absolute bottom-12 left-0 right-0 flex-row justify-center items-center gap-8">
+        {/* Gallery/Review Button */}
+        <Pressable
+          onPress={handleReview}
+          className="w-16 h-16 bg-white/20 rounded-2xl items-center justify-center"
+        >
+          {photos.length > 0 && (
+            <View className="absolute -top-2 -right-2 bg-purple-600 w-6 h-6 rounded-full items-center justify-center">
+              <Text className="text-white text-xs font-bold">{photos.length}</Text>
+            </View>
+          )}
+          <Text className="text-white text-2xl">🖼️</Text>
+        </Pressable>
+
+        {/* Capture Button */}
+        <Pressable
+          onPress={handleCapture}
+          disabled={isCapturing}
+          className="w-20 h-20 bg-white rounded-full items-center justify-center border-4 border-purple-600"
+          style={{ opacity: isCapturing ? 0.5 : 1 }}
+        >
+          <View className="w-16 h-16 bg-white rounded-full" />
+        </Pressable>
+
+        {/* Mint Button */}
+        <Pressable
+          onPress={handleReview}
+          disabled={photos.length === 0}
+          className="w-16 h-16 bg-purple-600 rounded-2xl items-center justify-center"
+          style={{ opacity: photos.length === 0 ? 0.5 : 1 }}
+        >
+          <Text className="text-white text-sm font-bold">MINT</Text>
+        </Pressable>
+      </View>
+    </View>
+  )
+}
