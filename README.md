@@ -2,105 +2,128 @@
 
 **Capture. Mint. Own.**
 
-Momints is a mobile-first NFT camera app for the Solana Seeker phone. Take photos, edit them, and mint them directly as NFTs on the Solana blockchain.
+Momints is a mobile NFT camera app built for the Solana Seeker. Take photos, add metadata, and mint them as NFTs directly on Solana mainnet — all from your phone.
 
 ## Features
 
-- **Camera Integration**: Full-screen camera with flash toggle and camera flip
-- **Photo Sandbox**: Photos are stored in-app only, not in your device gallery
-- **Simple Editing**: Rotate photos before minting
-- **NFT Minting**: Mint photos as Metaplex NFTs with custom metadata
-- **IPFS Storage**: Images and metadata stored on IPFS via Pinata
-- **Wallet Integration**: Connect with any Solana mobile wallet
+- Full-screen camera with flash, tap-to-focus, pinch-to-zoom, and front/back toggle
+- Photo sandbox — images stay in-app, never saved to your device gallery unless you choose to
+- Rotation editor with fine-grained slider and 90-degree steps
+- NFT minting with custom title, artist, description, and EXIF-like properties (device, capture date)
+- IPFS storage via Pinata (image + metadata JSON)
+- Wallet connection through Mobile Wallet Adapter (Phantom, Solflare, Seeker built-in, etc.)
+- `.skr` domain resolution — wallet header shows your Solana domain if you have one
 
-## User Flow
-
-1. **Connect Wallet** - Link your Solana wallet
-2. **Take Photos** - Capture images with the in-app camera
-3. **Review & Edit** - View your photos, rotate as needed
-4. **Mark Actions** - Choose to Delete, Save, or Mint each photo
-5. **Add Metadata** - Enter title and artist name for each NFT
-6. **Mint** - Upload to IPFS and mint on Solana mainnet
-7. **Verify** - Check your NFTs on Solscan
-
-## Tech Stack
-
-- **Framework**: Expo + React Native
-- **Camera**: react-native-vision-camera
-- **Styling**: Tailwind CSS (Uniwind)
-- **State**: Zustand
-- **Blockchain**: Solana (mainnet)
-- **NFT Standard**: Metaplex Token Metadata
-- **Storage**: IPFS (Pinata)
-- **Wallet**: Mobile Wallet Adapter
-
-## Setup
+## Getting Started
 
 ### Prerequisites
 
-- Node.js 18+
-- Android Studio (for Android development)
-- Solana mobile wallet (Phantom, Solflare, etc.)
+- **Node.js 18+** (tested on 22.x)
+- **Android Studio** with Android SDK installed — needed for `expo run:android`
+- **A Solana Seeker** (or any Android device with a Solana wallet installed)
+- **USB debugging enabled** on the device
 
-### Installation
+### Clone and install
 
 ```bash
-# Install dependencies
+git clone https://github.com/YOUR_USERNAME/momints.git
+cd momints
 npm install
-
-# Create environment file
-cp .env.example .env
 ```
 
-### Environment Variables
+### Environment variables
 
-Edit `.env` with your configuration:
-
-```env
-# Pinata IPFS (get from https://app.pinata.cloud)
-EXPO_PUBLIC_PINATA_JWT=your_jwt_here
-EXPO_PUBLIC_PINATA_GATEWAY=gateway.pinata.cloud
-
-# Solana RPC (use dedicated RPC for production)
-EXPO_PUBLIC_SOLANA_RPC=https://api.mainnet-beta.solana.com
-```
-
-### Development
+The app needs a `.env` file with Pinata and Solana RPC credentials. **Ask the project owner for the `.env` file** and place it in the project root. A template is provided for reference:
 
 ```bash
-# Start development server
-npm run dev
+cp .env.example .env
+# Then paste the real values you received
+```
 
-# Build for Android
+The keys are free-tier (Pinata and Helius) with limited usage, so please don't abuse them.
+
+### Build and run on your Seeker
+
+Connect your device via USB, make sure it shows up in `adb devices`, then:
+
+```bash
 npm run android
 ```
+
+This runs `expo run:android`, which prebuilds the native project and installs the app directly onto your device via ADB. The first build takes several minutes; subsequent runs are faster.
+
+> **Note:** The EAS cloud build (`eas build --profile preview`) is configured but untested. For now, use `npm run android` with a local Android SDK.
+
+### Development server
+
+If you already have the app installed and just want to iterate on JS changes:
+
+```bash
+npm run dev
+```
+
+This starts the Expo dev server with cache clearing. The app on your device will connect and hot-reload.
+
+## Using the App
+
+1. **Connect wallet** — tap the wallet icon on the camera screen
+2. **Take photos** — use the shutter button; swipe through the review flow to keep, delete, or mark photos for minting
+3. **Mint** — select a photo, fill in the metadata form (title, artist), and confirm the transaction in your wallet
+4. **Verify** — the app shows a Solscan link after minting; your NFT also appears in your wallet's collectibles
+
+Each mint costs approximately **~0.01 SOL** (rent + transaction fees).
 
 ## Project Structure
 
 ```
 src/
 ├── app/                    # Expo Router screens
-│   ├── _layout.tsx        # Root layout with wallet provider
-│   ├── index.tsx          # Splash screen
-│   ├── camera.tsx         # Camera capture
-│   ├── gallery.tsx        # Photo review grid
-│   ├── editor/[id].tsx    # Photo editor
+│   ├── _layout.tsx         # Root layout with wallet provider
+│   ├── index.tsx           # Splash / connect screen
+│   ├── camera.tsx          # Camera capture
+│   ├── gallery.tsx         # Photo grid
+│   ├── review.tsx          # Post-capture review flow
 │   └── mint/
-│       ├── _layout.tsx    # Mint flow layout
-│       ├── form/[id].tsx  # Metadata form
-│       └── progress.tsx   # Minting progress
-├── components/            # Reusable UI components
-├── hooks/                 # Custom React hooks
-├── services/              # IPFS and minting services
-└── store/                 # Zustand state stores
+│       ├── form/[id].tsx   # Metadata form
+│       └── progress.tsx    # Minting progress
+├── components/             # Reusable UI components
+├── hooks/                  # useMint, useWalletDomain
+├── services/               # IPFS upload, on-chain minting
+└── store/                  # Zustand state (photos, mint queue)
 ```
 
-## Minting Costs
+## Tech Stack
 
-Each NFT mint costs approximately **~0.01 SOL**, which includes:
-- IPFS upload (via Pinata)
-- On-chain NFT creation
-- Transaction fees
+| Layer | Technology |
+|-------|-----------|
+| Framework | Expo 54 + React Native |
+| Camera | react-native-vision-camera |
+| Styling | Tailwind CSS (Uniwind) |
+| State | Zustand |
+| Blockchain | Solana mainnet |
+| NFT | Metaplex Token Metadata |
+| Storage | IPFS via Pinata SDK |
+| Wallet | Mobile Wallet Adapter (`@wallet-ui/react-native-kit`) |
+| RPC | Helius (configurable via `.env`) |
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run android` | Build and install on connected Android device |
+| `npm run dev` | Start Expo dev server (hot reload) |
+| `npm run lint` | Lint and auto-fix |
+| `npm run fmt` | Format with Prettier |
+| `npm run ci` | TypeScript + lint + format check + Android prebuild |
+| `npm run check:pinata-env` | Validate `.env` Pinata config shape |
+| `npm run test:pinata-auth` | Test Pinata JWT authentication |
+
+## Known Limitations
+
+- **Free-tier keys** — Pinata and Helius keys have rate limits. Don't spam mints.
+- **No priority fees** — Mint transactions don't include compute budget instructions yet, so they may fail during high network congestion.
+- **Client-side secrets** — API keys are bundled into the app via `EXPO_PUBLIC_*`. Acceptable for testing, not for production.
+- **IPFS gateway** — NFT images use `ipfs://` URIs which wallets resolve natively. Some block explorers (Solscan) may not render them inline.
 
 ## License
 
