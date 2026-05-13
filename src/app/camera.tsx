@@ -8,6 +8,7 @@ import {
   Linking,
   Animated,
   GestureResponderEvent,
+  Modal,
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
@@ -26,10 +27,11 @@ import {
 import { Paths, File, Directory } from 'expo-file-system'
 import { usePhotoStore } from '../store/photos'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
+import { useNetworkStore } from '../store/network'
 
 export default function CameraScreen() {
   const router = useRouter()
-  const { account, connect } = useMobileWallet()
+  const { account, connect, disconnect } = useMobileWallet()
   const { hasPermission, requestPermission } = useCameraPermission()
   const cameraRef = useRef<Camera>(null)
 
@@ -40,12 +42,16 @@ export default function CameraScreen() {
   const baseZoomRef = useRef(1)
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null)
   const focusOpacity = useRef(new Animated.Value(0)).current
+  const [walletMenuVisible, setWalletMenuVisible] = useState(false)
 
   const photos = usePhotoStore((state) => state.photos)
   const addPhoto = usePhotoStore((state) => state.addPhoto)
 
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
+
+  const cluster = useNetworkStore((s) => s.cluster)
+  const setCluster = useNetworkStore((s) => s.setCluster)
 
   const frontDevice = useCameraDevice('front')
   const backDevice = useCameraDevice('back')
@@ -161,6 +167,28 @@ export default function CameraScreen() {
     }
   }, [connect])
 
+  const handleDisconnect = useCallback(async () => {
+    setWalletMenuVisible(false)
+    try {
+      await disconnect()
+    } catch (error) {
+      console.error('Failed to disconnect wallet:', error)
+    }
+  }, [disconnect])
+
+  const handleToggleNetwork = useCallback(async () => {
+    setWalletMenuVisible(false)
+    const next = cluster === 'mainnet' ? 'devnet' : 'mainnet'
+    if (account) {
+      try {
+        await disconnect()
+      } catch {
+        // continue regardless
+      }
+    }
+    setCluster(next)
+  }, [cluster, account, disconnect, setCluster])
+
   if (!hasPermission) {
     return (
       <View className="flex-1 bg-black items-center justify-center px-8">
@@ -242,13 +270,19 @@ export default function CameraScreen() {
           )}
         </Pressable>
 
-        {/* Wallet Status */}
+        {/* Wallet Status — tappable when connected */}
         {account && walletAddress ? (
-          <View className="bg-green-600/80 px-4 py-2 rounded-full">
+          <Pressable
+            onPress={() => setWalletMenuVisible(true)}
+            className="bg-green-600/80 px-4 py-2 rounded-full flex-row items-center gap-2"
+          >
+            {cluster === 'devnet' && (
+              <View className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
+            )}
             <Text className="text-white text-sm font-medium">
               {formatWalletDisplay(walletAddress, domain)}
             </Text>
-          </View>
+          </Pressable>
         ) : (
           <Pressable
             onPress={handleConnectWallet}
@@ -302,6 +336,60 @@ export default function CameraScreen() {
           <Text className="text-white text-sm font-bold">MINT</Text>
         </Pressable>
       </View>
+
+      {/* Wallet Menu Modal */}
+      <Modal
+        visible={walletMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setWalletMenuVisible(false)}
+      >
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          className="bg-black/70"
+          onPress={() => setWalletMenuVisible(false)}
+        />
+        <View
+          style={{ position: 'absolute', top: '30%', left: 24, right: 24 }}
+          className="bg-gray-900 rounded-2xl overflow-hidden border border-gray-700"
+        >
+          {/* Wallet Address */}
+          <View className="px-5 py-4 border-b border-gray-700">
+            <Text className="text-gray-400 text-xs mb-1">Connected Wallet</Text>
+            <Text className="text-white text-sm font-mono" numberOfLines={1}>
+              {walletAddress}
+            </Text>
+          </View>
+
+          {/* Network Toggle */}
+          <Pressable
+            onPress={handleToggleNetwork}
+            className="flex-row items-center justify-between px-5 py-4 border-b border-gray-700"
+          >
+            <View className="flex-row items-center gap-3">
+              <View
+                className={`w-2.5 h-2.5 rounded-full ${cluster === 'devnet' ? 'bg-yellow-400' : 'bg-green-400'}`}
+              />
+              <Text className="text-white font-medium">
+                {cluster === 'devnet' ? 'Devnet' : 'Mainnet'}
+              </Text>
+            </View>
+            <Text className="text-purple-400 text-sm">
+              Switch to {cluster === 'devnet' ? 'Mainnet' : 'Devnet'}
+            </Text>
+          </Pressable>
+
+          {/* Disconnect */}
+          <Pressable onPress={handleDisconnect} className="px-5 py-4 border-b border-gray-700">
+            <Text className="text-red-400 font-medium text-center">Disconnect Wallet</Text>
+          </Pressable>
+
+          {/* Close */}
+          <Pressable onPress={() => setWalletMenuVisible(false)} className="px-5 py-4">
+            <Text className="text-gray-400 text-center">Cancel</Text>
+          </Pressable>
+        </View>
+      </Modal>
     </View>
   )
 }

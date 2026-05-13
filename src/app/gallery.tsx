@@ -249,9 +249,14 @@ export default function GalleryScreen() {
             </Text>
           </Pressable>
         ) : (
-          <Pressable onPress={() => setSelectMode(true)} className="p-2">
-            <Text className="text-purple-400 font-medium">Select</Text>
-          </Pressable>
+          <View className="flex-row items-center gap-1">
+            <Pressable onPress={() => router.push('/past-mints')} className="p-2">
+              <Text className="text-gray-400 text-sm">History</Text>
+            </Pressable>
+            <Pressable onPress={() => setSelectMode(true)} className="p-2">
+              <Text className="text-purple-400 font-medium">Select</Text>
+            </Pressable>
+          </View>
         )}
       </View>
 

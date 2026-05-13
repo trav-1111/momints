@@ -26,6 +26,7 @@ export default function MintProgressScreen() {
   const queue = useMintQueue((state) => state.queue)
   const clearQueue = useMintQueue((state) => state.clearQueue)
   const removeFromQueue = useMintQueue((state) => state.removeFromQueue)
+  const addToHistory = useMintQueue((state) => state.addToHistory)
 
   const [progress, setProgress] = useState<MintProgress[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
@@ -79,6 +80,18 @@ export default function MintProgressScreen() {
       }
 
       updateProgress(photo.id, { status: 'success', txSignature: result.signature })
+
+      if (result.signature) {
+        addToHistory({
+          id: photo.id,
+          photoUri: photo.uri,
+          title: queueItem.title,
+          artist: queueItem.artist,
+          txSignature: result.signature,
+          mintAddress: result.mintAddress,
+          mintedAt: Date.now(),
+        })
+      }
 
       setAction(photo.id, 'mint')
       removeFromQueue(photo.id)

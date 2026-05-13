@@ -7,6 +7,7 @@ import {
   percentAmount,
   publicKey,
   signTransaction as umiSignTransaction,
+  transactionBuilder,
 } from '@metaplex-foundation/umi'
 import { toWeb3JsTransaction } from '@metaplex-foundation/umi-web3js-adapters'
 import { sendTransactionWithoutConfirmingFactory } from '@solana/kit'
@@ -20,7 +21,49 @@ import {
 } from '@solana/transactions'
 import type { Client } from '@wallet-ui/react-native-kit'
 
-const SOLANA_RPC = process.env.EXPO_PUBLIC_SOLANA_RPC || 'https://api.mainnet-beta.solana.com'
+const COMPUTE_BUDGET_PROGRAM_ID = publicKey('ComputeBudget111111111111111111111111111111')
+const DEFAULT_COMPUTE_UNIT_LIMIT = 300_000
+const DEFAULT_COMPUTE_UNIT_PRICE = 100 // micro-lamports
+
+function encodeSetComputeUnitLimit(units: number): Uint8Array {
+  const data = new Uint8Array(5)
+  data[0] = 2
+  const view = new DataView(data.buffer)
+  view.setUint32(1, units, true)
+  return data
+}
+
+function encodeSetComputeUnitPrice(microLamports: number): Uint8Array {
+  const data = new Uint8Array(9)
+  data[0] = 3
+  // Write u64 as two u32s (little-endian) — avoids BigInt for RN compatibility
+  const view = new DataView(data.buffer)
+  view.setUint32(1, microLamports >>> 0, true)
+  view.setUint32(5, Math.floor(microLamports / 0x100000000), true)
+  return data
+}
+
+function computeBudgetItems() {
+  const limitItem = {
+    instruction: {
+      programId: COMPUTE_BUDGET_PROGRAM_ID,
+      keys: [] as never[],
+      data: encodeSetComputeUnitLimit(DEFAULT_COMPUTE_UNIT_LIMIT),
+    },
+    signers: [] as never[],
+    bytesCreatedOnChain: 0,
+  }
+  const priceItem = {
+    instruction: {
+      programId: COMPUTE_BUDGET_PROGRAM_ID,
+      keys: [] as never[],
+      data: encodeSetComputeUnitPrice(DEFAULT_COMPUTE_UNIT_PRICE),
+    },
+    signers: [] as never[],
+    bytesCreatedOnChain: 0,
+  }
+  return [limitItem, priceItem]
+}
 
 export type MintPhaseCallback = (phase: 'signing' | 'confirming') => void
 
@@ -29,6 +72,8 @@ export interface MintNFTParams {
   name: string
   symbol: string
   walletAddress: string
+  rpc?: string
+  cluster?: 'mainnet' | 'devnet'
   onPhase?: MintPhaseCallback
 }
 
@@ -72,7 +117,8 @@ async function waitUntilSignatureConfirmed(rpc: Client['rpc'], signature: Signat
   throw new Error('Transaction confirmation timed out')
 }
 
-export function resolveSolanaCluster(): 'devnet' | 'mainnet' {
+export function resolveSolanaCluster(runtimeCluster?: 'mainnet' | 'devnet'): 'devnet' | 'mainnet' {
+  if (runtimeCluster) return runtimeCluster
   const env = process.env.EXPO_PUBLIC_SOLANA_CLUSTER?.toLowerCase()
   if (env === 'devnet') return 'devnet'
   const rpc = (process.env.EXPO_PUBLIC_SOLANA_RPC ?? '').toLowerCase()
@@ -81,10 +127,12 @@ export function resolveSolanaCluster(): 'devnet' | 'mainnet' {
 }
 
 export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise<MintResult> {
-  const { metadataUri, name, symbol, walletAddress, onPhase } = params
+  const { metadataUri, name, symbol, walletAddress, onPhase, rpc: rpcOverride, cluster } = params
   const { client, signTransaction } = deps
 
-  const umi = createUmi(SOLANA_RPC).use(mplTokenMetadata())
+  const rpcUrl = rpcOverride ?? process.env.EXPO_PUBLIC_SOLANA_RPC ?? 'https://api.mainnet-beta.solana.com'
+
+  const umi = createUmi(rpcUrl).use(mplTokenMetadata())
   const walletPk = publicKey(walletAddress)
   const noopWallet = createNoopSigner(walletPk)
   umi.payer = noopWallet
@@ -92,15 +140,22 @@ export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise
 
   const mintSigner = generateSigner(umi)
 
-  const built = await createNft(umi, {
-    mint: mintSigner,
-    name,
-    symbol,
-    uri: metadataUri,
-    sellerFeeBasisPoints: percentAmount(0),
-    creators: none(),
-    tokenOwner: walletPk,
-  }).buildWithLatestBlockhash(umi)
+  const [limitItem, priceItem] = computeBudgetItems()
+  const built = await transactionBuilder()
+    .add(limitItem)
+    .add(priceItem)
+    .add(
+      createNft(umi, {
+        mint: mintSigner,
+        name,
+        symbol,
+        uri: metadataUri,
+        sellerFeeBasisPoints: percentAmount(0),
+        creators: none(),
+        tokenOwner: walletPk,
+      })
+    )
+    .buildWithLatestBlockhash(umi)
 
   const mintSignedUmi = await umiSignTransaction(built, [mintSigner])
   const web3Tx = toWeb3JsTransaction(mintSignedUmi)
@@ -127,7 +182,6 @@ export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise
   onPhase?.('confirming')
   const sendTransaction = sendTransactionWithoutConfirmingFactory({ rpc: client.rpc })
   try {
-    // Broadcast via app RPC (EXPO_PUBLIC_SOLANA_RPC / MobileWalletProvider), not the wallet app's default RPC.
     await sendTransaction(signedTx, { commitment: 'confirmed' })
   } catch (e) {
     throw mintPhaseError('RPC send', e)
@@ -141,20 +195,17 @@ export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise
 
   const mintAddress = mintSigner.publicKey.toString()
 
-  return {
-    signature,
-    mintAddress,
-  }
+  return { signature, mintAddress }
 }
 
-export function getSolscanUrl(signature: string): string {
-  const cluster = resolveSolanaCluster()
-  const q = cluster === 'devnet' ? '?cluster=devnet' : ''
+export function getSolscanUrl(signature: string, cluster?: 'mainnet' | 'devnet'): string {
+  const c = resolveSolanaCluster(cluster)
+  const q = c === 'devnet' ? '?cluster=devnet' : ''
   return `https://solscan.io/tx/${signature}${q}`
 }
 
-export function getSolscanNftUrl(mintAddress: string): string {
-  const cluster = resolveSolanaCluster()
-  const q = cluster === 'devnet' ? '?cluster=devnet' : ''
+export function getSolscanNftUrl(mintAddress: string, cluster?: 'mainnet' | 'devnet'): string {
+  const c = resolveSolanaCluster(cluster)
+  const q = c === 'devnet' ? '?cluster=devnet' : ''
   return `https://solscan.io/token/${mintAddress}${q}`
 }

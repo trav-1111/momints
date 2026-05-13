@@ -1,41 +1,37 @@
 import { useState, useEffect } from 'react'
 
-const METASAL_API = 'https://api.metasal.xyz/api/reverse'
+const ALLDOMAINS_API = 'https://api.alldomains.id/v1/owner'
 
-const domainCache = new Map<string, string | null>()
+// TLD preference order — .skr first for Seeker users
+const TLD_PRIORITY = ['.skr', '.sol', '.abc', '.bonk', '.poor', '.gm']
 
-interface MetasalDomain {
-  name: string
-  tld: string
-  fullName: string
-  createdAt: string
-  expiresAt: string | null
+// Only cache successful lookups — failures retry on next render
+const domainCache = new Map<string, string>()
+
+interface DomainRecord {
+  domain: string // full domain e.g. "user.skr"
+  tld: string    // may or may not have leading dot e.g. "skr" or ".skr"
 }
 
-interface MetasalResponse {
-  address: string
-  domains: MetasalDomain[]
-  count: number
-  mainDomain: string | null
-  tldFilter: string
-  success: boolean
+function normaliseTld(tld: string): string {
+  return tld.startsWith('.') ? tld.toLowerCase() : `.${tld.toLowerCase()}`
 }
 
-function isSkrFullName(value: string | null | undefined): boolean {
-  if (!value || typeof value !== 'string') return false
-  return value.trim().toLowerCase().endsWith('.skr')
-}
+async function fetchBestDomain(walletAddress: string): Promise<string | null> {
+  const res = await fetch(`${ALLDOMAINS_API}/${walletAddress}`, {
+    headers: { Accept: 'application/json' },
+  })
+  if (!res.ok) return null
 
-function pickSkrDomain(data: MetasalResponse): string | null {
-  if (data.mainDomain && isSkrFullName(data.mainDomain)) {
-    return data.mainDomain.trim()
+  const records: DomainRecord[] = await res.json()
+  if (!Array.isArray(records) || records.length === 0) return null
+
+  for (const priority of TLD_PRIORITY) {
+    const match = records.find((r) => normaliseTld(r.tld) === priority)
+    if (match) return match.domain.trim()
   }
-  for (const d of data.domains ?? []) {
-    if (isSkrFullName(d.fullName)) {
-      return d.fullName.trim()
-    }
-  }
-  return null
+
+  return records[0].domain.trim()
 }
 
 export function useWalletDomain(walletAddress: string | null) {
@@ -49,27 +45,22 @@ export function useWalletDomain(walletAddress: string | null) {
     }
 
     if (domainCache.has(walletAddress)) {
-      setDomain(domainCache.get(walletAddress) ?? null)
+      setDomain(domainCache.get(walletAddress)!)
       return
     }
 
     const fetchDomain = async () => {
       setIsLoading(true)
       try {
-        const response = await fetch(`${METASAL_API}/${walletAddress}?tld=skr`)
-        const data: MetasalResponse = await response.json()
-
-        if (data.success && data.count > 0) {
-          const fullDomain = pickSkrDomain(data)
-          domainCache.set(walletAddress, fullDomain)
-          setDomain(fullDomain)
+        const best = await fetchBestDomain(walletAddress)
+        if (best) {
+          domainCache.set(walletAddress, best)
+          setDomain(best)
         } else {
-          domainCache.set(walletAddress, null)
           setDomain(null)
         }
       } catch (error) {
         console.log('Domain lookup failed:', error)
-        domainCache.set(walletAddress, null)
         setDomain(null)
       } finally {
         setIsLoading(false)
@@ -84,17 +75,12 @@ export function useWalletDomain(walletAddress: string | null) {
 
 export function formatWalletDisplay(address: string, domain: string | null, maxLength: number = 12): string {
   if (domain) {
-    if (domain.length <= maxLength) {
-      return domain
-    }
+    if (domain.length <= maxLength) return domain
     const extension = domain.includes('.') ? domain.slice(domain.lastIndexOf('.')) : ''
     const name = domain.slice(0, domain.lastIndexOf('.'))
     const availableLength = maxLength - extension.length - 3
-    if (availableLength > 0) {
-      return `${name.slice(0, availableLength)}...${extension}`
-    }
+    if (availableLength > 0) return `${name.slice(0, availableLength)}...${extension}`
     return domain.slice(0, maxLength - 3) + '...'
   }
-
   return `${address.slice(0, 4)}...${address.slice(-4)}`
 }
