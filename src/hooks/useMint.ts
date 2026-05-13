@@ -3,12 +3,14 @@ import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { uploadToIPFS } from '../services/ipfs'
 import { mintNFT, type MintPhaseCallback } from '../services/mint'
 import { useNetworkStore, getClusterRpc } from '../store/network'
+import type { RollContext } from '../store/mintQueue'
 
 interface MintParams {
   photoUri: string
   title: string
   artist: string
   capturedAt: number
+  rollContext?: RollContext
   onMintPhase?: MintPhaseCallback
 }
 

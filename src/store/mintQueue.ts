@@ -2,6 +2,13 @@ import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import { Paths, File } from 'expo-file-system'
 
+export interface RollContext {
+  rollId: string
+  rollName: string
+  frameNumber: number
+  totalFrames: number
+}
+
 export interface MintQueueItem {
   id: string
   photoId: string
@@ -14,6 +21,7 @@ export interface MintQueueItem {
   mintAddress?: string
   error?: string
   createdAt: number
+  rollContext?: RollContext
 }
 
 export interface MintHistoryItem {

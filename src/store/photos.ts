@@ -10,7 +10,7 @@ export interface Photo {
 
 interface PhotoStore {
   photos: Photo[]
-  addPhoto: (uri: string) => void
+  addPhoto: (uri: string) => string
   setAction: (id: string, action: Photo['action']) => void
   setBulkAction: (ids: string[], action: Photo['action']) => void
   updatePhotoUri: (id: string, newUri: string) => void
@@ -25,7 +25,7 @@ interface PhotoStore {
 export const usePhotoStore = create<PhotoStore>((set, get) => ({
   photos: [],
 
-  addPhoto: (uri: string) => {
+  addPhoto: (uri: string): string => {
     const newPhoto: Photo = {
       id: uuidv4(),
       uri,
@@ -35,6 +35,7 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
     set((state) => ({
       photos: [...state.photos, newPhoto],
     }))
+    return newPhoto.id
   },
 
   setAction: (id: string, action: Photo['action']) => {

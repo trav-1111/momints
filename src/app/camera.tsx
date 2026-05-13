@@ -7,6 +7,7 @@ import {
   Alert,
   Linking,
   Animated,
+  Vibration,
   GestureResponderEvent,
   Modal,
 } from 'react-native'
@@ -43,10 +44,12 @@ export default function CameraScreen() {
   const baseZoomRef = useRef(1)
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null)
   const focusOpacity = useRef(new Animated.Value(0)).current
+  const shutterFlashAnim = useRef(new Animated.Value(0)).current
   const [walletMenuVisible, setWalletMenuVisible] = useState(false)
 
   const photos = usePhotoStore((state) => state.photos)
   const addPhoto = usePhotoStore((state) => state.addPhoto)
+  const setAction = usePhotoStore((state) => state.setAction)
 
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
@@ -56,6 +59,7 @@ export default function CameraScreen() {
 
   const activeMode = useSessionStore((s) => s.activeMode)
   const activeRoll = useSessionStore((s) => s.activeRoll)
+  const addFrameToRoll = useSessionStore((s) => s.addFrameToRoll)
 
   const frontDevice = useCameraDevice('front')
   const backDevice = useCameraDevice('back')
@@ -86,6 +90,15 @@ export default function CameraScreen() {
         enableShutterSound: true,
       })
 
+      // Shutter flash + haptic feedback
+      Vibration.vibrate(80)
+      shutterFlashAnim.setValue(1)
+      Animated.timing(shutterFlashAnim, {
+        toValue: 0,
+        duration: 120,
+        useNativeDriver: true,
+      }).start()
+
       const photosDir = new Directory(Paths.document, 'photos')
       if (!photosDir.exists) {
         photosDir.create()
@@ -97,14 +110,20 @@ export default function CameraScreen() {
 
       sourceFile.move(destFile)
 
-      addPhoto(destFile.uri)
+      const photoId = addPhoto(destFile.uri)
+
+      // In roll mode: register frame and auto-mark for minting
+      if (activeMode === 'roll' && activeRoll !== null) {
+        addFrameToRoll(photoId)
+        setAction(photoId, 'mint')
+      }
     } catch (error) {
       console.error('Failed to capture photo:', error)
       Alert.alert('Error', 'Failed to capture photo. Please try again.')
     } finally {
       setIsCapturing(false)
     }
-  }, [flash, isCapturing, addPhoto, supportsFlash])
+  }, [flash, isCapturing, addPhoto, supportsFlash, activeMode, activeRoll, addFrameToRoll, setAction, shutterFlashAnim])
 
   const toggleFlash = useCallback(() => {
     if (!supportsFlash) return
@@ -228,6 +247,15 @@ export default function CameraScreen() {
             isActive={true}
             photo={true}
             zoom={zoom}
+          />
+
+          {/* Shutter Flash Overlay */}
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: '#000', opacity: shutterFlashAnim },
+            ]}
           />
 
           {/* Focus Indicator */}

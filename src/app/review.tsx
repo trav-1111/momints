@@ -13,12 +13,14 @@ import { useRouter } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as MediaLibrary from 'expo-media-library'
 import { File } from 'expo-file-system'
+import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore, Photo } from '../store/photos'
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window')
 
 export default function ReviewScreen() {
   const router = useRouter()
+  const { account, connect } = useMobileWallet()
   const flatListRef = useRef<FlatList>(null)
 
   const photos = usePhotoStore((state) => state.photos)
@@ -146,8 +148,19 @@ export default function ReviewScreen() {
       Alert.alert('No Photos for Minting', 'Please mark at least one photo for minting.')
       return
     }
+    if (!account) {
+      Alert.alert(
+        'Wallet Required',
+        'Connect your Solana wallet to mint NFTs.',
+        [
+          { text: 'Not Now', style: 'cancel' },
+          { text: 'Connect', onPress: () => connect() },
+        ]
+      )
+      return
+    }
     router.push('/mint/progress')
-  }, [mintCount, router])
+  }, [mintCount, router, account, connect])
 
   const onViewableItemsChanged = useCallback(
     ({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {

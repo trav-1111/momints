@@ -1,6 +1,7 @@
 import { Paths, File as ExpoFile, Directory } from 'expo-file-system'
 import { v4 as uuidv4 } from 'uuid'
 import { PinataSDK, AuthenticationError } from 'pinata'
+import type { RollContext } from '../store/mintQueue'
 
 function normalizeExpoPublicJwt(raw: string | undefined): string {
   let s = (raw ?? '').trim()
@@ -26,6 +27,7 @@ interface UploadParams {
   title: string
   artist: string
   capturedAt: number
+  rollContext?: RollContext
 }
 
 interface UploadResult {
@@ -41,7 +43,7 @@ function rnFormDataFilePart(uri: string, filename: string, mimeType: string) {
 }
 
 export async function uploadToIPFS(params: UploadParams): Promise<UploadResult> {
-  const { photoUri, title, artist, capturedAt } = params
+  const { photoUri, title, artist, capturedAt, rollContext } = params
 
   const safeName = `${title.replace(/\s+/g, '_')}.jpg`
 
@@ -95,6 +97,15 @@ export async function uploadToIPFS(params: UploadParams): Promise<UploadResult> 
         trait_type: 'Minted With',
         value: 'Momints',
       },
+      ...(rollContext
+        ? [
+            { trait_type: 'Roll', value: rollContext.rollName },
+            {
+              trait_type: 'Frame',
+              value: `${rollContext.frameNumber} of ${rollContext.totalFrames}`,
+            },
+          ]
+        : []),
     ],
     properties: {
       files: [

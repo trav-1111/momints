@@ -69,6 +69,7 @@ export default function MintProgressScreen() {
         title: queueItem.title,
         artist: queueItem.artist,
         capturedAt: queueItem.capturedAt,
+        rollContext: queueItem.rollContext,
         onMintPhase: (phase) => {
           if (phase === 'signing') updateProgress(photo.id, { status: 'signing' })
           if (phase === 'confirming') updateProgress(photo.id, { status: 'confirming' })

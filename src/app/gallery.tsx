@@ -11,6 +11,7 @@ import {
 import { useRouter } from 'expo-router'
 import * as MediaLibrary from 'expo-media-library'
 import { File } from 'expo-file-system'
+import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore, Photo } from '../store/photos'
 
 const { width } = Dimensions.get('window')
@@ -18,6 +19,7 @@ const ITEM_SIZE = (width - 48) / 3
 
 export default function GalleryScreen() {
   const router = useRouter()
+  const { account, connect } = useMobileWallet()
   const photos = usePhotoStore((state) => state.photos)
   const setAction = usePhotoStore((state) => state.setAction)
   const setBulkAction = usePhotoStore((state) => state.setBulkAction)
@@ -140,8 +142,19 @@ export default function GalleryScreen() {
       )
       return
     }
+    if (!account) {
+      Alert.alert(
+        'Wallet Required',
+        'Connect your Solana wallet to mint NFTs.',
+        [
+          { text: 'Not Now', style: 'cancel' },
+          { text: 'Connect', onPress: () => connect() },
+        ]
+      )
+      return
+    }
     router.push('/mint/progress')
-  }, [photosForMint.length, router])
+  }, [photosForMint.length, router, account, connect])
 
   const handleBack = useCallback(() => {
     if (selectMode) {

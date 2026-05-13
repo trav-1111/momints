@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useMemo, useEffect } from 'react'
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore } from '../../../store/photos'
 import { useMintQueue } from '../../../store/mintQueue'
+import { useSessionStore } from '../../../store/session'
 
 export default function MintFormScreen() {
   const router = useRouter()
@@ -26,9 +27,32 @@ export default function MintFormScreen() {
 
   const addToQueue = useMintQueue((state) => state.addToQueue)
 
+  const activeRoll = useSessionStore((s) => s.activeRoll)
+
+  // Derive roll context for this specific frame
+  const rollContext = useMemo(() => {
+    if (!activeRoll || !photo) return null
+    const frameIndex = activeRoll.frameIds.indexOf(photo.id)
+    if (frameIndex === -1) return null
+    return {
+      rollId: activeRoll.id,
+      rollName: activeRoll.name,
+      frameNumber: frameIndex + 1,
+      totalFrames: activeRoll.size,
+    }
+  }, [activeRoll, photo])
+
   const [title, setTitle] = useState('')
   const [artist, setArtist] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Pre-populate title from roll on first mount
+  useEffect(() => {
+    if (rollContext) {
+      setTitle(`${rollContext.rollName} — Frame ${rollContext.frameNumber}`)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const handleMint = useCallback(async () => {
     if (!photo) return
@@ -63,6 +87,7 @@ export default function MintFormScreen() {
         title: title.trim(),
         artist: artist.trim(),
         capturedAt: photo.capturedAt,
+        rollContext: rollContext ?? undefined,
       })
 
       router.back()
@@ -140,6 +165,17 @@ export default function MintFormScreen() {
               maxLength={50}
             />
           </View>
+
+          {/* Roll Badge (shown when part of a roll) */}
+          {rollContext && (
+            <View className="bg-gray-900 px-4 py-3 rounded-xl flex-row items-center">
+              <Text className="text-yellow-400 text-lg mr-2">🎞️</Text>
+              <Text className="text-gray-300">{rollContext.rollName}</Text>
+              <Text className="text-gray-500 ml-auto text-sm">
+                Frame {rollContext.frameNumber}/{rollContext.totalFrames}
+              </Text>
+            </View>
+          )}
 
           {/* Shot on Seeker Badge */}
           <View className="bg-gray-900 px-4 py-3 rounded-xl flex-row items-center">
