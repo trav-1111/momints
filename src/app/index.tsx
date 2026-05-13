@@ -2,6 +2,7 @@ import { useEffect, useCallback } from 'react'
 import { View, Text, ActivityIndicator, Pressable } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useNetworkStore } from '../store/network'
+import { useSessionStore } from '../store/session'
 
 export default function SplashScreen() {
   const router = useRouter()
@@ -10,7 +11,8 @@ export default function SplashScreen() {
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      router.replace('/camera')
+      const { hasSetMode } = useSessionStore.getState()
+      router.replace(hasSetMode ? '/camera' : '/mode-select')
     }, 1500)
 
     return () => clearTimeout(timer)

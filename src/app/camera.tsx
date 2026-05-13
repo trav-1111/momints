@@ -28,6 +28,7 @@ import { Paths, File, Directory } from 'expo-file-system'
 import { usePhotoStore } from '../store/photos'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useNetworkStore } from '../store/network'
+import { useSessionStore } from '../store/session'
 
 export default function CameraScreen() {
   const router = useRouter()
@@ -52,6 +53,9 @@ export default function CameraScreen() {
 
   const cluster = useNetworkStore((s) => s.cluster)
   const setCluster = useNetworkStore((s) => s.setCluster)
+
+  const activeMode = useSessionStore((s) => s.activeMode)
+  const activeRoll = useSessionStore((s) => s.activeRoll)
 
   const frontDevice = useCameraDevice('front')
   const backDevice = useCameraDevice('back')
@@ -300,6 +304,25 @@ export default function CameraScreen() {
           <Text className="text-white text-xl">🔄</Text>
         </Pressable>
       </View>
+
+      {/* Mode Indicator Chip */}
+      <Pressable
+        onLongPress={() => {
+          if (activeRoll !== null) {
+            Alert.alert('Roll in progress', 'Develop or abandon the roll before switching modes.')
+          } else {
+            router.push('/mode-select')
+          }
+        }}
+        className="absolute top-28 left-6 flex-row items-center gap-1.5 bg-black/60 px-3 py-1.5 rounded-full"
+      >
+        <Text className="text-base">{activeMode === 'quick' ? '⚡' : '🎞️'}</Text>
+        {activeMode === 'roll' && activeRoll !== null && (
+          <Text className="text-white text-xs font-medium">
+            {activeRoll.frameIds.length} / {activeRoll.size}
+          </Text>
+        )}
+      </Pressable>
 
       {/* Bottom Controls */}
       <View className="absolute bottom-12 left-0 right-0 flex-row justify-center items-center gap-8">
