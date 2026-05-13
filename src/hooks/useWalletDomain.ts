@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-
-const ALLDOMAINS_API = 'https://api.alldomains.id/v1/owner'
+import { Connection } from '@solana/web3.js'
+import { TldParser } from '@onsol/tldparser'
+import { getClusterRpc } from '../store/network'
 
 // TLD preference order — .skr first for Seeker users
 const TLD_PRIORITY = ['.skr', '.sol', '.abc', '.bonk', '.poor', '.gm']
@@ -8,30 +9,34 @@ const TLD_PRIORITY = ['.skr', '.sol', '.abc', '.bonk', '.poor', '.gm']
 // Only cache successful lookups — failures retry on next render
 const domainCache = new Map<string, string>()
 
-interface DomainRecord {
-  domain: string // full domain e.g. "user.skr"
-  tld: string    // may or may not have leading dot e.g. "skr" or ".skr"
-}
-
-function normaliseTld(tld: string): string {
-  return tld.startsWith('.') ? tld.toLowerCase() : `.${tld.toLowerCase()}`
+// Singleton TldParser pointing at mainnet (domains live on mainnet regardless of app cluster)
+let _parser: TldParser | null = null
+function getParser(): TldParser {
+  if (!_parser) {
+    const rpc = getClusterRpc('mainnet')
+    _parser = new TldParser(new Connection(rpc, 'confirmed'))
+  }
+  return _parser
 }
 
 async function fetchBestDomain(walletAddress: string): Promise<string | null> {
-  const res = await fetch(`${ALLDOMAINS_API}/${walletAddress}`, {
-    headers: { Accept: 'application/json' },
-  })
-  if (!res.ok) return null
+  try {
+    const parser = getParser()
+    // getParsedAllUserDomains accepts a string address directly
+    const domains = await parser.getParsedAllUserDomains(walletAddress)
+    if (!Array.isArray(domains) || domains.length === 0) return null
 
-  const records: DomainRecord[] = await res.json()
-  if (!Array.isArray(records) || records.length === 0) return null
+    // Pick the highest-priority TLD
+    for (const priority of TLD_PRIORITY) {
+      const match = domains.find((d) => d.domain.endsWith(priority))
+      if (match) return match.domain
+    }
 
-  for (const priority of TLD_PRIORITY) {
-    const match = records.find((r) => normaliseTld(r.tld) === priority)
-    if (match) return match.domain.trim()
+    // Fall back to whichever domain exists
+    return domains[0].domain ?? null
+  } catch {
+    return null
   }
-
-  return records[0].domain.trim()
 }
 
 export function useWalletDomain(walletAddress: string | null) {
@@ -49,31 +54,40 @@ export function useWalletDomain(walletAddress: string | null) {
       return
     }
 
+    let cancelled = false
+
     const fetchDomain = async () => {
       setIsLoading(true)
       try {
         const best = await fetchBestDomain(walletAddress)
+        if (cancelled) return
         if (best) {
           domainCache.set(walletAddress, best)
           setDomain(best)
         } else {
           setDomain(null)
         }
-      } catch (error) {
-        console.log('Domain lookup failed:', error)
-        setDomain(null)
+      } catch {
+        if (!cancelled) setDomain(null)
       } finally {
-        setIsLoading(false)
+        if (!cancelled) setIsLoading(false)
       }
     }
 
     fetchDomain()
+    return () => {
+      cancelled = true
+    }
   }, [walletAddress])
 
   return { domain, isLoading }
 }
 
-export function formatWalletDisplay(address: string, domain: string | null, maxLength: number = 12): string {
+export function formatWalletDisplay(
+  address: string,
+  domain: string | null,
+  maxLength: number = 12
+): string {
   if (domain) {
     if (domain.length <= maxLength) return domain
     const extension = domain.includes('.') ? domain.slice(domain.lastIndexOf('.')) : ''

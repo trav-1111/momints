@@ -16,11 +16,14 @@ import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore } from '../../../store/photos'
 import { useMintQueue } from '../../../store/mintQueue'
 import { useSessionStore } from '../../../store/session'
+import { useWalletDomain } from '../../../hooks/useWalletDomain'
 
 export default function MintFormScreen() {
   const router = useRouter()
   const { id } = useLocalSearchParams<{ id: string }>()
   const { account, connect } = useMobileWallet()
+  const walletAddress = account?.address?.toString() ?? null
+  const { domain } = useWalletDomain(walletAddress)
 
   const photos = usePhotoStore((state) => state.photos)
   const photo = useMemo(() => photos.find((p) => p.id === id), [photos, id])
@@ -53,6 +56,13 @@ export default function MintFormScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Pre-populate artist from wallet domain as soon as it resolves
+  useEffect(() => {
+    if (domain) {
+      setArtist((prev) => (prev ? prev : domain))
+    }
+  }, [domain])
 
   const handleMint = useCallback(async () => {
     if (!photo) return
