@@ -98,6 +98,7 @@ export default function MintFormScreen() {
         artist: artist.trim(),
         capturedAt: photo.capturedAt,
         rollContext: rollContext ?? undefined,
+        captureMeta: photo.meta,
       })
 
       router.back()
@@ -193,6 +194,24 @@ export default function MintFormScreen() {
             <Text className="text-gray-300">Shot on Seeker</Text>
             <Text className="text-gray-500 ml-auto text-sm">Auto-added</Text>
           </View>
+
+          {/* Location Badge */}
+          {photo.meta?.location && (
+            <View className="bg-gray-900 px-4 py-3 rounded-xl flex-row items-center">
+              <Text className="text-purple-400 text-lg mr-2">📍</Text>
+              <Text className="text-gray-300">{photo.meta.location}</Text>
+              <Text className="text-gray-500 ml-auto text-sm">Auto-added</Text>
+            </View>
+          )}
+
+          {/* Weather Badge */}
+          {photo.meta?.weather && (
+            <View className="bg-gray-900 px-4 py-3 rounded-xl flex-row items-center">
+              <Text className="text-purple-400 text-lg mr-2">🌤️</Text>
+              <Text className="text-gray-300">{photo.meta.weather}</Text>
+              <Text className="text-gray-500 ml-auto text-sm">Auto-added</Text>
+            </View>
+          )}
 
           {/* Wallet Status */}
           <View className="bg-gray-900 px-4 py-3 rounded-xl">

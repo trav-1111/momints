@@ -4,6 +4,7 @@ import { uploadToIPFS } from '../services/ipfs'
 import { mintNFT, type MintPhaseCallback } from '../services/mint'
 import { useNetworkStore, getClusterRpc } from '../store/network'
 import type { RollContext } from '../store/mintQueue'
+import type { CaptureMeta } from '../store/photos'
 
 interface MintParams {
   photoUri: string
@@ -11,6 +12,7 @@ interface MintParams {
   artist: string
   capturedAt: number
   rollContext?: RollContext
+  captureMeta?: CaptureMeta
   onMintPhase?: MintPhaseCallback
 }
 

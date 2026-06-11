@@ -26,7 +26,9 @@
         "CAMERA",
         "READ_EXTERNAL_STORAGE",
         "WRITE_EXTERNAL_STORAGE",
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "ios": {
@@ -41,6 +43,12 @@
         "react-native-vision-camera",
         {
           "cameraPermissionText": "Momints needs camera access to capture photos for minting as NFTs"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Momints adds your city and weather to each photo's NFT metadata"
         }
       ]
     ],

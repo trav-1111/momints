@@ -2,6 +2,8 @@ import { Paths, File as ExpoFile, Directory } from 'expo-file-system'
 import { v4 as uuidv4 } from 'uuid'
 import { PinataSDK, AuthenticationError } from 'pinata'
 import type { RollContext } from '../store/mintQueue'
+import type { CaptureMeta } from '../store/photos'
+import { formatCapturedAt } from './captureMetadata'
 
 function normalizeExpoPublicJwt(raw: string | undefined): string {
   let s = (raw ?? '').trim()
@@ -28,6 +30,7 @@ interface UploadParams {
   artist: string
   capturedAt: number
   rollContext?: RollContext
+  captureMeta?: CaptureMeta
 }
 
 interface UploadResult {
@@ -43,7 +46,7 @@ function rnFormDataFilePart(uri: string, filename: string, mimeType: string) {
 }
 
 export async function uploadToIPFS(params: UploadParams): Promise<UploadResult> {
-  const { photoUri, title, artist, capturedAt, rollContext } = params
+  const { photoUri, title, artist, capturedAt, rollContext, captureMeta } = params
 
   const safeName = `${title.replace(/\s+/g, '_')}.jpg`
 
@@ -91,12 +94,18 @@ export async function uploadToIPFS(params: UploadParams): Promise<UploadResult> 
       },
       {
         trait_type: 'Captured',
-        value: new Date(capturedAt).toISOString(),
+        value: formatCapturedAt(capturedAt),
       },
       {
         trait_type: 'Minted With',
         value: 'Momints',
       },
+      ...(captureMeta?.location
+        ? [{ trait_type: 'Location', value: captureMeta.location }]
+        : []),
+      ...(captureMeta?.weather
+        ? [{ trait_type: 'Weather', value: captureMeta.weather }]
+        : []),
       ...(rollContext
         ? [
             { trait_type: 'Roll', value: rollContext.rollName },

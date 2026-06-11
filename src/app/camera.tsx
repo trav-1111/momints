@@ -27,6 +27,7 @@ import {
 } from 'react-native-gesture-handler'
 import { Paths, File, Directory } from 'expo-file-system'
 import { usePhotoStore } from '../store/photos'
+import { captureMetadata } from '../services/captureMetadata'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useNetworkStore } from '../store/network'
 import { useSessionStore } from '../store/session'
@@ -50,6 +51,7 @@ export default function CameraScreen() {
   const photos = usePhotoStore((state) => state.photos)
   const addPhoto = usePhotoStore((state) => state.addPhoto)
   const setAction = usePhotoStore((state) => state.setAction)
+  const setPhotoMeta = usePhotoStore((state) => state.setPhotoMeta)
 
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
@@ -112,6 +114,13 @@ export default function CameraScreen() {
 
       const photoId = addPhoto(destFile.uri)
 
+      // Best-effort location/weather — fire-and-forget, never blocks capture
+      captureMetadata()
+        .then((meta) => {
+          if (meta.location || meta.weather) setPhotoMeta(photoId, meta)
+        })
+        .catch(() => {})
+
       // In roll mode: register frame and auto-mark for minting
       if (activeMode === 'roll' && activeRoll !== null) {
         addFrameToRoll(photoId)
@@ -123,7 +132,7 @@ export default function CameraScreen() {
     } finally {
       setIsCapturing(false)
     }
-  }, [flash, isCapturing, addPhoto, supportsFlash, activeMode, activeRoll, addFrameToRoll, setAction, shutterFlashAnim])
+  }, [flash, isCapturing, addPhoto, supportsFlash, activeMode, activeRoll, addFrameToRoll, setAction, setPhotoMeta, shutterFlashAnim])
 
   const toggleFlash = useCallback(() => {
     if (!supportsFlash) return

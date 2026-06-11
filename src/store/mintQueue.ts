@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import { Paths, File } from 'expo-file-system'
+import type { CaptureMeta } from './photos'
 
 export interface RollContext {
   rollId: string
@@ -22,6 +23,7 @@ export interface MintQueueItem {
   error?: string
   createdAt: number
   rollContext?: RollContext
+  captureMeta?: CaptureMeta
 }
 
 export interface MintHistoryItem {
