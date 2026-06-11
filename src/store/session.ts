@@ -27,6 +27,7 @@ interface SessionStore extends PersistedSession {
   startRoll: (name: string, size: RollSize) => void
   addFrameToRoll: (photoId: string) => void
   abandonRoll: () => void
+  completeRoll: () => void
   setCollectionAddress: (address: string) => void
 }
 
@@ -132,6 +133,18 @@ export const useSessionStore = create<SessionStore>()((set, get) => ({
   },
 
   abandonRoll: () => {
+    const next: PersistedSession = {
+      hasSetMode: get().hasSetMode,
+      activeMode: 'roll',
+      activeRoll: null,
+    }
+    persistSession(next)
+    set({ activeRoll: null })
+  },
+
+  // Distinct from abandonRoll so Week 5 can archive the finished roll
+  // (collection address, frame mints) without touching abandon semantics
+  completeRoll: () => {
     const next: PersistedSession = {
       hasSetMode: get().hasSetMode,
       activeMode: 'roll',

@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore } from '../../store/photos'
 import { useMintQueue } from '../../store/mintQueue'
+import { useSessionStore } from '../../store/session'
 import { useMint } from '../../hooks/useMint'
 import { getSolscanUrl } from '../../services/mint'
 
@@ -32,7 +33,16 @@ export default function MintProgressScreen() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isProcessing, setIsProcessing] = useState(false)
 
-  const photosToMint = getPhotosForMint()
+  const activeRoll = useSessionStore((s) => s.activeRoll)
+
+  // Roll frames only mint once developed (i.e. they have a queue item) —
+  // a quick-mint session must not drag undeveloped roll frames along
+  const photosToMint = getPhotosForMint().filter(
+    (p) =>
+      !activeRoll ||
+      !activeRoll.frameIds.includes(p.id) ||
+      queue.some((q) => q.photoId === p.id)
+  )
 
   useEffect(() => {
     const initialProgress: MintProgress[] = photosToMint.map((photo) => ({
@@ -126,9 +136,24 @@ export default function MintProgressScreen() {
   }, [])
 
   const handleFinish = useCallback(() => {
+    // If every frame of the active roll has minted (this session or a
+    // previous one — history ids are photo ids), the roll is complete
+    const { activeRoll: roll, completeRoll } = useSessionStore.getState()
+    const { mintHistory } = useMintQueue.getState()
+    if (
+      roll &&
+      roll.frameIds.length > 0 &&
+      roll.frameIds.every(
+        (fid) =>
+          progress.find((p) => p.photoId === fid)?.status === 'success' ||
+          mintHistory.some((h) => h.id === fid)
+      )
+    ) {
+      completeRoll()
+    }
     clearQueue()
     router.replace('/camera')
-  }, [clearQueue, router])
+  }, [clearQueue, router, progress])
 
   const handleBack = useCallback(() => {
     if (isProcessing) {

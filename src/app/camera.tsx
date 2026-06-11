@@ -28,6 +28,7 @@ import {
 import { Paths, File, Directory } from 'expo-file-system'
 import { usePhotoStore } from '../store/photos'
 import { captureMetadata } from '../services/captureMetadata'
+import { useDevelopRoll } from '../hooks/useDevelopRoll'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useNetworkStore } from '../store/network'
 import { useSessionStore } from '../store/session'
@@ -62,6 +63,12 @@ export default function CameraScreen() {
   const activeMode = useSessionStore((s) => s.activeMode)
   const activeRoll = useSessionStore((s) => s.activeRoll)
   const addFrameToRoll = useSessionStore((s) => s.addFrameToRoll)
+  const { developRoll } = useDevelopRoll()
+
+  const rollIsFull =
+    activeMode === 'roll' &&
+    activeRoll !== null &&
+    activeRoll.frameIds.length >= activeRoll.size
 
   const frontDevice = useCameraDevice('front')
   const backDevice = useCameraDevice('back')
@@ -84,6 +91,14 @@ export default function CameraScreen() {
 
   const handleCapture = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return
+
+    if (rollIsFull) {
+      Alert.alert('Roll Full', 'Develop your roll to mint the frames.', [
+        { text: 'Keep Waiting', style: 'cancel' },
+        { text: 'Develop', onPress: developRoll },
+      ])
+      return
+    }
 
     setIsCapturing(true)
     try {
@@ -125,6 +140,14 @@ export default function CameraScreen() {
       if (activeMode === 'roll' && activeRoll !== null) {
         addFrameToRoll(photoId)
         setAction(photoId, 'mint')
+
+        // That capture filled the roll — offer to develop
+        if (activeRoll.frameIds.length + 1 >= activeRoll.size) {
+          Alert.alert('Roll Complete! 🎞️', 'All frames are shot. Ready to develop?', [
+            { text: 'Later', style: 'cancel' },
+            { text: 'Develop', onPress: developRoll },
+          ])
+        }
       }
     } catch (error) {
       console.error('Failed to capture photo:', error)
@@ -132,7 +155,7 @@ export default function CameraScreen() {
     } finally {
       setIsCapturing(false)
     }
-  }, [flash, isCapturing, addPhoto, supportsFlash, activeMode, activeRoll, addFrameToRoll, setAction, setPhotoMeta, shutterFlashAnim])
+  }, [flash, isCapturing, addPhoto, supportsFlash, activeMode, activeRoll, addFrameToRoll, setAction, setPhotoMeta, shutterFlashAnim, rollIsFull, developRoll])
 
   const toggleFlash = useCallback(() => {
     if (!supportsFlash) return
@@ -381,7 +404,7 @@ export default function CameraScreen() {
           onPress={handleCapture}
           disabled={isCapturing}
           className="w-20 h-20 bg-white rounded-full items-center justify-center border-4 border-purple-600"
-          style={{ opacity: isCapturing ? 0.5 : 1 }}
+          style={{ opacity: isCapturing || rollIsFull ? 0.5 : 1 }}
         >
           <View className="w-16 h-16 bg-white rounded-full" />
         </Pressable>

@@ -13,6 +13,9 @@ import * as MediaLibrary from 'expo-media-library'
 import { File } from 'expo-file-system'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore, Photo } from '../store/photos'
+import { useSessionStore } from '../store/session'
+import { useDevelopRoll } from '../hooks/useDevelopRoll'
+import { RollCard } from '../components/RollCard'
 
 const { width } = Dimensions.get('window')
 const ITEM_SIZE = (width - 48) / 3
@@ -30,9 +33,25 @@ export default function GalleryScreen() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [isProcessing, setIsProcessing] = useState(false)
 
+  const activeRoll = useSessionStore((s) => s.activeRoll)
+  const { developRoll } = useDevelopRoll()
+
+  // Roll frames live in the roll card; everything below operates on quick photos only
+  const rollFrames = useMemo(() => {
+    if (!activeRoll) return []
+    return activeRoll.frameIds
+      .map((fid) => photos.find((p) => p.id === fid))
+      .filter((p): p is Photo => p !== undefined)
+  }, [activeRoll, photos])
+
+  const quickPhotos = useMemo(() => {
+    const rollIds = new Set(activeRoll?.frameIds ?? [])
+    return photos.filter((p) => !rollIds.has(p.id))
+  }, [activeRoll, photos])
+
   const photosForMint = useMemo(
-    () => photos.filter((p) => p.action === 'mint'),
-    [photos]
+    () => quickPhotos.filter((p) => p.action === 'mint'),
+    [quickPhotos]
   )
 
   const toggleSelect = useCallback((id: string) => {
@@ -48,8 +67,8 @@ export default function GalleryScreen() {
   }, [])
 
   const selectAll = useCallback(() => {
-    setSelectedIds(new Set(photos.map((p) => p.id)))
-  }, [photos])
+    setSelectedIds(new Set(quickPhotos.map((p) => p.id)))
+  }, [quickPhotos])
 
   const deselectAll = useCallback(() => {
     setSelectedIds(new Set())
@@ -235,10 +254,10 @@ export default function GalleryScreen() {
     [selectMode, selectedIds, handlePhotoPress, toggleSelect]
   )
 
-  const pendingCount = photos.filter((p) => p.action === 'pending').length
+  const pendingCount = quickPhotos.filter((p) => p.action === 'pending').length
   const mintCount = photosForMint.length
-  const saveCount = photos.filter((p) => p.action === 'save').length
-  const deleteCount = photos.filter((p) => p.action === 'delete').length
+  const saveCount = quickPhotos.filter((p) => p.action === 'save').length
+  const deleteCount = quickPhotos.filter((p) => p.action === 'delete').length
 
   return (
     <View className="flex-1 bg-black">
@@ -254,11 +273,11 @@ export default function GalleryScreen() {
 
         {selectMode ? (
           <Pressable
-            onPress={selectedIds.size === photos.length ? deselectAll : selectAll}
+            onPress={selectedIds.size === quickPhotos.length ? deselectAll : selectAll}
             className="p-2"
           >
             <Text className="text-purple-400 font-medium">
-              {selectedIds.size === photos.length ? 'None' : 'All'}
+              {selectedIds.size === quickPhotos.length ? 'None' : 'All'}
             </Text>
           </Pressable>
         ) : (
@@ -295,8 +314,8 @@ export default function GalleryScreen() {
         </View>
       )}
 
-      {/* Photo Grid */}
-      {photos.length === 0 ? (
+      {/* Photo Grid (+ roll card header when a roll is active) */}
+      {photos.length === 0 && !activeRoll ? (
         <View className="flex-1 items-center justify-center">
           <Text className="text-gray-400 text-lg">No photos yet</Text>
           <Text className="text-gray-500 text-sm mt-2">
@@ -305,17 +324,30 @@ export default function GalleryScreen() {
         </View>
       ) : (
         <FlatList
-          data={photos}
+          data={quickPhotos}
           renderItem={renderPhoto}
           keyExtractor={(item) => item.id}
           numColumns={3}
           contentContainerStyle={{ padding: 12 }}
           showsVerticalScrollIndicator={false}
+          ListHeaderComponent={
+            activeRoll && !selectMode ? (
+              <RollCard roll={activeRoll} frames={rollFrames} onDevelop={developRoll} />
+            ) : null
+          }
+          ListEmptyComponent={
+            <View className="items-center py-12">
+              <Text className="text-gray-400 text-lg">No quick photos</Text>
+              <Text className="text-gray-500 text-sm mt-2">
+                Photos outside the roll will appear here
+              </Text>
+            </View>
+          }
         />
       )}
 
       {/* Bottom Action */}
-      {photos.length > 0 && (
+      {quickPhotos.length > 0 && (
         <View className="p-6 border-t border-gray-800">
           {selectMode ? (
             <View>
