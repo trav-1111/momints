@@ -8,6 +8,8 @@ export interface RollContext {
   rollName: string
   frameNumber: number
   totalFrames: number
+  /** Prepaid roll's Core collection — frames mint into it as Core assets. */
+  collectionAddress?: string
 }
 
 export interface MintQueueItem {

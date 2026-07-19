@@ -1,4 +1,6 @@
+import type { ReactNode } from 'react'
 import { Pressable, Text, ActivityIndicator, View } from 'react-native'
+import { colors, fonts } from '../theme'
 
 interface ButtonProps {
   onPress: () => void
@@ -6,7 +8,7 @@ interface ButtonProps {
   variant?: 'primary' | 'secondary' | 'danger' | 'success'
   disabled?: boolean
   loading?: boolean
-  icon?: string
+  icon?: ReactNode
   fullWidth?: boolean
 }
 
@@ -19,33 +21,40 @@ export function Button({
   icon,
   fullWidth = true,
 }: ButtonProps) {
-  const getVariantStyles = () => {
-    switch (variant) {
-      case 'primary':
-        return disabled ? 'bg-gray-700' : 'bg-purple-600 active:bg-purple-700'
-      case 'secondary':
-        return disabled ? 'bg-gray-700' : 'bg-gray-800 active:bg-gray-700'
-      case 'danger':
-        return disabled ? 'bg-gray-700' : 'bg-red-600 active:bg-red-700'
-      case 'success':
-        return disabled ? 'bg-gray-700' : 'bg-green-600 active:bg-green-700'
-      default:
-        return 'bg-purple-600'
-    }
-  }
+  const bg = disabled
+    ? colors.surface
+    : variant === 'primary'
+      ? colors.accent
+      : variant === 'danger'
+        ? colors.red
+        : variant === 'success'
+          ? colors.green
+          : colors.surface
+  const border = disabled ? colors.border : variant === 'secondary' ? colors.border : bg
+  const label = disabled ? colors.textMuted : variant === 'secondary' ? colors.textSoft : colors.white
 
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled || loading}
-      className={`py-4 rounded-xl items-center justify-center flex-row ${getVariantStyles()} ${fullWidth ? 'w-full' : 'px-6'}`}
+      style={{
+        paddingVertical: 15,
+        paddingHorizontal: fullWidth ? 0 : 24,
+        borderRadius: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: bg,
+        borderWidth: 1,
+        borderColor: border,
+        width: fullWidth ? '100%' : undefined,
+      }}
     >
       {loading ? (
-        <ActivityIndicator color="white" size="small" />
+        <ActivityIndicator color={colors.accentSoft} size="small" />
       ) : (
-        <View className="flex-row items-center gap-2">
-          {icon && <Text className="text-lg">{icon}</Text>}
-          <Text className="text-white font-bold text-lg">{title}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
+          {icon}
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 14, color: label }}>{title}</Text>
         </View>
       )}
     </Pressable>

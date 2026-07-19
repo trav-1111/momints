@@ -1,18 +1,33 @@
+import type { ReactNode } from 'react'
 import { View, Text } from 'react-native'
+import { colors, fonts } from '../theme'
+import { IconCamera } from './icons'
 
 interface EmptyStateProps {
-  icon?: string
+  icon?: ReactNode
   title: string
   description?: string
 }
 
-export function EmptyState({ icon = '📷', title, description }: EmptyStateProps) {
+export function EmptyState({ icon, title, description }: EmptyStateProps) {
   return (
-    <View className="flex-1 items-center justify-center px-8">
-      <Text className="text-6xl mb-4">{icon}</Text>
-      <Text className="text-white text-xl font-bold text-center mb-2">{title}</Text>
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+      <View style={{ marginBottom: 16 }}>{icon ?? <IconCamera size={40} color={colors.textMuted} />}</View>
+      <Text
+        style={{
+          fontFamily: fonts.sansBold,
+          fontSize: 18,
+          color: colors.text,
+          textAlign: 'center',
+          marginBottom: 8,
+        }}
+      >
+        {title}
+      </Text>
       {description && (
-        <Text className="text-gray-400 text-center">{description}</Text>
+        <Text style={{ fontFamily: fonts.sans, fontSize: 13, color: colors.textSecondary, textAlign: 'center' }}>
+          {description}
+        </Text>
       )}
     </View>
   )

@@ -3,6 +3,8 @@ import { View, Text, Pressable, FlatList, Image, Linking, Alert } from 'react-na
 import { useRouter } from 'expo-router'
 import { useMintQueue, MintHistoryItem } from '../store/mintQueue'
 import { getSolscanUrl, getSolscanNftUrl } from '../services/mint'
+import { colors, fonts } from '../theme'
+import { IconBack } from '../components/icons'
 
 export default function PastMintsScreen() {
   const router = useRouter()
@@ -31,66 +33,109 @@ export default function PastMintsScreen() {
 
   const renderItem = useCallback(
     ({ item }: { item: MintHistoryItem }) => (
-      <View className="flex-row items-center p-4 border-b border-gray-800">
-        <Image
-          source={{ uri: item.photoUri }}
-          style={{ width: 56, height: 56, borderRadius: 8 }}
-          resizeMode="cover"
-        />
-        <View className="flex-1 ml-3">
-          <Text className="text-white font-medium" numberOfLines={1}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          padding: 12,
+          borderRadius: 14,
+          backgroundColor: colors.surface,
+          borderWidth: 1,
+          borderColor: colors.border,
+          marginBottom: 10,
+        }}
+      >
+        <Image source={{ uri: item.photoUri }} style={{ width: 52, height: 52, borderRadius: 9 }} resizeMode="cover" />
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text numberOfLines={1} style={{ fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.text }}>
             {item.title}
           </Text>
-          <Text className="text-gray-400 text-xs mt-0.5">{item.artist}</Text>
-          <Text className="text-gray-500 text-xs mt-0.5">{formatDate(item.mintedAt)}</Text>
+          <Text
+            numberOfLines={1}
+            style={{ fontFamily: fonts.mono, fontSize: 10.5, color: colors.textSecondary, marginTop: 2 }}
+          >
+            {item.artist}
+          </Text>
+          <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted, marginTop: 2 }}>
+            {formatDate(item.mintedAt)}
+          </Text>
         </View>
-        <View className="items-end gap-1">
+        <View style={{ alignItems: 'flex-end', gap: 6 }}>
           {item.mintAddress && (
             <Pressable
               onPress={() => handleViewNft(item.mintAddress!)}
-              className="bg-purple-600/30 px-3 py-1 rounded-full"
+              style={{
+                paddingVertical: 5,
+                paddingHorizontal: 10,
+                borderRadius: 8,
+                backgroundColor: colors.accentTint,
+                borderWidth: 1,
+                borderColor: colors.accent,
+              }}
             >
-              <Text className="text-purple-400 text-xs">NFT</Text>
+              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.accentSoft }}>NFT</Text>
             </Pressable>
           )}
           <Pressable
             onPress={() => handleViewTx(item.txSignature)}
-            className="bg-gray-800 px-3 py-1 rounded-full"
+            style={{
+              paddingVertical: 5,
+              paddingHorizontal: 10,
+              borderRadius: 8,
+              borderWidth: 1,
+              borderColor: colors.border,
+            }}
           >
-            <Text className="text-gray-300 text-xs">TX</Text>
+            <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>TX</Text>
           </Pressable>
         </View>
       </View>
     ),
-    [handleViewTx, handleViewNft]
+    [handleViewTx, handleViewNft],
   )
 
   return (
-    <View className="flex-1 bg-black">
-      <View className="pt-12 pb-4 px-6 flex-row items-center justify-between border-b border-gray-800">
-        <Pressable onPress={() => router.back()} className="p-2">
-          <Text className="text-white text-2xl">←</Text>
-        </Pressable>
-        <Text className="text-white text-xl font-bold">Past Mints</Text>
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      {/* Header */}
+      <View
+        style={{
+          paddingTop: 52,
+          paddingBottom: 16,
+          paddingHorizontal: 22,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Pressable onPress={() => router.back()} hitSlop={8}>
+            <IconBack size={21} color={colors.text} strokeWidth={1.7} />
+          </Pressable>
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 18, color: colors.text }}>Past Mints</Text>
+        </View>
         {mintHistory.length > 0 ? (
-          <Pressable onPress={handleClearHistory} className="p-2">
-            <Text className="text-red-400 text-sm">Clear</Text>
+          <Pressable onPress={handleClearHistory} hitSlop={8}>
+            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.redSoft }}>CLEAR</Text>
           </Pressable>
         ) : (
-          <View className="w-10" />
+          <View style={{ width: 24 }} />
         )}
       </View>
 
       {mintHistory.length === 0 ? (
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-gray-400 text-lg">No mints yet</Text>
-          <Text className="text-gray-500 text-sm mt-2">Your minted NFTs will appear here</Text>
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontFamily: fonts.sans, fontSize: 16, color: colors.textSecondary }}>No mints yet</Text>
+          <Text style={{ fontFamily: fonts.sans, fontSize: 13, color: colors.textMuted, marginTop: 8 }}>
+            Your minted NFTs will appear here
+          </Text>
         </View>
       ) : (
         <FlatList
           data={mintHistory}
           renderItem={renderItem}
           keyExtractor={(item) => item.id}
+          contentContainerStyle={{ paddingHorizontal: 22, paddingBottom: 26 }}
           showsVerticalScrollIndicator={false}
         />
       )}

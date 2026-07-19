@@ -17,6 +17,45 @@ import { usePhotoStore } from '../../../store/photos'
 import { useMintQueue } from '../../../store/mintQueue'
 import { useSessionStore } from '../../../store/session'
 import { useWalletDomain } from '../../../hooks/useWalletDomain'
+import { colors, fonts, tracking } from '../../../theme'
+import { IconBack, IconFilm, IconMint, IconPhone, IconPin, IconWeather } from '../../../components/icons'
+
+function FieldLabel({ children }: { children: string }) {
+  return (
+    <Text
+      style={{
+        fontFamily: fonts.mono,
+        fontSize: 10,
+        letterSpacing: tracking(0.16, 10),
+        color: colors.textMuted,
+        marginBottom: 8,
+      }}
+    >
+      {children}
+    </Text>
+  )
+}
+
+function MetaBadge({ icon, label }: { icon: React.ReactNode; label: string }) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingVertical: 6,
+        paddingHorizontal: 11,
+        borderRadius: 999,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+      }}
+    >
+      {icon}
+      <Text style={{ fontFamily: fonts.sans, fontSize: 11.5, color: colors.textSoft }}>{label}</Text>
+    </View>
+  )
+}
 
 export default function MintFormScreen() {
   const router = useRouter()
@@ -48,6 +87,7 @@ export default function MintFormScreen() {
   const [title, setTitle] = useState('')
   const [artist, setArtist] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [focusedField, setFocusedField] = useState<'title' | 'artist' | null>(null)
 
   // Pre-populate title from roll on first mount
   useEffect(() => {
@@ -78,14 +118,10 @@ export default function MintFormScreen() {
     }
 
     if (!account) {
-      Alert.alert(
-        'Wallet Required',
-        'Please connect your wallet to mint NFTs.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          { text: 'Connect', onPress: connect },
-        ]
-      )
+      Alert.alert('Wallet Required', 'Please connect your wallet to mint NFTs.', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Connect', onPress: connect },
+      ])
       return
     }
 
@@ -108,18 +144,30 @@ export default function MintFormScreen() {
     } finally {
       setIsSubmitting(false)
     }
-  }, [photo, title, artist, account, connect, addToQueue, router])
+  }, [photo, title, artist, account, connect, addToQueue, router, rollContext])
 
   const handleBack = useCallback(() => {
     router.back()
   }, [router])
 
+  const inputStyle = (focused: boolean) => ({
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 11,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: focused ? colors.accent : colors.border,
+    fontFamily: fonts.sans,
+    fontSize: 14,
+    color: colors.text,
+  })
+
   if (!photo) {
     return (
-      <View className="flex-1 bg-black items-center justify-center">
-        <Text className="text-white text-xl">Photo not found</Text>
-        <Pressable onPress={() => router.back()} className="mt-4 p-4">
-          <Text className="text-purple-400 text-lg">Go Back</Text>
+      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 18, color: colors.text }}>Photo not found</Text>
+        <Pressable onPress={() => router.back()} style={{ marginTop: 16, padding: 16 }}>
+          <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 15, color: colors.accentSoft }}>Go Back</Text>
         </Pressable>
       </View>
     )
@@ -127,132 +175,155 @@ export default function MintFormScreen() {
 
   return (
     <KeyboardAvoidingView
-      className="flex-1 bg-black"
+      style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
         {/* Header */}
-        <View className="pt-12 pb-4 px-6 flex-row items-center justify-between">
-          <Pressable onPress={handleBack} className="p-2">
-            <Text className="text-white text-2xl">←</Text>
+        <View
+          style={{
+            paddingTop: 52,
+            paddingBottom: 18,
+            paddingHorizontal: 22,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+          }}
+        >
+          <Pressable onPress={handleBack} hitSlop={8}>
+            <IconBack size={21} color={colors.text} strokeWidth={1.7} />
           </Pressable>
-          <Text className="text-white text-xl font-bold">Mint NFT</Text>
-          <View className="w-10" />
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 18, color: colors.text }}>Mint NFT</Text>
         </View>
 
         {/* Image Preview */}
-        <View className="px-6 mb-6">
+        <View style={{ paddingHorizontal: 22, marginBottom: 18 }}>
           <Image
             source={{ uri: photo.uri }}
-            className="w-full aspect-square rounded-xl"
+            style={{ width: '100%', aspectRatio: 1, borderRadius: 16 }}
             resizeMode="cover"
           />
         </View>
 
         {/* Metadata Form */}
-        <View className="px-6 gap-4">
-          {/* Title */}
-          <View>
-            <Text className="text-gray-400 text-sm mb-2">Title *</Text>
-            <TextInput
-              value={title}
-              onChangeText={setTitle}
-              placeholder="Enter NFT title"
-              placeholderTextColor="#6B7280"
-              className="bg-gray-900 text-white px-4 py-3 rounded-xl text-lg"
-              maxLength={50}
-            />
-          </View>
+        <View style={{ paddingHorizontal: 22 }}>
+          <FieldLabel>TITLE *</FieldLabel>
+          <TextInput
+            value={title}
+            onChangeText={setTitle}
+            placeholder="Enter NFT title"
+            placeholderTextColor={colors.textMuted}
+            maxLength={50}
+            onFocus={() => setFocusedField('title')}
+            onBlur={() => setFocusedField(null)}
+            style={[inputStyle(focusedField === 'title'), { marginBottom: 14 }]}
+          />
 
-          {/* Artist */}
-          <View>
-            <Text className="text-gray-400 text-sm mb-2">Artist *</Text>
-            <TextInput
-              value={artist}
-              onChangeText={setArtist}
-              placeholder="Enter artist name"
-              placeholderTextColor="#6B7280"
-              className="bg-gray-900 text-white px-4 py-3 rounded-xl text-lg"
-              maxLength={50}
-            />
-          </View>
+          <FieldLabel>ARTIST *</FieldLabel>
+          <TextInput
+            value={artist}
+            onChangeText={setArtist}
+            placeholder="Enter artist name"
+            placeholderTextColor={colors.textMuted}
+            maxLength={50}
+            onFocus={() => setFocusedField('artist')}
+            onBlur={() => setFocusedField(null)}
+            style={[inputStyle(focusedField === 'artist'), { marginBottom: 18 }]}
+          />
 
-          {/* Roll Badge (shown when part of a roll) */}
-          {rollContext && (
-            <View className="bg-gray-900 px-4 py-3 rounded-xl flex-row items-center">
-              <Text className="text-yellow-400 text-lg mr-2">🎞️</Text>
-              <Text className="text-gray-300">{rollContext.rollName}</Text>
-              <Text className="text-gray-500 ml-auto text-sm">
-                Frame {rollContext.frameNumber}/{rollContext.totalFrames}
-              </Text>
-            </View>
-          )}
-
-          {/* Shot on Seeker Badge */}
-          <View className="bg-gray-900 px-4 py-3 rounded-xl flex-row items-center">
-            <Text className="text-purple-400 text-lg mr-2">📱</Text>
-            <Text className="text-gray-300">Shot on Seeker</Text>
-            <Text className="text-gray-500 ml-auto text-sm">Auto-added</Text>
-          </View>
-
-          {/* Location Badge */}
-          {photo.meta?.location && (
-            <View className="bg-gray-900 px-4 py-3 rounded-xl flex-row items-center">
-              <Text className="text-purple-400 text-lg mr-2">📍</Text>
-              <Text className="text-gray-300">{photo.meta.location}</Text>
-              <Text className="text-gray-500 ml-auto text-sm">Auto-added</Text>
-            </View>
-          )}
-
-          {/* Weather Badge */}
-          {photo.meta?.weather && (
-            <View className="bg-gray-900 px-4 py-3 rounded-xl flex-row items-center">
-              <Text className="text-purple-400 text-lg mr-2">🌤️</Text>
-              <Text className="text-gray-300">{photo.meta.weather}</Text>
-              <Text className="text-gray-500 ml-auto text-sm">Auto-added</Text>
-            </View>
-          )}
-
-          {/* Wallet Status */}
-          <View className="bg-gray-900 px-4 py-3 rounded-xl">
-            <Text className="text-gray-400 text-sm mb-1">Wallet</Text>
-            {account ? (
-              <Text className="text-green-400">
-                {account.address.toString().slice(0, 8)}...
-                {account.address.toString().slice(-8)}
-              </Text>
-            ) : (
-              <Pressable onPress={connect}>
-                <Text className="text-purple-400">Tap to connect wallet</Text>
-              </Pressable>
+          {/* Auto-added metadata badges */}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 7, marginBottom: 20 }}>
+            {rollContext && (
+              <MetaBadge
+                icon={<IconFilm size={13} color={colors.accent} strokeWidth={1.7} />}
+                label={rollContext.rollName}
+              />
+            )}
+            <MetaBadge icon={<IconPhone size={13} color={colors.accent} strokeWidth={1.7} />} label="Shot on Seeker" />
+            {photo.meta?.location && (
+              <MetaBadge
+                icon={<IconPin size={13} color={colors.accent} strokeWidth={1.7} />}
+                label={photo.meta.location}
+              />
+            )}
+            {photo.meta?.weather && (
+              <MetaBadge
+                icon={<IconWeather size={13} color={colors.accent} strokeWidth={1.7} />}
+                label={photo.meta.weather}
+              />
             )}
           </View>
 
-          {/* Estimated Cost */}
-          <View className="bg-gray-900 px-4 py-3 rounded-xl">
-            <Text className="text-gray-400 text-sm mb-1">Estimated Cost</Text>
-            <Text className="text-white text-lg">~0.01 SOL</Text>
-            <Text className="text-gray-500 text-xs mt-1">
-              Includes IPFS upload + on-chain mint
-            </Text>
+          {/* Wallet + cost row */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              paddingVertical: 13,
+              paddingHorizontal: 15,
+              borderRadius: 12,
+              backgroundColor: colors.surface,
+              borderWidth: 1,
+              borderColor: colors.border,
+              marginBottom: 20,
+            }}
+          >
+            <View
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: 4,
+                backgroundColor: account ? colors.green : colors.textMuted,
+              }}
+            />
+            {account && walletAddress ? (
+              <Text numberOfLines={1} style={{ flex: 1, fontFamily: fonts.mono, fontSize: 12, color: colors.text }}>
+                {walletAddress.slice(0, 4)}…{walletAddress.slice(-4)}
+              </Text>
+            ) : (
+              <Pressable onPress={connect} style={{ flex: 1 }}>
+                <Text style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.accentSoft }}>
+                  TAP TO CONNECT WALLET
+                </Text>
+              </Pressable>
+            )}
+            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textSecondary }}>~0.01 SOL</Text>
           </View>
         </View>
 
         {/* Mint Button */}
-        <View className="p-6">
+        <View style={{ padding: 22, paddingTop: 0 }}>
           <Pressable
             onPress={handleMint}
             disabled={isSubmitting || !account}
-            className={`py-4 rounded-xl items-center ${
-              isSubmitting || !account ? 'bg-gray-700' : 'bg-purple-600'
-            }`}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 9,
+              paddingVertical: 15,
+              borderRadius: 14,
+              backgroundColor: isSubmitting || !account ? colors.surface : colors.accent,
+              borderWidth: 1,
+              borderColor: isSubmitting || !account ? colors.border : colors.accent,
+            }}
           >
             {isSubmitting ? (
-              <ActivityIndicator color="white" />
+              <ActivityIndicator color={colors.accentSoft} />
             ) : (
-              <Text className="text-white font-bold text-lg">
-                {account ? '💎 Add to Mint Queue' : 'Connect Wallet First'}
-              </Text>
+              <>
+                <IconMint size={18} color={account ? colors.white : colors.textMuted} strokeWidth={1.7} />
+                <Text
+                  style={{
+                    fontFamily: fonts.sansBold,
+                    fontSize: 14,
+                    color: account ? colors.white : colors.textMuted,
+                  }}
+                >
+                  {account ? 'Add to Mint Queue' : 'Connect Wallet First'}
+                </Text>
+              </>
             )}
           </Pressable>
         </View>
