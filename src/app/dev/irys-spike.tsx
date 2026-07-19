@@ -87,10 +87,17 @@ export default function IrysSpikeScreen() {
               fontSize: 10.5,
               lineHeight: 16,
               marginBottom: 6,
-              color: e.kind === 'ok' ? colors.greenSoft : e.kind === 'err' ? colors.redSoft : colors.textSoft,
+              color:
+                e.kind === 'ok'
+                  ? colors.greenSoft
+                  : e.kind === 'err'
+                    ? colors.redSoft
+                    : e.kind === 'warn'
+                      ? colors.yellow
+                      : colors.textSoft,
             }}
           >
-            {e.kind === 'ok' ? '✓ ' : e.kind === 'err' ? '✗ ' : '· '}
+            {e.kind === 'ok' ? '✓ ' : e.kind === 'err' ? '✗ ' : e.kind === 'warn' ? '⚠ ' : '· '}
             {e.text}
           </Text>
         ))}
