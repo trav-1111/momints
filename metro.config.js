@@ -22,7 +22,8 @@ const uniwindConfig = withUniwindConfig(config, {
 const nodeShims = {
   buffer: require.resolve('buffer/'),
   stream: require.resolve('stream-browserify'),
-  crypto: require.resolve('react-native-quick-crypto'),
+  // quick-crypto wrapped in a shim that restores __esModule — see shims/crypto.js
+  crypto: require.resolve('./shims/crypto.js'),
   events: require.resolve('events/'),
   util: require.resolve('util/'),
   path: require.resolve('path-browserify'),

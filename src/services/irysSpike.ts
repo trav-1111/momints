@@ -1,6 +1,5 @@
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults'
 import { keypairIdentity, sol, createGenericFile, type Umi } from '@metaplex-foundation/umi'
-import { irysUploader, isIrysUploader } from '@metaplex-foundation/umi-uploader-irys/web'
 import { getClusterRpc } from '../store/network'
 
 /**
@@ -68,6 +67,14 @@ export async function runIrysSpike(log: (e: SpikeEvent) => void): Promise<SpikeR
     const rpcUrl = getClusterRpc('devnet')
     info(`RPC: ${rpcUrl}`)
     info(`Irys node: ${DEVNET_IRYS_ADDRESS}`)
+
+    // Lazy-loaded: expo-router evaluates route modules at startup, and a
+    // module-init crash anywhere in the Irys tree would take out app launch
+    // and route registration. Loading here surfaces any such crash in the
+    // on-screen log instead.
+    info('Loading Irys SDK…')
+    const { irysUploader, isIrysUploader } = await import('@metaplex-foundation/umi-uploader-irys/web')
+    ok(`Irys SDK loaded (${elapsed()})`)
 
     const umi = createUmi(rpcUrl).use(irysUploader({ address: DEVNET_IRYS_ADDRESS }))
     const keypair = umi.eddsa.generateKeypair()
