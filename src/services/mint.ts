@@ -1,13 +1,16 @@
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults'
 import { mplTokenMetadata, createNft } from '@metaplex-foundation/mpl-token-metadata'
+import { mplCore, create as createCoreAsset } from '@metaplex-foundation/mpl-core'
 import {
   createNoopSigner,
   generateSigner,
-  none,
   percentAmount,
   publicKey,
   signTransaction as umiSignTransaction,
   transactionBuilder,
+  type Umi,
+  type PublicKey as UmiPublicKey,
+  type BlockhashWithExpiryBlockHeight,
 } from '@metaplex-foundation/umi'
 import { toWeb3JsTransaction } from '@metaplex-foundation/umi-web3js-adapters'
 import { sendTransactionWithoutConfirmingFactory } from '@solana/kit'
@@ -126,50 +129,85 @@ export function resolveSolanaCluster(runtimeCluster?: 'mainnet' | 'devnet'): 'de
   return 'mainnet'
 }
 
-export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise<MintResult> {
-  const { metadataUri, name, symbol, walletAddress, onPhase, rpc: rpcOverride, cluster } = params
-  const { client, signTransaction } = deps
-
+export function createMintUmi(walletAddress: string, rpcOverride?: string): { umi: Umi; walletPk: UmiPublicKey } {
   const rpcUrl = rpcOverride ?? process.env.EXPO_PUBLIC_SOLANA_RPC ?? 'https://api.mainnet-beta.solana.com'
-
-  const umi = createUmi(rpcUrl).use(mplTokenMetadata())
+  const umi = createUmi(rpcUrl).use(mplTokenMetadata()).use(mplCore())
   const walletPk = publicKey(walletAddress)
   const noopWallet = createNoopSigner(walletPk)
   umi.payer = noopWallet
   umi.identity = noopWallet
+  return { umi, walletPk }
+}
 
+// Build one createNft transaction, pre-signed by the throwaway mint keypair;
+// the wallet's signature is added by the caller. The connected wallet is the
+// sole creator with verified: true — valid because it signs the transaction —
+// so wallets display the NFT as verified instead of flagging it.
+async function buildMintTransaction(
+  umi: Umi,
+  walletPk: UmiPublicKey,
+  item: { name: string; symbol: string; metadataUri: string },
+  blockhash: BlockhashWithExpiryBlockHeight,
+): Promise<{ kitTx: Transaction; mintAddress: string }> {
   const mintSigner = generateSigner(umi)
-
   const [limitItem, priceItem] = computeBudgetItems()
-  const built = await transactionBuilder()
+  const built = transactionBuilder()
     .add(limitItem)
     .add(priceItem)
     .add(
       createNft(umi, {
         mint: mintSigner,
-        name,
-        symbol,
-        uri: metadataUri,
+        name: item.name,
+        symbol: item.symbol,
+        uri: item.metadataUri,
         sellerFeeBasisPoints: percentAmount(0),
-        creators: none(),
+        creators: [{ address: walletPk, verified: true, share: 100 }],
         tokenOwner: walletPk,
       })
     )
-    .buildWithLatestBlockhash(umi)
+    .setBlockhash(blockhash)
+    .build(umi)
 
   const mintSignedUmi = await umiSignTransaction(built, [mintSigner])
   const web3Tx = toWeb3JsTransaction(mintSignedUmi)
-  const serialized = web3Tx.serialize()
-  const kitTx = getTransactionDecoder().decode(serialized)
+  const kitTx = getTransactionDecoder().decode(web3Tx.serialize())
+  return { kitTx, mintAddress: mintSigner.publicKey.toString() }
+}
 
-  onPhase?.('signing')
-  let signedTx: Transaction
-  try {
-    signedTx = await signTransaction(kitTx)
-  } catch (e) {
-    throw mintPhaseError('wallet sign', e)
-  }
+// Prepaid-roll frame: a Metaplex Core asset minted into the roll's collection.
+// The wallet is the collection's update authority (it created it), so its
+// signature authorizes adding the asset — no extra signer needed. Our
+// collections carry no plugins, hence the empty oracle/hook lists.
+async function buildCoreFrameTransaction(
+  umi: Umi,
+  walletPk: UmiPublicKey,
+  item: { name: string; metadataUri: string; collectionAddress: string },
+  blockhash: BlockhashWithExpiryBlockHeight,
+): Promise<{ kitTx: Transaction; mintAddress: string }> {
+  const assetSigner = generateSigner(umi)
+  const [limitItem, priceItem] = computeBudgetItems()
+  const built = transactionBuilder()
+    .add(limitItem)
+    .add(priceItem)
+    .add(
+      createCoreAsset(umi, {
+        asset: assetSigner,
+        collection: { publicKey: publicKey(item.collectionAddress), oracles: [], lifecycleHooks: [] },
+        name: item.name,
+        uri: item.metadataUri,
+        owner: walletPk,
+      })
+    )
+    .setBlockhash(blockhash)
+    .build(umi)
 
+  const assetSignedUmi = await umiSignTransaction(built, [assetSigner])
+  const web3Tx = toWeb3JsTransaction(assetSignedUmi)
+  const kitTx = getTransactionDecoder().decode(web3Tx.serialize())
+  return { kitTx, mintAddress: assetSigner.publicKey.toString() }
+}
+
+export async function sendAndConfirm(client: MintNFTDeps['client'], signedTx: Transaction): Promise<Signature> {
   try {
     assertIsFullySignedTransaction(signedTx)
     assertIsTransactionWithinSizeLimit(signedTx)
@@ -179,7 +217,6 @@ export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise
 
   const signature = getSignatureFromTransaction(signedTx)
 
-  onPhase?.('confirming')
   const sendTransaction = sendTransactionWithoutConfirmingFactory({ rpc: client.rpc })
   try {
     await sendTransaction(signedTx, { commitment: 'confirmed' })
@@ -193,9 +230,115 @@ export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise
     throw mintPhaseError('confirmation', e)
   }
 
-  const mintAddress = mintSigner.publicKey.toString()
+  return signature
+}
+
+export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise<MintResult> {
+  const { metadataUri, name, symbol, walletAddress, onPhase, rpc: rpcOverride } = params
+  const { client, signTransaction } = deps
+
+  const { umi, walletPk } = createMintUmi(walletAddress, rpcOverride)
+  const blockhash = await umi.rpc.getLatestBlockhash()
+  const { kitTx, mintAddress } = await buildMintTransaction(umi, walletPk, { name, symbol, metadataUri }, blockhash)
+
+  onPhase?.('signing')
+  let signedTx: Transaction
+  try {
+    signedTx = await signTransaction(kitTx)
+  } catch (e) {
+    throw mintPhaseError('wallet sign', e)
+  }
+
+  onPhase?.('confirming')
+  const signature = await sendAndConfirm(client, signedTx)
 
   return { signature, mintAddress }
+}
+
+export interface BatchMintItemParams {
+  /** Caller's correlation id (photoId) — echoed back on the result. */
+  id: string
+  metadataUri: string
+  name: string
+  symbol: string
+  /** When set, mint a Metaplex Core asset into this collection (prepaid roll)
+   * instead of a standalone Token Metadata NFT. */
+  collectionAddress?: string
+}
+
+export interface BatchMintItemResult {
+  id: string
+  success: boolean
+  signature?: string
+  mintAddress?: string
+  error?: string
+}
+
+export interface BatchMintDeps {
+  client: Pick<Client, 'rpc' | 'rpcSubscriptions'>
+  /** MWA signs the whole array with a single wallet approval. */
+  signTransactions: (txs: Transaction[]) => Promise<Transaction[]>
+}
+
+/**
+ * Mint several NFTs with ONE wallet approval: every transaction shares a fresh
+ * blockhash, the wallet signs them as a batch, then they're sent and confirmed
+ * in parallel with per-item results.
+ *
+ * A wallet-sign failure (user declined, dead session) throws — no transaction
+ * was sent, the whole batch is unminted. After signing, failures are per-item.
+ */
+export async function mintNFTBatch(
+  items: BatchMintItemParams[],
+  params: Pick<MintNFTParams, 'walletAddress' | 'rpc' | 'cluster' | 'onPhase'>,
+  deps: BatchMintDeps,
+  onItemResult?: (result: BatchMintItemResult) => void,
+): Promise<BatchMintItemResult[]> {
+  const { walletAddress, onPhase, rpc: rpcOverride } = params
+  const { client, signTransactions } = deps
+
+  const { umi, walletPk } = createMintUmi(walletAddress, rpcOverride)
+  const blockhash = await umi.rpc.getLatestBlockhash()
+
+  const built: { kitTx: Transaction; mintAddress: string }[] = []
+  for (const item of items) {
+    built.push(
+      item.collectionAddress
+        ? await buildCoreFrameTransaction(
+            umi,
+            walletPk,
+            { name: item.name, metadataUri: item.metadataUri, collectionAddress: item.collectionAddress },
+            blockhash,
+          )
+        : await buildMintTransaction(umi, walletPk, item, blockhash),
+    )
+  }
+
+  onPhase?.('signing')
+  let signedTxs: Transaction[]
+  try {
+    signedTxs = await signTransactions(built.map((b) => b.kitTx))
+  } catch (e) {
+    throw mintPhaseError('wallet sign', e)
+  }
+
+  onPhase?.('confirming')
+  const results = await Promise.all(
+    signedTxs.map(async (signedTx, i): Promise<BatchMintItemResult> => {
+      const { id } = items[i]
+      let result: BatchMintItemResult
+      try {
+        const signature = await sendAndConfirm(client, signedTx)
+        result = { id, success: true, signature, mintAddress: built[i].mintAddress }
+      } catch (e) {
+        result = { id, success: false, error: e instanceof Error ? e.message : String(e) }
+      }
+      onItemResult?.(result)
+      return result
+    }),
+  )
+
+  return results
 }
 
 export function getSolscanUrl(signature: string, cluster?: 'mainnet' | 'devnet'): string {

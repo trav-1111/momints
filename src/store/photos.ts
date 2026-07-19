@@ -11,7 +11,9 @@ export interface Photo {
   id: string
   uri: string
   capturedAt: number
-  action: 'pending' | 'delete' | 'save' | 'mint'
+  // 'mint' = marked for minting; 'minted' = on-chain, terminal — a minted
+  // photo can never re-enter a mint flow.
+  action: 'pending' | 'delete' | 'save' | 'mint' | 'minted'
   meta?: CaptureMeta
 }
 
@@ -39,7 +41,11 @@ function parsePhoto(raw: unknown): Photo | null {
     typeof p.id !== 'string' ||
     typeof p.uri !== 'string' ||
     typeof p.capturedAt !== 'number' ||
-    (p.action !== 'pending' && p.action !== 'delete' && p.action !== 'save' && p.action !== 'mint')
+    (p.action !== 'pending' &&
+      p.action !== 'delete' &&
+      p.action !== 'save' &&
+      p.action !== 'mint' &&
+      p.action !== 'minted')
   ) {
     return null
   }
@@ -165,7 +171,7 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
 
   clearMintedPhotos: () => {
     set((state) => {
-      const photos = state.photos.filter((photo) => photo.action !== 'mint')
+      const photos = state.photos.filter((photo) => photo.action !== 'minted')
       persistPhotos(photos)
       return { photos }
     })
