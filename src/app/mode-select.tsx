@@ -136,7 +136,20 @@ export default function ModeSelectScreen() {
       aspect,
     })
     if (created) router.replace('/camera')
-  }, [selectedMode, isCreating, account, connect, createRoll, rollSize, artist, domain, filmMode, aspect, selectQuickMode, router])
+  }, [
+    selectedMode,
+    isCreating,
+    account,
+    connect,
+    createRoll,
+    rollSize,
+    artist,
+    domain,
+    filmMode,
+    aspect,
+    selectQuickMode,
+    router,
+  ])
 
   return (
     <ScrollView
@@ -428,6 +441,14 @@ export default function ModeSelectScreen() {
           </>
         )}
       </Pressable>
+
+      {__DEV__ && (
+        <Pressable onPress={() => router.push('/dev/irys-spike')} style={{ marginTop: 20, alignItems: 'center' }}>
+          <Text style={{ fontFamily: fonts.mono, fontSize: 10.5, color: colors.textMuted }}>
+            DEV · IRYS STORAGE SPIKE
+          </Text>
+        </Pressable>
+      )}
     </ScrollView>
   )
 }
