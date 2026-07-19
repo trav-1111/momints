@@ -51,7 +51,8 @@
           "locationWhenInUsePermission": "Momints adds your city and weather to each photo's NFT metadata"
         }
       ],
-      "expo-font"
+      "expo-font",
+      "expo-secure-store"
     ],
     "extra": {
       "eas": {
