@@ -1,0 +1,6 @@
+node_modules/
+.wrangler/
+.bundle-check/
+# Local-dev secrets. NEVER commit. `wrangler deploy` does not read this file —
+# deployed secrets are set with `wrangler secret put`.
+.dev.vars

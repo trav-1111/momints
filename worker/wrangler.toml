@@ -1,0 +1,28 @@
+# Momints roll backend — single Worker, validated by the bundle spike:
+# Irys + mpl-core + photon fit in one Worker with ~41% Free-tier headroom
+# (worker-irys-spike/RESULT2.md). Do NOT split into multiple Workers.
+name = "momints-roll-worker"
+main = "src/index.ts"
+compatibility_date = "2026-07-22"
+compatibility_flags = ["nodejs_compat"]
+
+# Secrets (set via `wrangler secret put <NAME>` — wrangler deploy does NOT read
+# .dev.vars; .dev.vars is local-dev only and gitignored):
+#   IRYS_FUNDING_KEY   base58 secret key of the DEVNET funding wallet. Also the
+#                      Worker's on-chain payer/authority for collection creation
+#                      and frame mints. Never generated, printed, or logged.
+#   SOLANA_RPC_URL     Helius devnet endpoint. REQUIRED — the public
+#                      api.devnet.solana.com blocks Workers' egress IPs for
+#                      transaction sends. No public fallback exists in code.
+
+[[d1_databases]]
+binding = "DB"
+database_name = "momints-rolls"
+database_id = "c4897487-5eef-4569-87a4-14306d4eac72"
+migrations_dir = "migrations"
+
+# Bundle the base cover artwork (JPEG) as raw bytes.
+[[rules]]
+type = "Data"
+globs = ["**/*.jpg"]
+fallthrough = true
