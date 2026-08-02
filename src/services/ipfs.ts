@@ -82,7 +82,7 @@ export async function uploadToIPFS(params: UploadParams): Promise<UploadResult> 
     symbol: 'MOMINT',
     description: `Shot on Seeker by ${artist}`,
     image: imageUri,
-    external_url: 'https://momints.app',
+    external_url: 'https://momints.xyz',
     attributes: [
       {
         trait_type: 'Artist',

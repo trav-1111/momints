@@ -7,7 +7,7 @@ import { useNetworkStore, getClusterRpc } from '../store/network'
 
 const identity = {
   name: 'Momints',
-  uri: 'https://momints.app',
+  uri: 'https://momints.xyz',
 }
 
 export default function Layout() {
