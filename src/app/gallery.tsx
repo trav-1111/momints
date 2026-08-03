@@ -10,6 +10,7 @@ import { useMintQueue } from '../store/mintQueue'
 import { useRollActions } from '../hooks/useRollActions'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { RollCard } from '../components/RollCard'
+import { FinishedRollCard } from '../components/FinishedRollCard'
 import { colors, fonts } from '../theme'
 import { IconBack, IconCheck, IconMint, IconSave, IconTrash } from '../components/icons'
 
@@ -44,12 +45,31 @@ export default function GalleryScreen() {
     }).length
   }, [activeRoll, photos, mintHistory])
 
-  // Everything below operates on quick photos only — the roll's frames stay
-  // hidden (surfaced via the roll card), never in this grid.
-  const quickPhotos = useMemo(() => {
-    const rollIds = new Set(activeRoll?.frameIds ?? [])
-    return photos.filter((p) => !rollIds.has(p.id))
-  }, [activeRoll, photos])
+  // Everything below operates on quick photos only — a roll's frames stay
+  // hidden (surfaced via the roll cards), never in this grid. Keyed off the
+  // photo's own rollId: the old activeRoll.frameIds subtraction dumped all 12
+  // frames into this grid the moment completeRoll() cleared the session.
+  const quickPhotos = useMemo(() => photos.filter((p) => !p.rollId), [photos])
+
+  // Frames of rolls that are no longer the active roll, newest roll first.
+  // Keeps finished rolls reachable and grouped instead of vanishing with the
+  // session — nothing is deleted when a roll completes.
+  const finishedRolls = useMemo(() => {
+    const groups = new Map<string, { rollId: string; name: string; frames: Photo[] }>()
+    for (const p of photos) {
+      if (!p.rollId || p.rollId === activeRoll?.id) continue
+      const group = groups.get(p.rollId) ?? {
+        rollId: p.rollId,
+        name: p.rollName ?? 'Roll',
+        frames: [],
+      }
+      group.frames.push(p)
+      groups.set(p.rollId, group)
+    }
+    return [...groups.values()].sort(
+      (a, b) => (b.frames[0]?.capturedAt ?? 0) - (a.frames[0]?.capturedAt ?? 0),
+    )
+  }, [photos, activeRoll])
 
   const photosForMint = useMemo(() => quickPhotos.filter((p) => p.action === 'mint'), [quickPhotos])
 
@@ -126,8 +146,20 @@ export default function GalleryScreen() {
           }
           Alert.alert('Saved', `${savedCount} photo(s) saved to camera roll`)
         } else {
+          // Minted photos are terminal and silently ignored by the store, so
+          // report what actually changed rather than what was selected.
+          const eligible = ids.filter((id) => photos.find((p) => p.id === id)?.action !== 'minted')
           setBulkAction(ids, action)
-          Alert.alert('Marked', `${ids.length} photo(s) marked for ${action}`)
+          const skipped = ids.length - eligible.length
+          if (eligible.length === 0) {
+            Alert.alert('Already Minted', 'These photos are already on-chain and cannot be minted again.')
+          } else {
+            Alert.alert(
+              'Marked',
+              `${eligible.length} photo(s) marked for ${action}` +
+                (skipped > 0 ? ` — ${skipped} already minted, skipped.` : ''),
+            )
+          }
         }
       } catch (error) {
         console.error('Bulk action failed:', error)
@@ -145,11 +177,12 @@ export default function GalleryScreen() {
       if (selectMode) {
         toggleSelect(photo.id)
       } else {
-        const index = photos.findIndex((p) => p.id === photo.id)
-        router.push(`/review?startIndex=${index}`)
+        // Pass the id, not an index: review filters its list differently from
+        // this grid, so an index computed here pointed at the wrong photo.
+        router.push(`/review?photoId=${photo.id}`)
       }
     },
-    [selectMode, toggleSelect, photos, router],
+    [selectMode, toggleSelect, router],
   )
 
   const handleProceedToMint = useCallback(() => {
@@ -305,14 +338,21 @@ export default function GalleryScreen() {
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 12 }}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
-            activeRoll && !selectMode ? (
-              <RollCard
-                roll={activeRoll}
-                mintedCount={rollMintedCount}
-                onMint={() => mintRoll()}
-                onDiscard={discardRoll}
-              />
-            ) : null
+            selectMode ? null : (
+              <>
+                {activeRoll && (
+                  <RollCard
+                    roll={activeRoll}
+                    mintedCount={rollMintedCount}
+                    onMint={() => mintRoll()}
+                    onDiscard={discardRoll}
+                  />
+                )}
+                {finishedRolls.map((roll) => (
+                  <FinishedRollCard key={roll.rollId} name={roll.name} frames={roll.frames} />
+                ))}
+              </>
+            )
           }
           ListEmptyComponent={
             <View style={{ alignItems: 'center', paddingVertical: 48 }}>

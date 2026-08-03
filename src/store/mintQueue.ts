@@ -59,12 +59,32 @@ interface MintQueueStore {
 
 const HISTORY_FILE = 'mint-history'
 
+// Mint history is the app's only durable record of what is already on-chain —
+// the photo store reconciles against it on startup — so a malformed file must
+// degrade to "no history" per item rather than poisoning that check.
+function parseHistoryItem(raw: unknown): MintHistoryItem | null {
+  if (raw === null || typeof raw !== 'object') return null
+  const h = raw as Record<string, unknown>
+  if (typeof h.id !== 'string' || typeof h.txSignature !== 'string') return null
+  return {
+    id: h.id,
+    photoUri: typeof h.photoUri === 'string' ? h.photoUri : '',
+    title: typeof h.title === 'string' ? h.title : 'Untitled',
+    artist: typeof h.artist === 'string' ? h.artist : '',
+    txSignature: h.txSignature,
+    mintAddress: typeof h.mintAddress === 'string' ? h.mintAddress : undefined,
+    mintedAt: typeof h.mintedAt === 'number' ? h.mintedAt : 0,
+  }
+}
+
 async function readHistory(): Promise<MintHistoryItem[]> {
   try {
     const file = new File(Paths.document, `${HISTORY_FILE}.json`)
     if (!file.exists) return []
     const text = await file.text()
-    return JSON.parse(text) ?? []
+    const data: unknown = JSON.parse(text)
+    if (!Array.isArray(data)) return []
+    return data.map(parseHistoryItem).filter((h): h is MintHistoryItem => h !== null)
   } catch {
     return []
   }
@@ -158,7 +178,8 @@ export const useMintQueue = create<MintQueueStore>((set, get) => ({
   },
 }))
 
-// Load persisted history asynchronously on startup
-readHistory().then((mintHistory) => {
+// Load persisted history asynchronously on startup. Exported so the photo
+// store can sequence its mint-history reconcile after this read lands.
+export const historyHydrated: Promise<void> = readHistory().then((mintHistory) => {
   useMintQueue.setState({ mintHistory })
 })

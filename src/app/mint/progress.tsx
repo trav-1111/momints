@@ -74,13 +74,20 @@ export default function MintProgressScreen() {
   // roll's frames included only when queued (developed + sent to mint) so a
   // quick-mint session doesn't drag un-queued roll frames along. Photos whose
   // action is 'minted' never appear — that state is terminal.
+  //
+  // Mint history is checked too (as useMintRoll already does): it is the
+  // durable record of what is on-chain, so anything in it is excluded even if
+  // its photo record somehow still reads 'mint'. Last line of defence against
+  // minting a duplicate of a frame the user already paid to mint.
   useEffect(() => {
     const { activeRoll } = useSessionStore.getState()
-    const { queue: currentQueue } = useMintQueue.getState()
+    const { queue: currentQueue, mintHistory } = useMintQueue.getState()
     const rollFrameIds = new Set(activeRoll?.frameIds ?? [])
+    const alreadyMinted = new Set(mintHistory.map((h) => h.id))
     const photos = usePhotoStore
       .getState()
       .getPhotosForMint()
+      .filter((p) => !alreadyMinted.has(p.id))
       .filter((p) => !rollFrameIds.has(p.id) || currentQueue.some((q) => q.photoId === p.id))
     setProgress(
       photos.map((photo) => ({

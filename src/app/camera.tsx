@@ -121,10 +121,9 @@ export default function CameraScreen() {
 
   // The quick-mint button only concerns photos outside any roll — a roll's
   // frames go straight to the mint queue, not this screen's review flow.
-  const quickPhotos = useMemo(() => {
-    const rollIds = new Set(rollInProgress?.frameIds ?? [])
-    return photos.filter((p) => !rollIds.has(p.id))
-  }, [photos, rollInProgress])
+  // Keyed off the photo's own rollId, so frames of a *finished* roll stay
+  // excluded once the session's activeRoll is cleared.
+  const quickPhotos = useMemo(() => photos.filter((p) => !p.rollId), [photos])
   // Already-minted photos are terminal — they shouldn't inflate the "needs a
   // mint decision" badge.
   const quickMintBadgeCount = useMemo(
@@ -191,7 +190,15 @@ export default function CameraScreen() {
 
       sourceFile.move(destFile)
 
-      const photoId = addPhoto(destFile.uri)
+      // Stamp roll membership at creation so it outlives the session's
+      // activeRoll — completeRoll() clears that, and frames must stay grouped
+      // as a roll (and out of the quick-photo flows) forever after.
+      const photoId = addPhoto(
+        destFile.uri,
+        activeMode === 'roll' && activeRoll !== null
+          ? { id: activeRoll.id, name: activeRoll.name }
+          : undefined,
+      )
 
       // Post-capture processing: crop to the aspect ratio first, then apply the
       // roll's film emulation (B&W). Both no-op where not needed and fall back

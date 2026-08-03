@@ -1,12 +1,11 @@
-import { useState, useCallback, useRef, useMemo } from 'react'
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
 import { View, Text, Pressable, FlatList, Image, Dimensions, Alert, StatusBar, ViewStyle } from 'react-native'
-import { useRouter } from 'expo-router'
+import { useRouter, useLocalSearchParams } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as MediaLibrary from 'expo-media-library'
 import { File } from 'expo-file-system'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore, Photo } from '../store/photos'
-import { useSessionStore } from '../store/session'
 import { colors, fonts, tracking } from '../theme'
 import { IconArrowRight, IconBack, IconMint, IconSave, IconTrash } from '../components/icons'
 
@@ -26,16 +25,27 @@ export default function ReviewScreen() {
   const allPhotos = usePhotoStore((state) => state.photos)
   const setAction = usePhotoStore((state) => state.setAction)
   const removePhoto = usePhotoStore((state) => state.removePhoto)
-  const activeRoll = useSessionStore((s) => s.activeRoll)
 
-  // Quick-photo reviewer only — a roll's frames stay hidden here until the roll
-  // is developed and reviewed on the dedicated develop screen.
-  const photos = useMemo(() => {
-    const rollIds = new Set(activeRoll?.frameIds ?? [])
-    return allPhotos.filter((p) => !rollIds.has(p.id))
-  }, [allPhotos, activeRoll])
+  // Quick-photo reviewer only, and only for photos that still need a decision:
+  //  - roll frames are surfaced by the gallery's roll card, never here (keyed
+  //    off the photo's own rollId so finished rolls stay excluded too)
+  //  - minted photos are terminal; showing them offered a "Mint" button that
+  //    would mint a duplicate NFT of a frame already on-chain
+  const photos = useMemo(
+    () => allPhotos.filter((p) => !p.rollId && p.action !== 'minted'),
+    [allPhotos],
+  )
 
-  const [currentIndex, setCurrentIndex] = useState(0)
+  // Opening from the gallery lands on the tapped photo. Resolved by id rather
+  // than a passed index, since this list and the gallery grid filter differently.
+  const { photoId } = useLocalSearchParams<{ photoId?: string }>()
+  const initialIndex = useMemo(() => {
+    if (!photoId) return 0
+    const i = photos.findIndex((p) => p.id === photoId)
+    return i >= 0 ? i : 0
+  }, [photoId, photos])
+
+  const [currentIndex, setCurrentIndex] = useState(initialIndex)
   const [isProcessing, setIsProcessing] = useState(false)
 
   const pendingCount = useMemo(() => photos.filter((p) => p.action === 'pending').length, [photos])
@@ -72,6 +82,19 @@ export default function ReviewScreen() {
       flatListRef.current.scrollToIndex({ index, animated: true })
     }
   }, [])
+
+  // The photo store hydrates asynchronously, so the deep-linked photo often
+  // isn't in the list on first render. Land on it once, the first time the
+  // list is non-empty, and never fight the user's scrolling afterwards.
+  const didInitialScroll = useRef(false)
+  useEffect(() => {
+    if (didInitialScroll.current || photos.length === 0) return
+    didInitialScroll.current = true
+    if (initialIndex > 0) {
+      setCurrentIndex(initialIndex)
+      setTimeout(() => scrollToIndex(initialIndex), 0)
+    }
+  }, [photos.length, initialIndex, scrollToIndex])
 
   const saveToGallery = useCallback(async (uri: string): Promise<boolean> => {
     try {
