@@ -22,6 +22,7 @@ const USAGE = `Momints roll backend (devnet).
   GET  /rolls/open?wallet=<address>     the wallet's open roll, if any
   GET  /rolls/<collection>              roll + per-frame checkpoint status
   POST /rolls/<collection>/frames       mint one frame (multipart form)
+  POST /rolls/<collection>/complete     close a roll early (frees the wallet's slot)
 See README.md for request shapes and the operator runbook.
 `
 
@@ -151,6 +152,29 @@ async function handleGetRoll(ctx: RequestContext, collectionAddress: string): Pr
   })
 }
 
+/**
+ * Close a roll early. Idempotent: completing an already-COMPLETE roll is a
+ * success, so a client that retries (or races its own auto-completion when the
+ * last frame lands) never sees a spurious failure.
+ */
+async function handleCompleteRoll(ctx: RequestContext, collectionAddress: string): Promise<Response> {
+  const roll = await ctx.db.getRoll(collectionAddress)
+  if (!roll) throw new HttpError(404, `No roll with collection address ${collectionAddress}`)
+
+  const alreadyComplete = roll.status === 'COMPLETE'
+  if (!alreadyComplete) {
+    await ctx.db.closeRoll(collectionAddress)
+  }
+  return json({
+    collectionAddress: roll.collection_address,
+    name: roll.name,
+    size: roll.size,
+    mintedCount: roll.minted_count,
+    status: 'COMPLETE' as const,
+    alreadyComplete,
+  })
+}
+
 async function handleGetOpenRoll(ctx: RequestContext, url: URL): Promise<Response> {
   const wallet = url.searchParams.get('wallet')
   if (!wallet) throw new HttpError(400, 'Missing ?wallet= query parameter')
@@ -189,6 +213,7 @@ type Route =
   | { kind: 'open-roll' }
   | { kind: 'get-roll'; collection: string }
   | { kind: 'mint-frame'; collection: string }
+  | { kind: 'complete-roll'; collection: string }
 
 /** Match secret-requiring routes. Unknown paths 404 before env validation. */
 function matchRoute(method: string, path: string): Route | null {
@@ -196,11 +221,12 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/treasury/status') return { kind: 'treasury-status' }
   if (method === 'POST' && path === '/rolls') return { kind: 'create-roll' }
   if (method === 'GET' && path === '/rolls/open') return { kind: 'open-roll' }
-  const rollMatch = path.match(/^\/rolls\/([1-9A-HJ-NP-Za-km-z]{32,44})(\/frames)?$/)
+  const rollMatch = path.match(/^\/rolls\/([1-9A-HJ-NP-Za-km-z]{32,44})(\/frames|\/complete)?$/)
   if (rollMatch) {
-    const [, collection, framesSuffix] = rollMatch
-    if (!framesSuffix && method === 'GET') return { kind: 'get-roll', collection }
-    if (framesSuffix && method === 'POST') return { kind: 'mint-frame', collection }
+    const [, collection, suffix] = rollMatch
+    if (!suffix && method === 'GET') return { kind: 'get-roll', collection }
+    if (suffix === '/frames' && method === 'POST') return { kind: 'mint-frame', collection }
+    if (suffix === '/complete' && method === 'POST') return { kind: 'complete-roll', collection }
   }
   return null
 }
@@ -242,6 +268,8 @@ export default {
           return await handleGetRoll(ctx, route.collection)
         case 'mint-frame':
           return await handleMintFrame(ctx, request, route.collection)
+        case 'complete-roll':
+          return await handleCompleteRoll(ctx, route.collection)
       }
     } catch (err) {
       if (err instanceof HttpError) {

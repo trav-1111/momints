@@ -85,7 +85,14 @@ POST /rolls                        JSON { wallet, size, artist?, skrIdentity?, l
 GET  /rolls/open?wallet=<address>  the wallet's open roll, if any
 GET  /rolls/<collection>           roll + per-frame checkpoint status
 POST /rolls/<collection>/frames    multipart: image (file), frameIndex, description?, attributes? (JSON array)
+POST /rolls/<collection>/complete  close a roll early, freeing the wallet's OPEN slot
 ```
+
+`/complete` exists because a roll only auto-completes at `mintedCount >= size`.
+A discarded roll, or a frame that never mints, would otherwise hold the
+wallet's single open slot forever. It is idempotent (completing an already
+`COMPLETE` roll succeeds, with `alreadyComplete: true`) and destructive of
+nothing — minted frames and their on-chain assets are untouched.
 
 ## Setup
 

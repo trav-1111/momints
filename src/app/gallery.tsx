@@ -1,24 +1,20 @@
 import { useCallback, useMemo, useState } from 'react'
-import {
-  View,
-  Text,
-  Pressable,
-  FlatList,
-  Image,
-  Dimensions,
-  Alert,
-} from 'react-native'
+import { View, Text, Pressable, FlatList, Image, Dimensions, Alert } from 'react-native'
 import { useRouter } from 'expo-router'
 import * as MediaLibrary from 'expo-media-library'
 import { File } from 'expo-file-system'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore, Photo } from '../store/photos'
 import { useSessionStore } from '../store/session'
-import { useDevelopRoll } from '../hooks/useDevelopRoll'
+import { useMintQueue } from '../store/mintQueue'
+import { useRollActions } from '../hooks/useRollActions'
+import { useMintRoll } from '../hooks/useMintRoll'
 import { RollCard } from '../components/RollCard'
+import { colors, fonts } from '../theme'
+import { IconBack, IconCheck, IconMint, IconSave, IconTrash } from '../components/icons'
 
 const { width } = Dimensions.get('window')
-const ITEM_SIZE = (width - 48) / 3
+const ITEM_SIZE = (width - 36 - 12) / 3
 
 export default function GalleryScreen() {
   const router = useRouter()
@@ -26,7 +22,6 @@ export default function GalleryScreen() {
   const photos = usePhotoStore((state) => state.photos)
   const setAction = usePhotoStore((state) => state.setAction)
   const setBulkAction = usePhotoStore((state) => state.setBulkAction)
-  const removePhoto = usePhotoStore((state) => state.removePhoto)
   const removeBulkPhotos = usePhotoStore((state) => state.removeBulkPhotos)
 
   const [selectMode, setSelectMode] = useState(false)
@@ -34,25 +29,29 @@ export default function GalleryScreen() {
   const [isProcessing, setIsProcessing] = useState(false)
 
   const activeRoll = useSessionStore((s) => s.activeRoll)
-  const { developRoll } = useDevelopRoll()
+  const mintHistory = useMintQueue((s) => s.mintHistory)
+  const { discardRoll } = useRollActions()
+  const { mintRoll } = useMintRoll()
 
-  // Roll frames live in the roll card; everything below operates on quick photos only
-  const rollFrames = useMemo(() => {
-    if (!activeRoll) return []
-    return activeRoll.frameIds
-      .map((fid) => photos.find((p) => p.id === fid))
-      .filter((p): p is Photo => p !== undefined)
-  }, [activeRoll, photos])
+  // Frames already on-chain (this session or a previous one) — the roll card
+  // shows partial-mint progress from this.
+  const rollMintedCount = useMemo(() => {
+    if (!activeRoll) return 0
+    const mintedIds = new Set(mintHistory.map((h) => h.id))
+    return activeRoll.frameIds.filter((fid) => {
+      const p = photos.find((photo) => photo.id === fid)
+      return p?.action === 'minted' || mintedIds.has(fid)
+    }).length
+  }, [activeRoll, photos, mintHistory])
 
+  // Everything below operates on quick photos only — the roll's frames stay
+  // hidden (surfaced via the roll card), never in this grid.
   const quickPhotos = useMemo(() => {
     const rollIds = new Set(activeRoll?.frameIds ?? [])
     return photos.filter((p) => !rollIds.has(p.id))
   }, [activeRoll, photos])
 
-  const photosForMint = useMemo(
-    () => quickPhotos.filter((p) => p.action === 'mint'),
-    [quickPhotos]
-  )
+  const photosForMint = useMemo(() => quickPhotos.filter((p) => p.action === 'mint'), [quickPhotos])
 
   const toggleSelect = useCallback((id: string) => {
     setSelectedIds((prev) => {
@@ -138,7 +137,7 @@ export default function GalleryScreen() {
         exitSelectMode()
       }
     },
-    [selectedIds, photos, setBulkAction, removeBulkPhotos, setAction, saveToGallery, exitSelectMode]
+    [selectedIds, photos, setBulkAction, removeBulkPhotos, setAction, saveToGallery, exitSelectMode],
   )
 
   const handlePhotoPress = useCallback(
@@ -150,30 +149,24 @@ export default function GalleryScreen() {
         router.push(`/review?startIndex=${index}`)
       }
     },
-    [selectMode, toggleSelect, photos, router]
+    [selectMode, toggleSelect, photos, router],
   )
 
   const handleProceedToMint = useCallback(() => {
     if (photosForMint.length === 0) {
-      Alert.alert(
-        'No Photos Selected',
-        'Please mark at least one photo for minting.'
-      )
+      Alert.alert('No Photos Selected', 'Please mark at least one photo for minting.')
       return
     }
     if (!account) {
-      Alert.alert(
-        'Wallet Required',
-        'Connect your Solana wallet to mint NFTs.',
-        [
-          { text: 'Not Now', style: 'cancel' },
-          { text: 'Connect', onPress: () => connect() },
-        ]
-      )
+      Alert.alert('Wallet Required', 'Connect your Solana wallet to mint NFTs.', [
+        { text: 'Not Now', style: 'cancel' },
+        { text: 'Connect', onPress: () => connect() },
+      ])
       return
     }
     router.push('/mint/progress')
   }, [photosForMint.length, router, account, connect])
+
 
   const handleBack = useCallback(() => {
     if (selectMode) {
@@ -182,32 +175,6 @@ export default function GalleryScreen() {
       router.back()
     }
   }, [selectMode, exitSelectMode, router])
-
-  const getActionIcon = (action: Photo['action']) => {
-    switch (action) {
-      case 'mint':
-        return '💎'
-      case 'save':
-        return '💾'
-      case 'delete':
-        return '🗑️'
-      default:
-        return ''
-    }
-  }
-
-  const getActionColor = (action: Photo['action']) => {
-    switch (action) {
-      case 'mint':
-        return 'bg-purple-600'
-      case 'save':
-        return 'bg-green-600'
-      case 'delete':
-        return 'bg-red-600'
-      default:
-        return 'bg-gray-600'
-    }
-  }
 
   const renderPhoto = useCallback(
     ({ item }: { item: Photo }) => {
@@ -222,103 +189,110 @@ export default function GalleryScreen() {
               toggleSelect(item.id)
             }
           }}
-          className="m-1 rounded-lg overflow-hidden"
-          style={{ width: ITEM_SIZE, height: ITEM_SIZE }}
+          style={{ margin: 2, borderRadius: 8, overflow: 'hidden', width: ITEM_SIZE, height: ITEM_SIZE }}
         >
-          <Image
-            source={{ uri: item.uri }}
-            style={{ width: '100%', height: '100%' }}
-            resizeMode="cover"
-          />
+          <Image source={{ uri: item.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
 
           {selectMode && (
             <View
-              className={`absolute top-1 left-1 w-7 h-7 rounded-full items-center justify-center border-2 ${
-                isSelected ? 'bg-purple-600 border-purple-400' : 'bg-black/40 border-white/60'
-              }`}
+              style={{
+                position: 'absolute',
+                top: 5,
+                left: 5,
+                width: 22,
+                height: 22,
+                borderRadius: 11,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: isSelected ? colors.accent : 'rgba(0,0,0,0.4)',
+                borderWidth: 1.5,
+                borderColor: isSelected ? colors.accent : 'rgba(255,255,255,0.6)',
+              }}
             >
-              {isSelected && <Text className="text-white text-sm">✓</Text>}
+              {isSelected && <IconCheck size={12} color={colors.white} strokeWidth={2.4} />}
             </View>
           )}
 
           {!selectMode && item.action !== 'pending' && (
             <View
-              className={`absolute top-1 right-1 w-7 h-7 rounded-full items-center justify-center ${getActionColor(item.action)}`}
+              style={{
+                position: 'absolute',
+                top: 5,
+                right: 5,
+                width: 18,
+                height: 18,
+                borderRadius: 9,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor:
+                  item.action === 'mint' || item.action === 'minted'
+                    ? 'rgba(125,123,240,0.92)'
+                    : item.action === 'save'
+                      ? 'rgba(58,208,122,0.92)'
+                      : 'rgba(229,84,75,0.92)',
+              }}
             >
-              <Text className="text-sm">{getActionIcon(item.action)}</Text>
+              {item.action === 'mint' && <IconMint size={10} color={colors.white} strokeWidth={2} />}
+              {item.action === 'minted' && <IconCheck size={10} color={colors.white} strokeWidth={2.4} />}
+              {item.action === 'save' && <IconSave size={10} color="#06210f" strokeWidth={2.4} />}
+              {item.action === 'delete' && <IconTrash size={10} color={colors.white} strokeWidth={2} />}
             </View>
           )}
         </Pressable>
       )
     },
-    [selectMode, selectedIds, handlePhotoPress, toggleSelect]
+    [selectMode, selectedIds, handlePhotoPress, toggleSelect],
   )
 
   const pendingCount = quickPhotos.filter((p) => p.action === 'pending').length
   const mintCount = photosForMint.length
-  const saveCount = quickPhotos.filter((p) => p.action === 'save').length
-  const deleteCount = quickPhotos.filter((p) => p.action === 'delete').length
+  const proceedEnabled = pendingCount === 0 && mintCount > 0
 
   return (
-    <View className="flex-1 bg-black">
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
       {/* Header */}
-      <View className="pt-12 pb-4 px-6 flex-row items-center justify-between border-b border-gray-800">
-        <Pressable onPress={handleBack} className="p-2">
-          <Text className="text-white text-2xl">{selectMode ? '✕' : '←'}</Text>
-        </Pressable>
-
-        <Text className="text-white text-xl font-bold">
-          {selectMode ? `${selectedIds.size} Selected` : 'All Photos'}
-        </Text>
+      <View
+        style={{
+          paddingTop: 52,
+          paddingBottom: 16,
+          paddingHorizontal: 18,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+          <Pressable onPress={handleBack} hitSlop={8}>
+            <IconBack size={21} color={colors.text} strokeWidth={1.7} />
+          </Pressable>
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 18, color: colors.text }}>
+            {selectMode ? `${selectedIds.size} Selected` : 'All Photos'}
+          </Text>
+        </View>
 
         {selectMode ? (
-          <Pressable
-            onPress={selectedIds.size === quickPhotos.length ? deselectAll : selectAll}
-            className="p-2"
-          >
-            <Text className="text-purple-400 font-medium">
-              {selectedIds.size === quickPhotos.length ? 'None' : 'All'}
+          <Pressable onPress={selectedIds.size === quickPhotos.length ? deselectAll : selectAll} hitSlop={8}>
+            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accent }}>
+              {selectedIds.size === quickPhotos.length ? 'NONE' : 'ALL'}
             </Text>
           </Pressable>
         ) : (
-          <View className="flex-row items-center gap-1">
-            <Pressable onPress={() => router.push('/past-mints')} className="p-2">
-              <Text className="text-gray-400 text-sm">History</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+            <Pressable onPress={() => router.push('/past-mints')} hitSlop={8}>
+              <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textSecondary }}>HISTORY</Text>
             </Pressable>
-            <Pressable onPress={() => setSelectMode(true)} className="p-2">
-              <Text className="text-purple-400 font-medium">Select</Text>
+            <Pressable onPress={() => setSelectMode(true)} hitSlop={8}>
+              <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accent }}>SELECT</Text>
             </Pressable>
           </View>
         )}
       </View>
 
-      {/* Stats - only in normal mode */}
-      {!selectMode && (
-        <View className="flex-row justify-center py-4 gap-4 border-b border-gray-800">
-          <View className="items-center">
-            <Text className="text-gray-400 text-xs">Pending</Text>
-            <Text className="text-white text-lg font-bold">{pendingCount}</Text>
-          </View>
-          <View className="items-center">
-            <Text className="text-purple-400 text-xs">Mint</Text>
-            <Text className="text-purple-400 text-lg font-bold">{mintCount}</Text>
-          </View>
-          <View className="items-center">
-            <Text className="text-green-400 text-xs">Save</Text>
-            <Text className="text-green-400 text-lg font-bold">{saveCount}</Text>
-          </View>
-          <View className="items-center">
-            <Text className="text-red-400 text-xs">Delete</Text>
-            <Text className="text-red-400 text-lg font-bold">{deleteCount}</Text>
-          </View>
-        </View>
-      )}
-
-      {/* Photo Grid (+ roll card header when a roll is active) */}
+      {/* Photo Grid (+ roll status card header when a roll is active) */}
       {photos.length === 0 && !activeRoll ? (
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-gray-400 text-lg">No photos yet</Text>
-          <Text className="text-gray-500 text-sm mt-2">
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+          <Text style={{ fontFamily: fonts.sans, fontSize: 16, color: colors.textSecondary }}>No photos yet</Text>
+          <Text style={{ fontFamily: fonts.sans, fontSize: 13, color: colors.textMuted, marginTop: 8 }}>
             Go back to camera to take some photos
           </Text>
         </View>
@@ -328,17 +302,22 @@ export default function GalleryScreen() {
           renderItem={renderPhoto}
           keyExtractor={(item) => item.id}
           numColumns={3}
-          contentContainerStyle={{ padding: 12 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 12 }}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={
             activeRoll && !selectMode ? (
-              <RollCard roll={activeRoll} frames={rollFrames} onDevelop={developRoll} />
+              <RollCard
+                roll={activeRoll}
+                mintedCount={rollMintedCount}
+                onMint={() => mintRoll()}
+                onDiscard={discardRoll}
+              />
             ) : null
           }
           ListEmptyComponent={
-            <View className="items-center py-12">
-              <Text className="text-gray-400 text-lg">No quick photos</Text>
-              <Text className="text-gray-500 text-sm mt-2">
+            <View style={{ alignItems: 'center', paddingVertical: 48 }}>
+              <Text style={{ fontFamily: fonts.sans, fontSize: 16, color: colors.textSecondary }}>No quick photos</Text>
+              <Text style={{ fontFamily: fonts.sans, fontSize: 13, color: colors.textMuted, marginTop: 8 }}>
                 Photos outside the roll will appear here
               </Text>
             </View>
@@ -348,67 +327,113 @@ export default function GalleryScreen() {
 
       {/* Bottom Action */}
       {quickPhotos.length > 0 && (
-        <View className="p-6 border-t border-gray-800">
+        <View style={{ padding: 18, paddingBottom: 26, borderTopWidth: 1, borderTopColor: colors.border }}>
           {selectMode ? (
             <View>
-              <View className="flex-row gap-3">
+              <View style={{ flexDirection: 'row', gap: 10 }}>
                 <Pressable
                   onPress={() => handleBulkAction('delete')}
                   disabled={selectedIds.size === 0 || isProcessing}
-                  className={`flex-1 py-3 rounded-xl items-center ${
-                    selectedIds.size > 0 ? 'bg-red-600' : 'bg-gray-700'
-                  }`}
+                  style={{
+                    flex: 1,
+                    alignItems: 'center',
+                    gap: 6,
+                    paddingVertical: 12,
+                    borderRadius: 14,
+                    backgroundColor: colors.surface,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    opacity: selectedIds.size > 0 ? 1 : 0.5,
+                  }}
                 >
-                  <Text className="text-white font-bold">🗑️ Delete</Text>
+                  <IconTrash size={18} color={colors.redSoft} />
+                  <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 11, color: colors.redSoft }}>Delete</Text>
                 </Pressable>
 
                 <Pressable
                   onPress={() => handleBulkAction('save')}
                   disabled={selectedIds.size === 0 || isProcessing}
-                  className={`flex-1 py-3 rounded-xl items-center ${
-                    selectedIds.size > 0 ? 'bg-green-600' : 'bg-gray-700'
-                  }`}
+                  style={{
+                    flex: 1,
+                    alignItems: 'center',
+                    gap: 6,
+                    paddingVertical: 12,
+                    borderRadius: 14,
+                    backgroundColor: colors.surface,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    opacity: selectedIds.size > 0 ? 1 : 0.5,
+                  }}
                 >
-                  <Text className="text-white font-bold">💾 Save</Text>
+                  <IconSave size={18} color={colors.greenSoft} />
+                  <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 11, color: colors.greenSoft }}>Save</Text>
                 </Pressable>
 
                 <Pressable
                   onPress={() => handleBulkAction('mint')}
                   disabled={selectedIds.size === 0 || isProcessing}
-                  className={`flex-1 py-3 rounded-xl items-center ${
-                    selectedIds.size > 0 ? 'bg-purple-600' : 'bg-gray-700'
-                  }`}
+                  style={{
+                    flex: 1,
+                    alignItems: 'center',
+                    gap: 6,
+                    paddingVertical: 12,
+                    borderRadius: 14,
+                    backgroundColor: selectedIds.size > 0 ? colors.accent : colors.surface,
+                    borderWidth: 1,
+                    borderColor: selectedIds.size > 0 ? colors.accent : colors.border,
+                  }}
                 >
-                  <Text className="text-white font-bold">💎 Mint</Text>
+                  <IconMint size={18} color={selectedIds.size > 0 ? colors.white : colors.textMuted} />
+                  <Text
+                    style={{
+                      fontFamily: fonts.sansBold,
+                      fontSize: 11,
+                      color: selectedIds.size > 0 ? colors.white : colors.textMuted,
+                    }}
+                  >
+                    Mint
+                  </Text>
                 </Pressable>
               </View>
-              <Text className="text-gray-400 text-center text-sm mt-2">
+              <Text
+                style={{
+                  fontFamily: fonts.sans,
+                  fontSize: 12,
+                  color: colors.textMuted,
+                  textAlign: 'center',
+                  marginTop: 10,
+                }}
+              >
                 Long press any photo to start selecting
               </Text>
             </View>
           ) : (
-            <View>
-              <Pressable
-                onPress={handleProceedToMint}
-                disabled={pendingCount > 0 || mintCount === 0}
-                className={`py-4 rounded-xl items-center ${
-                  pendingCount > 0 || mintCount === 0 ? 'bg-gray-700' : 'bg-purple-600'
-                }`}
+            <Pressable
+              onPress={handleProceedToMint}
+              disabled={!proceedEnabled}
+              style={{
+                alignItems: 'center',
+                paddingVertical: 14,
+                borderRadius: 14,
+                backgroundColor: proceedEnabled ? colors.accent : colors.surface,
+                borderWidth: 1,
+                borderColor: proceedEnabled ? colors.accent : colors.border,
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: fonts.sansBold,
+                  fontSize: 13.5,
+                  color: proceedEnabled ? colors.white : colors.textMuted,
+                }}
               >
-                <Text className="text-white font-bold text-lg">
-                  {pendingCount > 0
-                    ? `Review remaining (${pendingCount} pending)`
-                    : mintCount > 0
-                    ? `Proceed to Mint (${mintCount} photos)`
+                {pendingCount > 0
+                  ? `Review remaining (${pendingCount} pending)`
+                  : mintCount > 0
+                    ? `Proceed to Mint (${mintCount})`
                     : 'No photos to mint'}
-                </Text>
-              </Pressable>
-              {pendingCount > 0 && (
-                <Text className="text-gray-400 text-center text-sm mt-2">
-                  Long press to select multiple photos
-                </Text>
-              )}
-            </View>
+              </Text>
+            </Pressable>
           )}
         </View>
       )}
