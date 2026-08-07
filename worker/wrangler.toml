@@ -1,6 +1,11 @@
 # Momints roll backend — single Worker, validated by the bundle spike:
-# Irys + mpl-core + photon fit in one Worker with ~41% Free-tier headroom
-# (worker-irys-spike/RESULT2.md). Do NOT split into multiple Workers.
+# Irys + mpl-core + photon fit in one Worker (worker-irys-spike/RESULT2.md).
+# Do NOT split into multiple Workers.
+#
+# PLAN: Workers PAID. Required by the quick-mint finalize queue (Queues is not
+# on the Free plan) and by R2. The old "~41% Free-tier headroom" bundle
+# constraint no longer applies — the cap moved from 3 MiB to 10 MiB — but the
+# single-Worker decision stands on its own merits.
 name = "momints-roll-worker"
 main = "src/index.ts"
 compatibility_date = "2026-07-22"
@@ -30,11 +35,50 @@ compatibility_flags = ["nodejs_compat"]
 [triggers]
 crons = ["0 */6 * * *"]
 
+[vars]
+# Static "developing" metadata every quick mint is minted against before its
+# real image exists. Uploaded ONCE by scripts/upload-placeholder.mjs — permanent
+# and reused forever. TODO: fill in after the first run.
+QUICK_PLACEHOLDER_URI = ""
+# Receives quick-mint fees. MUST match the app's EXPO_PUBLIC_ROLL_TREASURY:
+# the Worker verifies payment to this exact address out of the landed
+# transaction, so a mismatch rejects finalizes the user has already paid for.
+QUICK_TREASURY_ADDRESS = "o4w1THGTu1ufcRUEpVn45zttpcPoQBFFSLtMYeu5HpW"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "momints-rolls"
 database_id = "c4897487-5eef-4569-87a4-14306d4eac72"
 migrations_dir = "migrations"
+
+# Staged quick-mint images, held between the stage request and a verified fee.
+# Nothing here has been paid for yet, so the bucket needs a lifecycle rule to
+# reap abandoned stages (operator, one-time):
+#   wrangler r2 bucket lifecycle add momints-quick-staging \
+#     --name expire-staging --prefix quick-staging/ --expire-days 1
+[[r2_buckets]]
+binding = "QUICK_STAGING"
+bucket_name = "momints-quick-staging"
+
+# Finalize jobs, enqueued only after a fee-paying mint is VERIFIED on-chain.
+[[queues.producers]]
+binding = "QUICK_FINALIZE"
+queue = "momints-quick-finalize"
+
+# max_batch_size = 1: every message does an Arweave upload plus an on-chain
+# transaction. Batching would put unrelated paid mints behind one another's
+# failures and risk the consumer's wall-clock budget.
+[[queues.consumers]]
+queue = "momints-quick-finalize"
+max_batch_size = 1
+max_retries = 5
+dead_letter_queue = "momints-quick-finalize-dlq"
+
+# The DLQ is consumed by the same Worker (discriminated on batch.queue) purely
+# to alert: a dead-lettered message is a PAID mint stuck on the placeholder.
+[[queues.consumers]]
+queue = "momints-quick-finalize-dlq"
+max_batch_size = 10
 
 # Bundle the base cover artwork (JPEG) as raw bytes.
 [[rules]]

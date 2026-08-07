@@ -90,6 +90,9 @@ GET  /rolls/open?wallet=<address>  the wallet's open roll, if any
 GET  /rolls/<collection>           roll + per-frame checkpoint status
 POST /rolls/<collection>/frames    multipart: image (file), frameIndex, description?, attributes? (JSON array)
 POST /rolls/<collection>/complete  close a roll early, freeing the wallet's OPEN slot
+POST /quick/stage                  multipart: image (file), metadata (JSON), wallet
+POST /quick/finalize               JSON { stagingKey, signature, assetAddress }
+GET  /quick/<asset>                quick-mint finalize status
 ```
 
 `/complete` exists because a roll only auto-completes at `mintedCount >= size`.
@@ -97,6 +100,53 @@ A discarded roll, or a frame that never mints, would otherwise hold the
 wallet's single open slot forever. It is idempotent (completing an already
 `COMPLETE` roll succeeds, with `alreadyComplete: true`) and destructive of
 nothing — minted frames and their on-chain assets are untouched.
+
+## Quick mints: the fee flow
+
+Rolls prepay. Quick shots did not — they were free, which was fine while their
+images went to IPFS and cost the operator nothing. Putting them on Arweave
+means each one buys permanent bytes, so each one has to pay for itself.
+
+It does that in **one user signature**, and without ever letting the treasury
+buy storage it has not been paid for:
+
+```
+POST /quick/stage      image -> R2, metadata -> D1 (STAGED). Nothing spent.
+                       Returns placeholderUri, feeLamports, treasury, updateAuthority.
+[client]               ONE transaction: mint a Core asset against the PLACEHOLDER
+                       uri + transfer the fee to the treasury. User signs once.
+POST /quick/finalize   Verify that transaction LANDED (fee actually paid, asset
+                       actually created, Worker actually holds update authority),
+                       record the fee, enqueue (FINALIZING).
+[queue]                R2 -> Arweave (image, then metadata), then swap the asset's
+                       uri off the placeholder and hand update authority to the
+                       owner, in one instruction (FINALIZED).
+```
+
+**The invariant: no Arweave spend without a confirmed, fee-paying mint already
+on-chain.** The fee is read from the landed transaction as a treasury balance
+delta — never from anything the client says. `quick_mints.signature` and
+`.asset_address` are UNIQUE, so one payment buys exactly one upload.
+
+Why a placeholder at all: the fee has to ride inside the mint transaction to
+stay a single signature, but the real image URI does not exist until after that
+transaction is verified. So the asset is minted against a permanent, static
+"Developing…" document and swapped seconds later. That document is uploaded
+**once**, by `scripts/upload-placeholder.mjs`, and reused by every quick mint.
+
+`/quick/stage` is deliberately unauthenticated. Staging cannot spend Arweave,
+so a bogus stage costs only an R2 object — bounded by the 3 MiB image ceiling,
+`MAX_STAGES_PER_WALLET_PER_DAY`, and the bucket's 24h lifecycle rule.
+
+Once a fee is collected the posture inverts: the consumer must never drop work.
+An empty Irys balance **retries** (with an alert) rather than dead-lettering,
+and only exhausting `max_retries` moves a job to the DLQ, where it becomes a
+critical Discord ping. The scheduled sweep is the backstop for a queue message
+that was never sent at all.
+
+Pricing lives in `src/quick/config.ts`. `QUICK_MINT_FEE_LAMPORTS` is anchored to
+the `MAX_QUICK_IMAGE_BYTES` ceiling so a large photo can never lose money —
+**keep those two coupled** when tuning either.
 
 ## Setup
 
@@ -111,9 +161,24 @@ wrangler secret put SOLANA_RPC_URL      # Helius devnet endpoint
 wrangler secret put DISCORD_WEBHOOK_URL # optional: treasury-monitor alert channel
 wrangler secret put OPERATOR_DISCORD_ID # optional: your Discord user ID (@-mention on critical)
 
+# Quick-mint infrastructure (Workers PAID plan — Queues is not on Free)
+wrangler queues create momints-quick-finalize
+wrangler queues create momints-quick-finalize-dlq
+wrangler r2 bucket create momints-quick-staging
+wrangler r2 bucket lifecycle add momints-quick-staging \
+  --name expire-staging --prefix quick-staging/ --expire-days 1
+
+# Upload the placeholder ONCE, then paste the URI into wrangler.toml [vars]
+IRYS_FUNDING_KEY=<base58> SOLANA_RPC_URL=<helius> \
+  node scripts/upload-placeholder.mjs ../CollectionPlaceholder.png
+
 npm run typecheck
 npm run deploy
 ```
+
+`QUICK_TREASURY_ADDRESS` in `wrangler.toml [vars]` **must match the app's
+`EXPO_PUBLIC_ROLL_TREASURY`**. A mismatch rejects every finalize — after the
+user has already paid.
 
 Secrets are Worker Secrets only — never in the repo, `wrangler.toml`, or
 `.env`. For local dev put them in `.dev.vars` (gitignored). **`wrangler
@@ -122,9 +187,11 @@ deploy` does not read `.dev.vars`** — deployed secrets must be set with
 payer/authority for collection creation and frame mints; no code generates,
 prints, or logs key material.
 
-Pending TODOs in code: `ROLL_FEE_LAMPORTS_12/24` (placeholder pricing), the
-D1 `database_id`, the final base cover artwork (`assets/base-cover.jpg` is a
-placeholder), `AutomatedSink`, `AutomatedFunding`.
+Pending TODOs in code: `ROLL_FEE_LAMPORTS_12/24` and `QUICK_MINT_FEE_LAMPORTS`
+(placeholder pricing), `QUICK_PLACEHOLDER_URI` / `QUICK_TREASURY_ADDRESS`
+(empty until the one-time setup above), the D1 `database_id`, the final base
+cover artwork (`assets/base-cover.jpg` is a placeholder), `AutomatedSink`,
+`AutomatedFunding`.
 
 ## Operator runbook
 
@@ -263,3 +330,34 @@ resume from their checkpoint, and a mint whose confirmation timed out is
 resolved against the chain before any re-mint. A 429 rate-limit mid-mint is
 likewise resumable — the Worker retries with backoff internally, and if it
 still fails the checkpoint holds for the next attempt.
+
+### Re-driving a stuck quick mint (the DLQ alert)
+
+A **critical** "Quick mint stuck on placeholder" alert means a finalize job
+exhausted its retries. Read it as recoverable, not lost: the alert only fires
+for rows that were verified as paid, so the fee is banked and the asset exists
+on-chain — it is just still showing the "Developing…" placeholder.
+
+```sh
+# What state did it stop in? (image_uri / arweave_uri are the checkpoints)
+wrangler d1 execute momints-rolls --remote --command \
+  "SELECT id, status, asset_address, image_uri, arweave_uri, created_at FROM quick_mints WHERE status='DEAD'"
+```
+
+Fix the underlying cause first — usually an empty Irys balance (top it up per
+the section above) or an RPC outage. Then re-drive:
+
+```sh
+# Back to FINALIZING so the consumer will act on it, then re-enqueue.
+wrangler d1 execute momints-rolls --remote --command \
+  "UPDATE quick_mints SET status='FINALIZING' WHERE id='<quickMintId>'"
+```
+
+The scheduled sweep re-enqueues `FINALIZING` rows older than an hour, so that
+single UPDATE is enough — no manual queue publish needed. Re-running is always
+safe: uploads resume from their checkpoints rather than repeating, and the URI
+swap reads the asset before touching it, so a job that actually completed just
+marks itself `FINALIZED`.
+
+Rows in `STAGED` are the opposite case — nothing was ever paid or uploaded.
+Leave them; the sweep and the bucket lifecycle rule reap them within a day.

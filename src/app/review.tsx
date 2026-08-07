@@ -1,44 +1,56 @@
-import { useState, useCallback, useRef, useMemo } from 'react'
-import {
-  View,
-  Text,
-  Pressable,
-  FlatList,
-  Image,
-  Dimensions,
-  Alert,
-  StatusBar,
-} from 'react-native'
-import { useRouter } from 'expo-router'
+import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
+import { View, Text, Pressable, FlatList, Image, Dimensions, Alert, StatusBar, ViewStyle } from 'react-native'
+import { useRouter, useLocalSearchParams } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as MediaLibrary from 'expo-media-library'
 import { File } from 'expo-file-system'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore, Photo } from '../store/photos'
+import { colors, fonts, tracking } from '../theme'
+import { IconArrowRight, IconBack, IconMint, IconSave, IconTrash } from '../components/icons'
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window')
+
+const chip: ViewStyle = {
+  backgroundColor: colors.chipBg,
+  borderWidth: 1,
+  borderColor: colors.chipBorder,
+}
 
 export default function ReviewScreen() {
   const router = useRouter()
   const { account, connect } = useMobileWallet()
   const flatListRef = useRef<FlatList>(null)
 
-  const photos = usePhotoStore((state) => state.photos)
+  const allPhotos = usePhotoStore((state) => state.photos)
   const setAction = usePhotoStore((state) => state.setAction)
   const removePhoto = usePhotoStore((state) => state.removePhoto)
 
-  const [currentIndex, setCurrentIndex] = useState(0)
+  // Quick-photo reviewer only, and only for photos that still need a decision:
+  //  - roll frames are surfaced by the gallery's roll card, never here (keyed
+  //    off the photo's own rollId so finished rolls stay excluded too)
+  //  - minted photos are terminal; showing them offered a "Mint" button that
+  //    would mint a duplicate NFT of a frame already on-chain
+  const photos = useMemo(
+    () => allPhotos.filter((p) => !p.rollId && p.action !== 'minted'),
+    [allPhotos],
+  )
+
+  // Opening from the gallery lands on the tapped photo. Resolved by id rather
+  // than a passed index, since this list and the gallery grid filter differently.
+  const { photoId } = useLocalSearchParams<{ photoId?: string }>()
+  const initialIndex = useMemo(() => {
+    if (!photoId) return 0
+    const i = photos.findIndex((p) => p.id === photoId)
+    return i >= 0 ? i : 0
+  }, [photoId, photos])
+
+  const [currentIndex, setCurrentIndex] = useState(initialIndex)
   const [isProcessing, setIsProcessing] = useState(false)
 
-  const pendingCount = useMemo(
-    () => photos.filter((p) => p.action === 'pending').length,
-    [photos]
-  )
+  const pendingCount = useMemo(() => photos.filter((p) => p.action === 'pending').length, [photos])
 
-  const mintCount = useMemo(
-    () => photos.filter((p) => p.action === 'mint').length,
-    [photos]
-  )
+  const mintCount = useMemo(() => photos.filter((p) => p.action === 'mint').length, [photos])
 
   const allMarked = pendingCount === 0 && photos.length > 0
 
@@ -62,7 +74,7 @@ export default function ReviewScreen() {
       }
       return -1
     },
-    [photos]
+    [photos],
   )
 
   const scrollToIndex = useCallback((index: number) => {
@@ -71,14 +83,24 @@ export default function ReviewScreen() {
     }
   }, [])
 
+  // The photo store hydrates asynchronously, so the deep-linked photo often
+  // isn't in the list on first render. Land on it once, the first time the
+  // list is non-empty, and never fight the user's scrolling afterwards.
+  const didInitialScroll = useRef(false)
+  useEffect(() => {
+    if (didInitialScroll.current || photos.length === 0) return
+    didInitialScroll.current = true
+    if (initialIndex > 0) {
+      setCurrentIndex(initialIndex)
+      setTimeout(() => scrollToIndex(initialIndex), 0)
+    }
+  }, [photos.length, initialIndex, scrollToIndex])
+
   const saveToGallery = useCallback(async (uri: string): Promise<boolean> => {
     try {
       const { status } = await MediaLibrary.requestPermissionsAsync()
       if (status !== 'granted') {
-        Alert.alert(
-          'Permission Required',
-          'Please grant photo library access to save photos.'
-        )
+        Alert.alert('Permission Required', 'Please grant photo library access to save photos.')
         return false
       }
       await MediaLibrary.saveToLibraryAsync(uri)
@@ -140,7 +162,7 @@ export default function ReviewScreen() {
       saveToGallery,
       findNextPendingIndex,
       scrollToIndex,
-    ]
+    ],
   )
 
   const handleProceedToMint = useCallback(() => {
@@ -149,109 +171,104 @@ export default function ReviewScreen() {
       return
     }
     if (!account) {
-      Alert.alert(
-        'Wallet Required',
-        'Connect your Solana wallet to mint NFTs.',
-        [
-          { text: 'Not Now', style: 'cancel' },
-          { text: 'Connect', onPress: () => connect() },
-        ]
-      )
+      Alert.alert('Wallet Required', 'Connect your Solana wallet to mint NFTs.', [
+        { text: 'Not Now', style: 'cancel' },
+        { text: 'Connect', onPress: () => connect() },
+      ])
       return
     }
     router.push('/mint/progress')
   }, [mintCount, router, account, connect])
 
-  const onViewableItemsChanged = useCallback(
-    ({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
-      if (viewableItems.length > 0 && viewableItems[0].index !== null) {
-        setCurrentIndex(viewableItems[0].index)
-      }
-    },
-    []
-  )
+  const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: { index: number | null }[] }) => {
+    if (viewableItems.length > 0 && viewableItems[0].index !== null) {
+      setCurrentIndex(viewableItems[0].index)
+    }
+  }, [])
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 50 }).current
 
-  const getActionStyle = (action: Photo['action'], buttonAction: Photo['action']) => {
-    if (action === buttonAction) {
-      switch (buttonAction) {
-        case 'delete':
-          return 'bg-red-600 border-red-400'
-        case 'save':
-          return 'bg-green-600 border-green-400'
-        case 'mint':
-          return 'bg-purple-600 border-purple-400'
-        default:
-          return 'bg-gray-800/80 border-gray-600'
-      }
-    }
-    return 'bg-gray-800/80 border-gray-600'
-  }
-
   const renderItem = useCallback(
-    ({ item, index }: { item: Photo; index: number }) => (
+    ({ item }: { item: Photo }) => (
       <View style={{ width: screenWidth, height: screenHeight }}>
-        <Image
-          source={{ uri: item.uri }}
-          style={{ width: screenWidth, height: screenHeight }}
-          resizeMode="cover"
+        <Image source={{ uri: item.uri }} style={{ width: screenWidth, height: screenHeight }} resizeMode="cover" />
+
+        <LinearGradient
+          colors={['rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 120 }}
         />
 
         <LinearGradient
-          colors={['rgba(0,0,0,0.6)', 'transparent']}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: 120,
-          }}
+          colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.78)']}
+          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 230 }}
         />
 
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.8)']}
-          style={{
-            position: 'absolute',
-            bottom: 0,
-            left: 0,
-            right: 0,
-            height: 280,
-          }}
-        />
-
+        {/* Marked-action badge */}
         {item.action !== 'pending' && (
           <View
-            className={`absolute top-20 right-6 px-4 py-2 rounded-full ${
-              item.action === 'mint'
-                ? 'bg-purple-600'
-                : item.action === 'save'
-                ? 'bg-green-600'
-                : 'bg-red-600'
-            }`}
+            style={{
+              position: 'absolute',
+              top: 80,
+              right: 18,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              paddingVertical: 6,
+              paddingHorizontal: 11,
+              borderRadius: 999,
+              backgroundColor:
+                item.action === 'mint' || item.action === 'minted'
+                  ? 'rgba(125,123,240,0.9)'
+                  : item.action === 'save'
+                    ? 'rgba(58,208,122,0.9)'
+                    : 'rgba(229,84,75,0.9)',
+            }}
           >
-            <Text className="text-white font-bold capitalize">{item.action}</Text>
+            {(item.action === 'mint' || item.action === 'minted') && (
+              <IconMint size={13} color={colors.white} strokeWidth={1.8} />
+            )}
+            {item.action === 'save' && <IconSave size={13} color={colors.white} strokeWidth={1.8} />}
+            {item.action === 'delete' && <IconTrash size={13} color={colors.white} strokeWidth={1.8} />}
+            <Text
+              style={{
+                fontFamily: fonts.monoBold,
+                fontSize: 10,
+                letterSpacing: tracking(0.06, 10),
+                color: colors.white,
+              }}
+            >
+              {item.action.toUpperCase()}
+            </Text>
           </View>
         )}
       </View>
     ),
-    []
+    [],
   )
 
   if (photos.length === 0) {
     return (
-      <View className="flex-1 bg-black items-center justify-center">
+      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
         <StatusBar barStyle="light-content" />
-        <Text className="text-gray-400 text-lg">No photos to review</Text>
-        <Pressable onPress={handleBack} className="mt-4 px-6 py-3 bg-purple-600 rounded-xl">
-          <Text className="text-white font-bold">Back to Camera</Text>
+        <Text style={{ fontFamily: fonts.sans, fontSize: 16, color: colors.textSecondary }}>No photos to review</Text>
+        <Pressable
+          onPress={handleBack}
+          style={{
+            marginTop: 16,
+            paddingHorizontal: 24,
+            paddingVertical: 12,
+            borderRadius: 14,
+            backgroundColor: colors.accent,
+          }}
+        >
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 14, color: colors.white }}>Back to Camera</Text>
         </Pressable>
       </View>
     )
   }
 
   return (
-    <View className="flex-1 bg-black">
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <StatusBar barStyle="light-content" />
 
       <FlatList
@@ -271,90 +288,132 @@ export default function ReviewScreen() {
         })}
       />
 
-      <View className="absolute top-12 left-0 right-0 flex-row items-center justify-between px-6">
-        <Pressable onPress={handleBack} className="p-2">
-          <Text className="text-white text-2xl">←</Text>
+      {/* Top bar */}
+      <View
+        style={{
+          position: 'absolute',
+          top: 20,
+          left: 18,
+          right: 18,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <Pressable
+          onPress={handleBack}
+          style={[chip, { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' }]}
+        >
+          <IconBack size={19} color={colors.text} strokeWidth={1.7} />
         </Pressable>
 
-        <Text className="text-white text-lg font-medium">
-          {currentIndex + 1} of {photos.length}
-        </Text>
+        <View style={[chip, { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999 }]}>
+          <Text style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.text }}>
+            {currentIndex + 1} / {photos.length}
+          </Text>
+        </View>
 
-        <Pressable onPress={handleViewAll} className="px-4 py-2 bg-gray-800/80 rounded-full">
-          <Text className="text-white font-medium">View All</Text>
+        <Pressable
+          onPress={handleViewAll}
+          style={[chip, { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999 }]}
+        >
+          <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 12, color: colors.text }}>View All</Text>
         </Pressable>
       </View>
 
-      <View className="absolute bottom-0 left-0 right-0 pb-12 px-6">
+      {/* Bottom actions */}
+      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: 26, paddingHorizontal: 18 }}>
         {allMarked ? (
-          <View className="items-center">
-            <View className="flex-row gap-4 mb-4">
-              <View className="items-center">
-                <Text className="text-purple-400 text-2xl font-bold">{mintCount}</Text>
-                <Text className="text-gray-400 text-sm">Mint</Text>
-              </View>
-              <View className="items-center">
-                <Text className="text-green-400 text-2xl font-bold">
-                  {photos.filter((p) => p.action === 'save').length}
-                </Text>
-                <Text className="text-gray-400 text-sm">Save</Text>
-              </View>
-            </View>
-
-            <Pressable
-              onPress={handleProceedToMint}
-              disabled={mintCount === 0}
-              className={`w-full py-4 rounded-xl items-center ${
-                mintCount > 0 ? 'bg-purple-600' : 'bg-gray-700'
-              }`}
+          <Pressable
+            onPress={handleProceedToMint}
+            disabled={mintCount === 0}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              paddingVertical: 14,
+              borderRadius: 14,
+              backgroundColor: mintCount > 0 ? colors.accentTint : colors.surface,
+              borderWidth: 1,
+              borderColor: mintCount > 0 ? colors.accent : colors.border,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.sansBold,
+                fontSize: 13.5,
+                color: mintCount > 0 ? colors.accentSoft : colors.textMuted,
+              }}
             >
-              <Text className="text-white font-bold text-lg">
-                {mintCount > 0 ? `Proceed to Mint (${mintCount})` : 'No Photos to Mint'}
-              </Text>
-            </Pressable>
-          </View>
+              {mintCount > 0 ? `Proceed to Mint (${mintCount})` : 'No Photos to Mint'}
+            </Text>
+            {mintCount > 0 && <IconArrowRight size={16} color={colors.accentSoft} strokeWidth={1.8} />}
+          </Pressable>
         ) : (
           <>
-            <View className="flex-row justify-center mb-4">
-              <View className="bg-gray-800/60 px-4 py-2 rounded-full">
-                <Text className="text-gray-300 text-sm">
-                  {pendingCount} photo{pendingCount !== 1 ? 's' : ''} remaining
+            {/* Remaining pill */}
+            <View style={{ alignItems: 'center', marginBottom: 14 }}>
+              <View style={[chip, { paddingVertical: 6, paddingHorizontal: 13, borderRadius: 999 }]}>
+                <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textSoft }}>
+                  {pendingCount} REMAINING
                 </Text>
               </View>
             </View>
 
-            <View className="flex-row gap-3">
+            <View style={{ flexDirection: 'row', gap: 10 }}>
               <Pressable
                 onPress={() => handleAction('delete')}
                 disabled={isProcessing}
-                className={`flex-1 py-4 rounded-xl items-center border-2 ${getActionStyle(
-                  currentPhoto?.action ?? 'pending',
-                  'delete'
-                )}`}
+                style={{
+                  flex: 1,
+                  alignItems: 'center',
+                  gap: 7,
+                  paddingVertical: 14,
+                  borderRadius: 16,
+                  backgroundColor: colors.tileBg,
+                  borderWidth: 1,
+                  borderColor: colors.tileBorder,
+                }}
               >
-                <Text className="text-white font-bold text-lg">🗑️ Delete</Text>
+                <IconTrash size={21} color={colors.redSoft} />
+                <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 11, color: colors.redSoft }}>Delete</Text>
               </Pressable>
 
               <Pressable
                 onPress={() => handleAction('save')}
                 disabled={isProcessing}
-                className={`flex-1 py-4 rounded-xl items-center border-2 ${getActionStyle(
-                  currentPhoto?.action ?? 'pending',
-                  'save'
-                )}`}
+                style={{
+                  flex: 1,
+                  alignItems: 'center',
+                  gap: 7,
+                  paddingVertical: 14,
+                  borderRadius: 16,
+                  backgroundColor: colors.tileBg,
+                  borderWidth: 1,
+                  borderColor: colors.tileBorder,
+                }}
               >
-                <Text className="text-white font-bold text-lg">💾 Save</Text>
+                <IconSave size={21} color={colors.greenSoft} />
+                <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 11, color: colors.greenSoft }}>Save</Text>
               </Pressable>
 
               <Pressable
                 onPress={() => handleAction('mint')}
                 disabled={isProcessing}
-                className={`flex-1 py-4 rounded-xl items-center border-2 ${getActionStyle(
-                  currentPhoto?.action ?? 'pending',
-                  'mint'
-                )}`}
+                style={{
+                  flex: 1,
+                  alignItems: 'center',
+                  gap: 7,
+                  paddingVertical: 14,
+                  borderRadius: 16,
+                  backgroundColor: colors.accent,
+                  borderWidth: 1,
+                  borderColor: colors.accent,
+                }}
               >
-                <Text className="text-white font-bold text-lg">💎 Mint</Text>
+                <IconMint size={21} color={colors.white} />
+                <Text style={{ fontFamily: fonts.sansBold, fontSize: 11, color: colors.white }}>Mint</Text>
               </Pressable>
             </View>
           </>

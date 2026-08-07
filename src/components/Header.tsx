@@ -1,4 +1,6 @@
 import { View, Text, Pressable } from 'react-native'
+import { colors, fonts } from '../theme'
+import { IconBack } from './icons'
 
 interface HeaderProps {
   title: string
@@ -8,16 +10,25 @@ interface HeaderProps {
 
 export function Header({ title, onBack, rightAction }: HeaderProps) {
   return (
-    <View className="pt-12 pb-4 px-6 flex-row items-center justify-between border-b border-gray-800">
-      {onBack ? (
-        <Pressable onPress={onBack} className="p-2 -ml-2">
-          <Text className="text-white text-2xl">←</Text>
-        </Pressable>
-      ) : (
-        <View className="w-10" />
-      )}
-      <Text className="text-white text-xl font-bold">{title}</Text>
-      {rightAction || <View className="w-10" />}
+    <View
+      style={{
+        paddingTop: 52,
+        paddingBottom: 16,
+        paddingHorizontal: 22,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        {onBack && (
+          <Pressable onPress={onBack} hitSlop={8}>
+            <IconBack size={21} color={colors.text} strokeWidth={1.7} />
+          </Pressable>
+        )}
+        <Text style={{ fontFamily: fonts.sansBold, fontSize: 18, color: colors.text }}>{title}</Text>
+      </View>
+      {rightAction ?? <View style={{ width: 24 }} />}
     </View>
   )
 }

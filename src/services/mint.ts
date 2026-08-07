@@ -1,13 +1,16 @@
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults'
 import { mplTokenMetadata, createNft } from '@metaplex-foundation/mpl-token-metadata'
+import { mplCore, create as createCoreAsset } from '@metaplex-foundation/mpl-core'
 import {
   createNoopSigner,
   generateSigner,
-  none,
   percentAmount,
   publicKey,
   signTransaction as umiSignTransaction,
   transactionBuilder,
+  type Umi,
+  type PublicKey as UmiPublicKey,
+  type BlockhashWithExpiryBlockHeight,
 } from '@metaplex-foundation/umi'
 import { toWeb3JsTransaction } from '@metaplex-foundation/umi-web3js-adapters'
 import { sendTransactionWithoutConfirmingFactory } from '@solana/kit'
@@ -65,9 +68,57 @@ function computeBudgetItems() {
   return [limitItem, priceItem]
 }
 
+const SYSTEM_PROGRAM_ID = publicKey('11111111111111111111111111111111')
+
+// System Program Transfer: u32 instruction index (2) + u64 lamports, LE.
+// Written as two u32s to avoid BigInt (RN compatibility, same as above).
+function encodeSystemTransfer(lamports: number): Uint8Array {
+  const data = new Uint8Array(12)
+  const view = new DataView(data.buffer)
+  view.setUint32(0, 2, true)
+  view.setUint32(4, lamports >>> 0, true)
+  view.setUint32(8, Math.floor(lamports / 0x100000000), true)
+  return data
+}
+
+/**
+ * A SOL transfer as a transaction-builder item, so a fee can ride inside the
+ * transaction it pays for. Lives here rather than in rollCollection.ts because
+ * both the roll fee and the quick-mint fee need it, and rollCollection.ts
+ * already depends on this module.
+ */
+export function transferSolItem(from: UmiPublicKey, to: UmiPublicKey, lamports: number) {
+  return {
+    instruction: {
+      programId: SYSTEM_PROGRAM_ID,
+      keys: [
+        { pubkey: from, isSigner: true, isWritable: true },
+        { pubkey: to, isSigner: false, isWritable: true },
+      ],
+      data: encodeSystemTransfer(lamports),
+    },
+    signers: [],
+    bytesCreatedOnChain: 0,
+  }
+}
+
 export type MintPhaseCallback = (phase: 'signing' | 'confirming') => void
 
+/**
+ * Everything the Worker's POST /quick/stage hands back for a quick mint.
+ *
+ * The server owns all of it — fee, treasury, update authority, placeholder —
+ * so pricing can move without an app release and the transaction the user
+ * signs can never drift from what the Worker will verify.
+ */
+export interface QuickMintTerms {
+  treasury: string
+  feeLamports: number
+  updateAuthority: string
+}
+
 export interface MintNFTParams {
+  /** For a quick mint this is the placeholder URI, not the final metadata. */
   metadataUri: string
   name: string
   symbol: string
@@ -75,6 +126,16 @@ export interface MintNFTParams {
   rpc?: string
   cluster?: 'mainnet' | 'devnet'
   onPhase?: MintPhaseCallback
+  /** Set for a Worker-backed quick mint: bundles the fee, mints a Core asset. */
+  quick?: QuickMintTerms
+  /**
+   * Fired the moment a signature exists, BEFORE the transaction is sent.
+   *
+   * The confirm wait is the longest window in which the app can die holding a
+   * mint the user has paid for, so anything that needs to survive a crash has
+   * to be written here rather than from the return value.
+   */
+  onSigned?: (info: { signature: string; mintAddress: string }) => void
 }
 
 export interface MintNFTDeps {
@@ -102,17 +163,48 @@ function mintPhaseError(phaseLabel: string, err: unknown): Error {
   })
 }
 
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
+}
+
+/** Backoff between rate-limited send retries. Length caps the retry count, and
+ * the total stays well inside the shared blockhash's validity window. */
+const SEND_RETRY_BACKOFFS_MS = [400, 800, 1600]
+
+/** Transient throttling from the RPC (the public devnet endpoint rate-limits
+ * hard once a chunk sends and polls in parallel) — worth retrying, unlike a
+ * malformed transaction or an on-chain failure. */
+function isRateLimitError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return msg.includes('429') || msg.includes('503') || msg.includes('too many requests') || msg.includes('rate limit')
+}
+
 async function waitUntilSignatureConfirmed(rpc: Client['rpc'], signature: Signature, maxAttempts = 45): Promise<void> {
   for (let i = 0; i < maxAttempts; i++) {
-    const { value } = await rpc.getSignatureStatuses([signature]).send()
-    const status = value[0]
+    // A throttled status poll says nothing about the transaction — it may
+    // already have landed. Treating it as a failure would report a false
+    // negative, and the retry would mint a duplicate asset. Back off and keep
+    // polling within the same attempt budget.
+    const status = await rpc
+      .getSignatureStatuses([signature])
+      .send()
+      .then((r) => r.value[0])
+      .catch((e) => {
+        if (!isRateLimitError(e)) throw e
+        return 'throttled' as const
+      })
+
+    if (status === 'throttled') {
+      await delay(2000)
+      continue
+    }
     if (status?.err) {
       throw new Error(typeof status.err === 'string' ? status.err : JSON.stringify(status.err))
     }
     if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') {
       return
     }
-    await new Promise((r) => setTimeout(r, 1000))
+    await delay(1000)
   }
   throw new Error('Transaction confirmation timed out')
 }
@@ -126,50 +218,133 @@ export function resolveSolanaCluster(runtimeCluster?: 'mainnet' | 'devnet'): 'de
   return 'mainnet'
 }
 
-export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise<MintResult> {
-  const { metadataUri, name, symbol, walletAddress, onPhase, rpc: rpcOverride, cluster } = params
-  const { client, signTransaction } = deps
-
+export function createMintUmi(walletAddress: string, rpcOverride?: string): { umi: Umi; walletPk: UmiPublicKey } {
   const rpcUrl = rpcOverride ?? process.env.EXPO_PUBLIC_SOLANA_RPC ?? 'https://api.mainnet-beta.solana.com'
-
-  const umi = createUmi(rpcUrl).use(mplTokenMetadata())
+  const umi = createUmi(rpcUrl).use(mplTokenMetadata()).use(mplCore())
   const walletPk = publicKey(walletAddress)
   const noopWallet = createNoopSigner(walletPk)
   umi.payer = noopWallet
   umi.identity = noopWallet
+  return { umi, walletPk }
+}
 
+// Build one createNft transaction, pre-signed by the throwaway mint keypair;
+// the wallet's signature is added by the caller. The connected wallet is the
+// sole creator with verified: true — valid because it signs the transaction —
+// so wallets display the NFT as verified instead of flagging it.
+async function buildMintTransaction(
+  umi: Umi,
+  walletPk: UmiPublicKey,
+  item: { name: string; symbol: string; metadataUri: string },
+  blockhash: BlockhashWithExpiryBlockHeight,
+): Promise<{ kitTx: Transaction; mintAddress: string }> {
   const mintSigner = generateSigner(umi)
-
   const [limitItem, priceItem] = computeBudgetItems()
-  const built = await transactionBuilder()
+  const built = transactionBuilder()
     .add(limitItem)
     .add(priceItem)
     .add(
       createNft(umi, {
         mint: mintSigner,
-        name,
-        symbol,
-        uri: metadataUri,
+        name: item.name,
+        symbol: item.symbol,
+        uri: item.metadataUri,
         sellerFeeBasisPoints: percentAmount(0),
-        creators: none(),
+        creators: [{ address: walletPk, verified: true, share: 100 }],
         tokenOwner: walletPk,
       })
     )
-    .buildWithLatestBlockhash(umi)
+    .setBlockhash(blockhash)
+    .build(umi)
 
   const mintSignedUmi = await umiSignTransaction(built, [mintSigner])
   const web3Tx = toWeb3JsTransaction(mintSignedUmi)
-  const serialized = web3Tx.serialize()
-  const kitTx = getTransactionDecoder().decode(serialized)
+  const kitTx = getTransactionDecoder().decode(web3Tx.serialize())
+  return { kitTx, mintAddress: mintSigner.publicKey.toString() }
+}
 
-  onPhase?.('signing')
-  let signedTx: Transaction
-  try {
-    signedTx = await signTransaction(kitTx)
-  } catch (e) {
-    throw mintPhaseError('wallet sign', e)
-  }
+// Prepaid-roll frame: a Metaplex Core asset minted into the roll's collection.
+// The wallet is the collection's update authority (it created it), so its
+// signature authorizes adding the asset — no extra signer needed. Our
+// collections carry no plugins, hence the empty oracle/hook lists.
+async function buildCoreFrameTransaction(
+  umi: Umi,
+  walletPk: UmiPublicKey,
+  item: { name: string; metadataUri: string; collectionAddress: string },
+  blockhash: BlockhashWithExpiryBlockHeight,
+): Promise<{ kitTx: Transaction; mintAddress: string }> {
+  const assetSigner = generateSigner(umi)
+  const [limitItem, priceItem] = computeBudgetItems()
+  const built = transactionBuilder()
+    .add(limitItem)
+    .add(priceItem)
+    .add(
+      createCoreAsset(umi, {
+        asset: assetSigner,
+        collection: { publicKey: publicKey(item.collectionAddress), oracles: [], lifecycleHooks: [] },
+        name: item.name,
+        uri: item.metadataUri,
+        owner: walletPk,
+      })
+    )
+    .setBlockhash(blockhash)
+    .build(umi)
 
+  const assetSignedUmi = await umiSignTransaction(built, [assetSigner])
+  const web3Tx = toWeb3JsTransaction(assetSignedUmi)
+  const kitTx = getTransactionDecoder().decode(web3Tx.serialize())
+  return { kitTx, mintAddress: assetSigner.publicKey.toString() }
+}
+
+/**
+ * Quick mint: a standalone Metaplex Core asset plus the fee that pays for its
+ * permanent storage, in ONE transaction the user signs once.
+ *
+ * Two things make this different from the other builders:
+ *
+ * - `uri` is the Worker's PLACEHOLDER document, not the real metadata. The
+ *   real image cannot be uploaded until this transaction is verified as paid,
+ *   so the asset is minted against a permanent "Developing…" document and the
+ *   Worker swaps it seconds later.
+ * - `updateAuthority` is the Worker, which is what makes that swap possible.
+ *   The Worker hands authority to the owner in the same instruction that sets
+ *   the real URI, so it only holds it for the length of the upload.
+ *
+ * Core rather than Token Metadata: a Core asset is one rent-paying account
+ * instead of four, which is what leaves the user paying less overall than they
+ * did when quick mints were free but minted as NFTs.
+ */
+async function buildQuickCoreTransaction(
+  umi: Umi,
+  walletPk: UmiPublicKey,
+  item: { name: string; placeholderUri: string; terms: QuickMintTerms },
+  blockhash: BlockhashWithExpiryBlockHeight,
+): Promise<{ kitTx: Transaction; mintAddress: string }> {
+  const assetSigner = generateSigner(umi)
+  const [limitItem, priceItem] = computeBudgetItems()
+  const built = transactionBuilder()
+    .add(limitItem)
+    .add(priceItem)
+    .add(transferSolItem(walletPk, publicKey(item.terms.treasury), item.terms.feeLamports))
+    .add(
+      createCoreAsset(umi, {
+        asset: assetSigner,
+        name: item.name,
+        uri: item.placeholderUri,
+        owner: walletPk,
+        updateAuthority: publicKey(item.terms.updateAuthority),
+      })
+    )
+    .setBlockhash(blockhash)
+    .build(umi)
+
+  const assetSignedUmi = await umiSignTransaction(built, [assetSigner])
+  const web3Tx = toWeb3JsTransaction(assetSignedUmi)
+  const kitTx = getTransactionDecoder().decode(web3Tx.serialize())
+  return { kitTx, mintAddress: assetSigner.publicKey.toString() }
+}
+
+export async function sendAndConfirm(client: MintNFTDeps['client'], signedTx: Transaction): Promise<Signature> {
   try {
     assertIsFullySignedTransaction(signedTx)
     assertIsTransactionWithinSizeLimit(signedTx)
@@ -179,12 +354,20 @@ export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise
 
   const signature = getSignatureFromTransaction(signedTx)
 
-  onPhase?.('confirming')
+  // Resending is safe: the transaction is already signed, so every attempt
+  // carries the same signature — one that already landed is a no-op, not a
+  // second mint.
   const sendTransaction = sendTransactionWithoutConfirmingFactory({ rpc: client.rpc })
-  try {
-    await sendTransaction(signedTx, { commitment: 'confirmed' })
-  } catch (e) {
-    throw mintPhaseError('RPC send', e)
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await sendTransaction(signedTx, { commitment: 'confirmed' })
+      break
+    } catch (e) {
+      if (attempt >= SEND_RETRY_BACKOFFS_MS.length || !isRateLimitError(e)) {
+        throw mintPhaseError('RPC send', e)
+      }
+      await delay(SEND_RETRY_BACKOFFS_MS[attempt])
+    }
   }
 
   try {
@@ -193,9 +376,145 @@ export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise
     throw mintPhaseError('confirmation', e)
   }
 
-  const mintAddress = mintSigner.publicKey.toString()
+  return signature
+}
+
+export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise<MintResult> {
+  const { metadataUri, name, symbol, walletAddress, onPhase, rpc: rpcOverride, quick, onSigned } = params
+  const { client, signTransaction } = deps
+
+  const { umi, walletPk } = createMintUmi(walletAddress, rpcOverride)
+  const blockhash = await umi.rpc.getLatestBlockhash()
+  const { kitTx, mintAddress } = quick
+    ? await buildQuickCoreTransaction(umi, walletPk, { name, placeholderUri: metadataUri, terms: quick }, blockhash)
+    : await buildMintTransaction(umi, walletPk, { name, symbol, metadataUri }, blockhash)
+
+  onPhase?.('signing')
+  let signedTx: Transaction
+  try {
+    signedTx = await signTransaction(kitTx)
+  } catch (e) {
+    throw mintPhaseError('wallet sign', e)
+  }
+
+  onSigned?.({ signature: getSignatureFromTransaction(signedTx), mintAddress })
+
+  onPhase?.('confirming')
+  const signature = await sendAndConfirm(client, signedTx)
 
   return { signature, mintAddress }
+}
+
+export interface BatchMintItemParams {
+  /** Caller's correlation id (photoId) — echoed back on the result. */
+  id: string
+  /** For a quick mint this is the placeholder URI, not the final metadata. */
+  metadataUri: string
+  name: string
+  symbol: string
+  /** When set, mint a Metaplex Core asset into this collection (prepaid roll)
+   * instead of a standalone Token Metadata NFT. */
+  collectionAddress?: string
+  /** When set, mint a standalone Core asset and bundle the quick-mint fee. */
+  quick?: QuickMintTerms
+}
+
+export interface BatchMintItemResult {
+  id: string
+  success: boolean
+  signature?: string
+  mintAddress?: string
+  error?: string
+}
+
+export interface BatchMintDeps {
+  client: Pick<Client, 'rpc' | 'rpcSubscriptions'>
+  /** MWA signs the whole array with a single wallet approval. */
+  signTransactions: (txs: Transaction[]) => Promise<Transaction[]>
+}
+
+/**
+ * Mint several NFTs with ONE wallet approval: every transaction shares a fresh
+ * blockhash, the wallet signs them as a batch, then they're sent and confirmed
+ * in parallel with per-item results.
+ *
+ * A wallet-sign failure (user declined, dead session) throws — no transaction
+ * was sent, the whole batch is unminted. After signing, failures are per-item.
+ */
+export async function mintNFTBatch(
+  items: BatchMintItemParams[],
+  params: Pick<MintNFTParams, 'walletAddress' | 'rpc' | 'cluster' | 'onPhase'> & {
+    /** Per item, the moment its signature exists — before anything is sent. */
+    onItemSigned?: (id: string, info: { signature: string; mintAddress: string }) => void
+  },
+  deps: BatchMintDeps,
+  onItemResult?: (result: BatchMintItemResult) => void,
+): Promise<BatchMintItemResult[]> {
+  const { walletAddress, onPhase, rpc: rpcOverride, onItemSigned } = params
+  const { client, signTransactions } = deps
+
+  const { umi, walletPk } = createMintUmi(walletAddress, rpcOverride)
+  const blockhash = await umi.rpc.getLatestBlockhash()
+
+  const built: { kitTx: Transaction; mintAddress: string }[] = []
+  for (const item of items) {
+    if (item.quick) {
+      built.push(
+        await buildQuickCoreTransaction(
+          umi,
+          walletPk,
+          { name: item.name, placeholderUri: item.metadataUri, terms: item.quick },
+          blockhash,
+        ),
+      )
+    } else if (item.collectionAddress) {
+      built.push(
+        await buildCoreFrameTransaction(
+          umi,
+          walletPk,
+          { name: item.name, metadataUri: item.metadataUri, collectionAddress: item.collectionAddress },
+          blockhash,
+        ),
+      )
+    } else {
+      built.push(await buildMintTransaction(umi, walletPk, item, blockhash))
+    }
+  }
+
+  onPhase?.('signing')
+  let signedTxs: Transaction[]
+  try {
+    signedTxs = await signTransactions(built.map((b) => b.kitTx))
+  } catch (e) {
+    throw mintPhaseError('wallet sign', e)
+  }
+
+  if (onItemSigned) {
+    signedTxs.forEach((signedTx, i) => {
+      onItemSigned(items[i].id, {
+        signature: getSignatureFromTransaction(signedTx),
+        mintAddress: built[i].mintAddress,
+      })
+    })
+  }
+
+  onPhase?.('confirming')
+  const results = await Promise.all(
+    signedTxs.map(async (signedTx, i): Promise<BatchMintItemResult> => {
+      const { id } = items[i]
+      let result: BatchMintItemResult
+      try {
+        const signature = await sendAndConfirm(client, signedTx)
+        result = { id, success: true, signature, mintAddress: built[i].mintAddress }
+      } catch (e) {
+        result = { id, success: false, error: e instanceof Error ? e.message : String(e) }
+      }
+      onItemResult?.(result)
+      return result
+    }),
+  )
+
+  return results
 }
 
 export function getSolscanUrl(signature: string, cluster?: 'mainnet' | 'devnet'): string {

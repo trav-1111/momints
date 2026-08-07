@@ -1,10 +1,20 @@
-// Momints roll backend — Worker entry. On-demand endpoints, plus ONE cron: the
-// read-only treasury monitor (ops/monitor.ts), which reads the Irys balance and
-// posts Discord alerts. No keeper acts on funds — top-up and SOL -> $SKR
+// Momints roll backend — Worker entry. On-demand endpoints, plus ONE cron that
+// does two read-mostly jobs: the treasury monitor (ops/monitor.ts), which reads
+// the Irys balance and posts Discord alerts, and the quick-mint sweep
+// (quick/sweep.ts), which reaps abandoned stages and re-drives paid finalizes
+// that never completed. No keeper acts on funds — top-up and SOL -> $SKR
 // conversion remain manual operator tasks, documented in README.md.
 import { OpsAlertStore, RollDb } from './db'
-import { ConfigError, validateEnv, type Env, type ValidatedEnv } from './env'
+import {
+  ConfigError,
+  validateEnv,
+  validateQuickEnv,
+  type Env,
+  type QuickFinalizeMessage,
+  type ValidatedEnv,
+} from './env'
 import { HttpError, json } from './lib/http'
+import { sanitizeAttributes } from './lib/sanitize'
 import { postDiscordAlert, type AlertSeverity } from './ops/discord'
 import {
   ALERT_THRESHOLD_CRITICAL_ROLLS,
@@ -20,9 +30,13 @@ import { IrysProvider } from './providers/storage/irys'
 import { PinataProvider } from './providers/storage/pinata'
 import { ManualSink } from './providers/treasury/manual'
 import type { FundingProvider, StorageProvider } from './providers/types'
+import { finalizeQuickMintJob, type AlertFn } from './quick/consumer'
+import { finalizeQuickMint, type FinalizeQuickMintRequest } from './quick/finalize'
+import { stageQuickMint } from './quick/stage'
+import { sweepQuickMints } from './quick/sweep'
 import { createRoll, type CreateRollRequest } from './rolls/create'
 import { mintFrame, summarizeFrames } from './rolls/frames'
-import { createWorkerUmi } from './solana/client'
+import { createWorkerUmi, getWorkerPublicKey } from './solana/client'
 
 const USAGE = `Momints roll backend (devnet).
   GET  /health                          config + D1 reachability
@@ -35,6 +49,9 @@ const USAGE = `Momints roll backend (devnet).
   GET  /rolls/<collection>              roll + per-frame checkpoint status
   POST /rolls/<collection>/frames       mint one frame (multipart form)
   POST /rolls/<collection>/complete     close a roll early (frees the wallet's slot)
+  POST /quick/stage                     park a quick-mint image, get its mint params (multipart form)
+  POST /quick/finalize                  prove the fee landed on-chain, queue the Arweave upload (JSON body)
+  GET  /quick/<asset>                   quick-mint finalize status
 See README.md for request shapes and the operator runbook.
 `
 
@@ -120,9 +137,7 @@ async function handleMintFrame(ctx: WorkerContext, request: Request, collectionA
     try {
       const parsed = JSON.parse(attributesRaw)
       if (!Array.isArray(parsed)) throw new Error('not an array')
-      attributes = parsed
-        .filter((a) => a && typeof a.trait_type === 'string' && a.value != null)
-        .map((a) => ({ trait_type: String(a.trait_type).slice(0, 64), value: String(a.value).slice(0, 256) }))
+      attributes = sanitizeAttributes(parsed)
     } catch {
       throw new HttpError(400, 'attributes must be a JSON array of { trait_type, value }')
     }
@@ -187,6 +202,93 @@ async function handleCompleteRoll(ctx: WorkerContext, collectionAddress: string)
     mintedCount: roll.minted_count,
     status: 'COMPLETE' as const,
     alreadyComplete,
+  })
+}
+
+// ─── Quick mints ──────────────────────────────────────────────────────────────
+
+async function handleStageQuickMint(ctx: WorkerContext, request: Request): Promise<Response> {
+  const env = validateQuickEnv(ctx.env)
+
+  let form: FormData
+  try {
+    form = await request.formData()
+  } catch {
+    throw new HttpError(400, 'Body must be multipart/form-data with fields: image (file), metadata (JSON), wallet')
+  }
+  const image = form.get('image')
+  const wallet = form.get('wallet')
+  const metadataRaw = form.get('metadata')
+
+  if (!(image instanceof File)) {
+    throw new HttpError(400, 'Missing "image" file field')
+  }
+  if (typeof wallet !== 'string') {
+    throw new HttpError(400, 'Missing "wallet" field')
+  }
+  let metadata: unknown
+  try {
+    metadata = typeof metadataRaw === 'string' && metadataRaw ? JSON.parse(metadataRaw) : {}
+  } catch {
+    throw new HttpError(400, 'metadata must be a JSON object')
+  }
+
+  const result = await stageQuickMint(
+    {
+      db: ctx.db,
+      bucket: ctx.env.QUICK_STAGING,
+      placeholderUri: env.QUICK_PLACEHOLDER_URI,
+      treasury: env.QUICK_TREASURY_ADDRESS,
+      workerPubkey: getWorkerPublicKey(ctx.env),
+    },
+    {
+      wallet,
+      imageBytes: new Uint8Array(await image.arrayBuffer()),
+      mime: image.type || 'image/jpeg',
+      metadata,
+    },
+  )
+  return json(result, 201)
+}
+
+async function handleFinalizeQuickMint(ctx: WorkerContext, request: Request): Promise<Response> {
+  const env = validateQuickEnv(ctx.env)
+
+  let body: FinalizeQuickMintRequest
+  try {
+    body = (await request.json()) as FinalizeQuickMintRequest
+  } catch {
+    throw new HttpError(400, 'Body must be JSON: { stagingKey, signature, assetAddress }')
+  }
+
+  const result = await finalizeQuickMint(
+    {
+      db: ctx.db,
+      bucket: ctx.env.QUICK_STAGING,
+      queue: ctx.env.QUICK_FINALIZE,
+      treasury: ctx.treasury,
+      rpcUrl: ctx.env.SOLANA_RPC_URL,
+      placeholderUri: env.QUICK_PLACEHOLDER_URI,
+      treasuryAddress: env.QUICK_TREASURY_ADDRESS,
+      getUmi: () => createWorkerUmi(ctx.env),
+    },
+    body,
+  )
+  return json(result, result.alreadyFinalizing ? 200 : 202)
+}
+
+async function handleGetQuickMint(ctx: WorkerContext, assetAddress: string): Promise<Response> {
+  const row = await ctx.db.getQuickMintByAsset(assetAddress)
+  if (!row) throw new HttpError(404, `No quick mint for asset ${assetAddress}`)
+  return json({
+    assetAddress: row.asset_address,
+    wallet: row.wallet,
+    status: row.status,
+    imageUri: row.image_uri,
+    metadataUri: row.arweave_uri,
+    signature: row.signature,
+    createdAt: row.created_at,
+    finalizedAt: row.finalized_at,
   })
 }
 
@@ -298,6 +400,9 @@ type Route =
   | { kind: 'get-roll'; collection: string }
   | { kind: 'mint-frame'; collection: string }
   | { kind: 'complete-roll'; collection: string }
+  | { kind: 'stage-quick' }
+  | { kind: 'finalize-quick' }
+  | { kind: 'get-quick'; asset: string }
 
 /** Match secret-requiring routes. Unknown paths 404 before env validation. */
 function matchRoute(method: string, path: string): Route | null {
@@ -307,6 +412,8 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/ops/test-alert') return { kind: 'ops-test-alert' }
   if (method === 'POST' && path === '/rolls') return { kind: 'create-roll' }
   if (method === 'GET' && path === '/rolls/open') return { kind: 'open-roll' }
+  if (method === 'POST' && path === '/quick/stage') return { kind: 'stage-quick' }
+  if (method === 'POST' && path === '/quick/finalize') return { kind: 'finalize-quick' }
   const rollMatch = path.match(/^\/rolls\/([1-9A-HJ-NP-Za-km-z]{32,44})(\/frames|\/complete)?$/)
   if (rollMatch) {
     const [, collection, suffix] = rollMatch
@@ -314,6 +421,10 @@ function matchRoute(method: string, path: string): Route | null {
     if (suffix === '/frames' && method === 'POST') return { kind: 'mint-frame', collection }
     if (suffix === '/complete' && method === 'POST') return { kind: 'complete-roll', collection }
   }
+  // Checked after the literals above; "stage"/"finalize" are too short to be
+  // mistaken for a base58 address, but order makes that a fact, not a hope.
+  const quickMatch = path.match(/^\/quick\/([1-9A-HJ-NP-Za-km-z]{32,44})$/)
+  if (quickMatch && method === 'GET') return { kind: 'get-quick', asset: quickMatch[1] }
   return null
 }
 
@@ -369,6 +480,12 @@ export default {
           return await handleMintFrame(ctx, request, route.collection)
         case 'complete-roll':
           return await handleCompleteRoll(ctx, route.collection)
+        case 'stage-quick':
+          return await handleStageQuickMint(ctx, request)
+        case 'finalize-quick':
+          return await handleFinalizeQuickMint(ctx, request)
+        case 'get-quick':
+          return await handleGetQuickMint(ctx, route.asset)
       }
     } catch (err) {
       if (err instanceof HttpError) {
@@ -383,23 +500,85 @@ export default {
   },
 
   /**
-   * Cron entry — schedule lives in wrangler.toml [triggers]. A thin dispatcher:
-   * every check, and all of the severity/hysteresis logic, lives in
-   * ops/monitor.ts.
+   * Quick-mint finalize consumer.
    *
-   * READ-AND-NOTIFY ONLY. It reads the Irys balance and posts to Discord. It
-   * never funds, signs, or moves anything — auto top-up would be the
-   * AutomatedFunding keeper, which deliberately does not exist
+   * Every message here is work the operator has ALREADY BEEN PAID FOR, so the
+   * bias is the opposite of the fetch handler's: never drop a message. An
+   * unexpected throw retries rather than acks, and only exhausting max_retries
+   * moves it to the DLQ — where it becomes an operator alert, not a silent loss.
+   */
+  async queue(batch: MessageBatch<QuickFinalizeMessage>, env: Env, _ctx: ExecutionContext): Promise<void> {
+    const ctx = new WorkerContext(validateEnv(env))
+    const alert = discordAlerts(env)
+
+    if (batch.queue.endsWith('-dlq')) {
+      for (const message of batch.messages) {
+        await handleDeadLetter(ctx, alert, message.body.quickMintId)
+        message.ack()
+      }
+      return
+    }
+
+    for (const message of batch.messages) {
+      const { quickMintId } = message.body
+      try {
+        const outcome = await finalizeQuickMintJob(
+          {
+            db: ctx.db,
+            bucket: env.QUICK_STAGING,
+            rpcUrl: ctx.env.SOLANA_RPC_URL,
+            getUmi: () => createWorkerUmi(ctx.env),
+            getSeams: () => ctx.irysSeams(),
+            alert,
+          },
+          quickMintId,
+        )
+        if (outcome.kind === 'retry') {
+          console.warn(`[quick] ${quickMintId} deferred: ${outcome.reason}`)
+          message.retry({ delaySeconds: outcome.delaySeconds })
+        } else {
+          message.ack()
+        }
+      } catch (err) {
+        console.error(`[quick] finalize ${quickMintId} failed:`, err instanceof Error ? err.message : String(err))
+        message.retry()
+      }
+    }
+  },
+
+  /**
+   * Cron entry — schedule lives in wrangler.toml [triggers]. A thin dispatcher
+   * for two independent jobs: the read-only treasury monitor (ops/monitor.ts),
+   * where all the severity/hysteresis logic lives, and the quick-mint sweep
+   * (quick/sweep.ts).
+   *
+   * READ-AND-NOTIFY ONLY on the funding side. It reads the Irys balance and
+   * posts to Discord. It never funds, signs, or moves anything — auto top-up
+   * would be the AutomatedFunding keeper, which deliberately does not exist
    * (providers/funding/automated.ts).
    *
    * NEVER THROWS. A scheduled handler that throws fails silently, so the
    * operator would lose monitoring at exactly the moment they need it. Errors
    * are logged (visible in `wrangler tail` / Workers logs) and the next run
    * retries.
+   *
+   * The two jobs are isolated from each other on purpose: a monitor failure
+   * must not skip the sweep, because the sweep is what re-drives paid quick
+   * mints whose finalize job was never enqueued.
    */
   async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    let ctx: WorkerContext
     try {
-      const ctx = new WorkerContext(validateEnv(env))
+      ctx = new WorkerContext(validateEnv(env))
+    } catch (err) {
+      console.error(
+        `[ops] scheduled run (${controller.cron}) could not start:`,
+        err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err),
+      )
+      return
+    }
+
+    try {
       const { checks } = await runTreasuryMonitor({
         env: ctx.env,
         alerts: ctx.opsAlerts,
@@ -410,9 +589,57 @@ export default {
       }
     } catch (err) {
       console.error(
-        `[ops] scheduled run (${controller.cron}) failed:`,
+        `[ops] treasury monitor (${controller.cron}) failed:`,
+        err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err),
+      )
+    }
+
+    try {
+      const result = await sweepQuickMints({ db: ctx.db, bucket: env.QUICK_STAGING, queue: env.QUICK_FINALIZE })
+      console.log(
+        `[quick:sweep] reaped ${result.orphansReaped} orphaned stage(s), re-drove ${result.stalledRedriven} stalled finalize(s)`,
+      )
+    } catch (err) {
+      console.error(
+        `[quick:sweep] scheduled run (${controller.cron}) failed:`,
         err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err),
       )
     }
   },
+}
+
+/** Bind the consumer's injected alert seam to the ops notification primitive. */
+function discordAlerts(env: Env): AlertFn {
+  return async (alert) => {
+    await postDiscordAlert(env, alert)
+  }
+}
+
+/**
+ * A dead-lettered finalize means a PAID mint is stuck on the placeholder.
+ * Recoverable by definition — the fee was collected and the asset exists — so
+ * the row is marked DEAD for triage rather than deleted, and the operator is
+ * pinged.
+ */
+async function handleDeadLetter(ctx: WorkerContext, alert: AlertFn, quickMintId: string): Promise<void> {
+  const row = await ctx.db.getQuickMint(quickMintId).catch(() => null)
+  await ctx.db.markQuickMintDead(quickMintId).catch((err) => {
+    console.error(`[quick] could not mark ${quickMintId} DEAD:`, err)
+  })
+  await alert({
+    severity: 'critical',
+    title: 'Quick mint stuck on placeholder',
+    description:
+      'A paid quick mint exhausted its finalize retries. The fee was collected and the asset is minted, so this ' +
+      'is recoverable: fix the underlying failure, then re-drive it by sending { quickMintId } to ' +
+      'momints-quick-finalize (README runbook).',
+    fields: [
+      { name: 'Quick mint', value: quickMintId },
+      { name: 'Asset', value: row?.asset_address ?? 'unknown' },
+      { name: 'Wallet', value: row?.wallet ?? 'unknown' },
+      { name: 'Image uploaded', value: row?.image_uri ? 'yes' : 'no' },
+      { name: 'Metadata uploaded', value: row?.arweave_uri ? 'yes' : 'no' },
+    ],
+    mention: true,
+  })
 }

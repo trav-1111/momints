@@ -1,5 +1,18 @@
+/** Enqueued by POST /quick/finalize once the fee-paying mint is verified. */
+export interface QuickFinalizeMessage {
+  quickMintId: string
+}
+
 export interface Env {
   DB: D1Database
+  /** Staged quick-mint images, pending a verified fee. 24h lifecycle rule. */
+  QUICK_STAGING: R2Bucket
+  /**
+   * Finalize jobs. A message here means the fee is ALREADY collected and the
+   * asset is ALREADY minted on the placeholder — so the consumer must keep
+   * retrying rather than drop work. Failures dead-letter to an operator alert.
+   */
+  QUICK_FINALIZE: Queue<QuickFinalizeMessage>
   /**
    * Base58 secret key of the DEVNET funding wallet (Worker Secret). Doubles as
    * the Worker's on-chain payer/authority for collection creation and frame
@@ -29,12 +42,31 @@ export interface Env {
    * Optional: without it critical alerts still post, just without the ping.
    */
   OPERATOR_DISCORD_ID?: string
+  /**
+   * Arweave URI of the static "developing" metadata every quick mint is minted
+   * against before its real image exists. Uploaded once by
+   * scripts/upload-placeholder.mjs; a plain var, not a secret.
+   */
+  QUICK_PLACEHOLDER_URI?: string
+  /**
+   * Base58 address that quick-mint fees are paid to. The Worker needs it to
+   * verify payment out of the landed transaction. Public, not a secret, but it
+   * MUST match the app's EXPO_PUBLIC_ROLL_TREASURY — a mismatch rejects every
+   * finalize after the user has already paid.
+   */
+  QUICK_TREASURY_ADDRESS?: string
 }
 
 /** Env after validation — the two required secrets are guaranteed present. */
 export interface ValidatedEnv extends Env {
   IRYS_FUNDING_KEY: string
   SOLANA_RPC_URL: string
+}
+
+/** Env after the additional quick-mint checks. */
+export interface QuickEnv extends ValidatedEnv {
+  QUICK_PLACEHOLDER_URI: string
+  QUICK_TREASURY_ADDRESS: string
 }
 
 const PUBLIC_RPC_HOSTS = ['api.devnet.solana.com', 'api.mainnet-beta.solana.com', 'api.testnet.solana.com']
@@ -63,6 +95,29 @@ export function validateEnv(env: Env): ValidatedEnv {
     throw new ConfigError('IRYS_FUNDING_KEY secret is not set. Set it with `wrangler secret put IRYS_FUNDING_KEY`.')
   }
   return env as ValidatedEnv
+}
+
+/**
+ * Extra checks the quick-mint routes need, kept out of validateEnv so a
+ * half-configured quick flow can never take the roll endpoints down with it.
+ *
+ * Both values are baked into transactions the user signs, so a missing one has
+ * to fail BEFORE anything is staged — not after a fee has moved.
+ */
+export function validateQuickEnv(env: ValidatedEnv): QuickEnv {
+  if (!env.QUICK_PLACEHOLDER_URI) {
+    throw new ConfigError(
+      'QUICK_PLACEHOLDER_URI is not set. Upload the placeholder once with ' +
+        '`node scripts/upload-placeholder.mjs` and put the returned URI in wrangler.toml [vars] (README runbook).',
+    )
+  }
+  if (!env.QUICK_TREASURY_ADDRESS) {
+    throw new ConfigError(
+      'QUICK_TREASURY_ADDRESS is not set. Put the treasury address in wrangler.toml [vars]. ' +
+        "It MUST match the app's EXPO_PUBLIC_ROLL_TREASURY, or every finalize will reject a fee the user already paid.",
+    )
+  }
+  return env as QuickEnv
 }
 
 /** Operator-facing misconfiguration — surfaced as HTTP 500 with the message intact. */

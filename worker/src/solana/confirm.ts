@@ -32,6 +32,45 @@ async function rpcCall<T>(rpcUrl: string, method: string, params: unknown[]): Pr
   return body.result as T
 }
 
+/** One entry of a jsonParsed transaction's account list, in balance-array order. */
+export interface ParsedTransactionAccount {
+  pubkey: string
+  signer: boolean
+  writable: boolean
+}
+
+/**
+ * A landed transaction, as much of it as verification needs. `preBalances` and
+ * `postBalances` are positionally aligned with `accountKeys`, which is what
+ * lets a fee be read as a balance delta rather than by decoding instructions.
+ */
+export interface ParsedTransaction {
+  slot: number
+  blockTime: number | null
+  transaction: { message: { accountKeys: ParsedTransactionAccount[] } }
+  meta: {
+    err: unknown
+    fee: number
+    preBalances: number[]
+    postBalances: number[]
+  } | null
+}
+
+/**
+ * Fetch a landed transaction. Returns null when the RPC has no record of it —
+ * which is NOT proof it failed: a very recent signature can be invisible for a
+ * few seconds. Callers must treat null as "ask again", never as "rejected".
+ */
+export async function getTransaction(rpcUrl: string, signature: string): Promise<ParsedTransaction | null> {
+  const result = await withBackoff('getTransaction', () =>
+    rpcCall<ParsedTransaction | null>(rpcUrl, 'getTransaction', [
+      signature,
+      { encoding: 'jsonParsed', commitment: 'confirmed', maxSupportedTransactionVersion: 0 },
+    ]),
+  )
+  return result ?? null
+}
+
 export async function getSignatureStatus(rpcUrl: string, signature: string): Promise<SignatureStatus | null> {
   const result = await withBackoff('getSignatureStatuses', () =>
     rpcCall<{ value: (SignatureStatus | null)[] }>(rpcUrl, 'getSignatureStatuses', [

@@ -1,9 +1,10 @@
-// Thin, typed D1 access layer. All SQL for rolls + frames lives here, plus the
-// ops alert state the scheduled treasury monitor keeps.
+// Thin, typed D1 access layer. All SQL for rolls, frames, and quick mints
+// lives here, plus the ops alert state the scheduled treasury monitor keeps.
 // (Treasury bookkeeping SQL lives with its seam impl in providers/treasury.)
 
 export type RollStatus = 'OPEN' | 'COMPLETE'
 export type FrameStatus = 'IMAGE_UPLOADED' | 'METADATA_UPLOADED' | 'MINT_PENDING' | 'MINTED'
+export type QuickMintStatus = 'STAGED' | 'FINALIZING' | 'FINALIZED' | 'DEAD'
 
 /** Ops alert severity, ordered healthy < low < critical (see ops/monitor.ts). */
 export type AlertLevel = 'healthy' | 'low' | 'critical'
@@ -40,6 +41,24 @@ export interface FrameRow {
   mint_signature: string | null
   updated_at: string
 }
+
+export interface QuickMintRow {
+  id: string
+  wallet: string
+  metadata_json: string
+  staging_key: string | null
+  mime: string
+  asset_address: string | null
+  signature: string | null
+  image_uri: string | null
+  arweave_uri: string | null
+  status: QuickMintStatus
+  created_at: string
+  finalized_at: string | null
+}
+
+/** A finalize lost the race to claim a signature another row already holds. */
+export class DuplicateSignatureError extends Error {}
 
 export class RollDb {
   constructor(private readonly db: D1Database) {}
@@ -184,6 +203,146 @@ export class RollDb {
       .run()
     const roll = await this.getRoll(collectionAddress)
     return { mintedCount: roll?.minted_count ?? 0, status: roll?.status ?? 'OPEN' }
+  }
+
+  // ─── Quick mints ────────────────────────────────────────────────────────────
+
+  async insertQuickMint(quick: {
+    id: string
+    wallet: string
+    metadataJson: string
+    stagingKey: string
+    mime: string
+  }): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO quick_mints (id, wallet, metadata_json, staging_key, mime, status)
+         VALUES (?, ?, ?, ?, ?, 'STAGED')`,
+      )
+      .bind(quick.id, quick.wallet, quick.metadataJson, quick.stagingKey, quick.mime)
+      .run()
+  }
+
+  async getQuickMint(id: string): Promise<QuickMintRow | null> {
+    return await this.db.prepare('SELECT * FROM quick_mints WHERE id = ?').bind(id).first<QuickMintRow>()
+  }
+
+  async getQuickMintByAsset(assetAddress: string): Promise<QuickMintRow | null> {
+    return await this.db
+      .prepare('SELECT * FROM quick_mints WHERE asset_address = ?')
+      .bind(assetAddress)
+      .first<QuickMintRow>()
+  }
+
+  /** Stages started by this wallet since `sinceIso` — drives the daily cap. */
+  async countQuickStagesSince(wallet: string, sinceIso: string): Promise<number> {
+    const row = await this.db
+      .prepare('SELECT COUNT(*) AS n FROM quick_mints WHERE wallet = ? AND created_at >= ?')
+      .bind(wallet, sinceIso)
+      .first<{ n: number }>()
+    return row?.n ?? 0
+  }
+
+  /**
+   * Claim a STAGED row for finalization. This is the single gate between "no
+   * money has moved" and "Arweave may now be spent", so it is a conditional
+   * update rather than a plain write:
+   *
+   * - `WHERE status = 'STAGED'` means two concurrent finalizes cannot both
+   *   enqueue; the loser gets false and re-reads the row.
+   * - the UNIQUE constraints on signature/asset_address mean a landed fee
+   *   transfer cannot be replayed against a second staged image — that attempt
+   *   surfaces as DuplicateSignatureError.
+   */
+  async claimQuickMintForFinalize(
+    id: string,
+    assetAddress: string,
+    signature: string,
+  ): Promise<boolean> {
+    try {
+      const result = await this.db
+        .prepare(
+          `UPDATE quick_mints SET status = 'FINALIZING', asset_address = ?, signature = ?
+           WHERE id = ? AND status = 'STAGED'`,
+        )
+        .bind(assetAddress, signature, id)
+        .run()
+      return (result.meta.changes ?? 0) > 0
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (message.includes('UNIQUE constraint failed')) {
+        throw new DuplicateSignatureError(message)
+      }
+      throw err
+    }
+  }
+
+  /**
+   * Record a permanent-storage URI. Only ever adds: these are the checkpoints
+   * that stop a retry from paying for the same bytes twice, so a later call
+   * must not be able to blank an earlier one.
+   */
+  async saveQuickMintUpload(id: string, uris: { imageUri?: string; arweaveUri?: string }): Promise<void> {
+    await this.db
+      .prepare(
+        `UPDATE quick_mints SET
+           image_uri = COALESCE(?, image_uri),
+           arweave_uri = COALESCE(?, arweave_uri)
+         WHERE id = ?`,
+      )
+      .bind(uris.imageUri ?? null, uris.arweaveUri ?? null, id)
+      .run()
+  }
+
+  /** Real URI live on-chain. Clears staging_key — the R2 object is gone. */
+  async markQuickMintFinalized(id: string): Promise<void> {
+    await this.db
+      .prepare(
+        `UPDATE quick_mints SET
+           status = 'FINALIZED',
+           staging_key = NULL,
+           finalized_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+         WHERE id = ?`,
+      )
+      .bind(id)
+      .run()
+  }
+
+  /** Dead-lettered: a PAID mint stuck on the placeholder. Never deleted. */
+  async markQuickMintDead(id: string): Promise<void> {
+    await this.db.prepare("UPDATE quick_mints SET status = 'DEAD' WHERE id = ?").bind(id).run()
+  }
+
+  /**
+   * Drop a stage that will never be finalized (definitively invalid finalize,
+   * or the orphan sweep). Restricted to STAGED so it can never delete a row
+   * that represents money already taken.
+   */
+  async deleteStagedQuickMint(id: string): Promise<void> {
+    await this.db.prepare("DELETE FROM quick_mints WHERE id = ? AND status = 'STAGED'").bind(id).run()
+  }
+
+  /** Abandoned stages, for the sweep. Nothing here was ever paid for. */
+  async listStaleStagedQuickMints(beforeIso: string, limit: number): Promise<QuickMintRow[]> {
+    const result = await this.db
+      .prepare("SELECT * FROM quick_mints WHERE status = 'STAGED' AND created_at < ? LIMIT ?")
+      .bind(beforeIso, limit)
+      .all<QuickMintRow>()
+    return result.results
+  }
+
+  /**
+   * Paid mints that claimed the queue but never reached FINALIZED — the queue
+   * message was lost, or never enqueued at all because the send itself failed.
+   * The fee is already collected for every row here, so the sweep re-drives
+   * them rather than letting them sit on the placeholder.
+   */
+  async listStalledFinalizingQuickMints(beforeIso: string, limit: number): Promise<QuickMintRow[]> {
+    const result = await this.db
+      .prepare("SELECT * FROM quick_mints WHERE status = 'FINALIZING' AND created_at < ? LIMIT ?")
+      .bind(beforeIso, limit)
+      .all<QuickMintRow>()
+    return result.results
   }
 }
 

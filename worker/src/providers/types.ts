@@ -16,14 +16,25 @@ export interface StorageProvider {
   uploadImage(bytes: Uint8Array, mime: string): Promise<string>
 }
 
-export interface TreasuryRecordContext {
-  kind: 'roll_fee'
-  collection: string
-  wallet: string
-  size: number
-  /** Client-reported fee-payment signature, stored for bookkeeping only. */
-  feeSignature?: string
-}
+export type TreasuryRecordContext =
+  | {
+      kind: 'roll_fee'
+      collection: string
+      wallet: string
+      size: number
+      /** Client-reported fee-payment signature, stored for bookkeeping only. */
+      feeSignature?: string
+    }
+  | {
+      kind: 'quick_mint_fee'
+      asset: string
+      wallet: string
+      /**
+       * The mint+fee transaction, VERIFIED on-chain before this is recorded —
+       * unlike roll_fee's feeSignature, which is client-reported bookkeeping.
+       */
+      signature: string
+    }
 
 export interface TreasuryStatus {
   pendingLamports: number

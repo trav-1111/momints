@@ -14,6 +14,9 @@ export function getRollFeeLamports(size: RollSize): number {
   return size === 12 ? ROLL_FEE_LAMPORTS_12 : ROLL_FEE_LAMPORTS_24
 }
 
+/** Image types accepted for permanent storage — frames and quick mints alike. */
+export const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp'])
+
 // Funding pre-check sizing. Spike data (worker-irys-spike/RESULT2.md): 1–6 MB
 // payloads all upload fine, ~2.5s server total pre-funded; app frames land
 // around 1–3 MB. 3 MiB/frame is a deliberately conservative planning figure —

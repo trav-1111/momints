@@ -5,7 +5,7 @@ import { HttpError } from '../lib/http'
 import { withBackoff } from '../lib/retry'
 import type { FundingProvider, StorageProvider } from '../providers/types'
 import { ConfirmTimeoutError, getSignatureStatus, sendAndConfirm } from '../solana/confirm'
-import { ESTIMATED_METADATA_BYTES } from './config'
+import { ALLOWED_MIME, ESTIMATED_METADATA_BYTES } from './config'
 
 export interface MintFrameRequest {
   collectionAddress: string
@@ -43,8 +43,6 @@ export interface MintFrameResult {
   mintedCount: number
   fundingWarning: string | null
 }
-
-const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
 function frameName(roll: RollRow, frameIndex: number): string {
   return `${roll.name}.${String(frameIndex).padStart(3, '0')}`

@@ -1,6 +1,9 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import { Paths, File } from 'expo-file-system'
+// Value import, but not a runtime cycle: mintQueue imports only a *type* from
+// this module, which erases at compile time.
+import { useMintQueue, historyHydrated } from './mintQueue'
 
 export interface CaptureMeta {
   location?: string // "Austin, Texas" — city level, never raw coords
@@ -11,13 +14,28 @@ export interface Photo {
   id: string
   uri: string
   capturedAt: number
-  action: 'pending' | 'delete' | 'save' | 'mint'
+  // 'mint' = marked for minting; 'minted' = on-chain, terminal — a minted
+  // photo can never re-enter a mint flow. Enforced in setAction/setBulkAction,
+  // not just by convention.
+  action: 'pending' | 'delete' | 'save' | 'mint' | 'minted'
   meta?: CaptureMeta
+  // Roll membership, stamped at capture. Deliberately stored on the photo
+  // rather than read from session.activeRoll.frameIds: completeRoll() nulls
+  // the active roll, and screens that hid frames by subtracting that array
+  // un-hid all of them the moment a roll finished minting.
+  rollId?: string
+  rollName?: string
+}
+
+/** Roll a frame belongs to, passed at capture so membership is stamped atomically. */
+export interface PhotoRollRef {
+  id: string
+  name: string
 }
 
 interface PhotoStore {
   photos: Photo[]
-  addPhoto: (uri: string) => string
+  addPhoto: (uri: string, roll?: PhotoRollRef) => string
   setAction: (id: string, action: Photo['action']) => void
   setBulkAction: (ids: string[], action: Photo['action']) => void
   setPhotoMeta: (id: string, meta: CaptureMeta) => void
@@ -39,7 +57,11 @@ function parsePhoto(raw: unknown): Photo | null {
     typeof p.id !== 'string' ||
     typeof p.uri !== 'string' ||
     typeof p.capturedAt !== 'number' ||
-    (p.action !== 'pending' && p.action !== 'delete' && p.action !== 'save' && p.action !== 'mint')
+    (p.action !== 'pending' &&
+      p.action !== 'delete' &&
+      p.action !== 'save' &&
+      p.action !== 'mint' &&
+      p.action !== 'minted')
   ) {
     return null
   }
@@ -51,7 +73,19 @@ function parsePhoto(raw: unknown): Photo | null {
       weather: typeof m.weather === 'string' ? m.weather : undefined,
     }
   }
-  return { id: p.id, uri: p.uri, capturedAt: p.capturedAt, action: p.action, meta }
+  // Records written before roll membership moved onto the photo have neither
+  // field; they hydrate as quick photos, which is correct for everything
+  // except frames of an already-finished roll — those are healed to 'minted'
+  // by the mint-history reconcile at the bottom of this file.
+  return {
+    id: p.id,
+    uri: p.uri,
+    capturedAt: p.capturedAt,
+    action: p.action,
+    meta,
+    rollId: typeof p.rollId === 'string' ? p.rollId : undefined,
+    rollName: typeof p.rollName === 'string' ? p.rollName : undefined,
+  }
 }
 
 async function readPersistedPhotos(): Promise<Photo[]> {
@@ -79,12 +113,14 @@ function persistPhotos(photos: Photo[]): void {
 export const usePhotoStore = create<PhotoStore>((set, get) => ({
   photos: [],
 
-  addPhoto: (uri: string): string => {
+  addPhoto: (uri: string, roll?: PhotoRollRef): string => {
     const newPhoto: Photo = {
       id: uuidv4(),
       uri,
       capturedAt: Date.now(),
       action: 'pending',
+      rollId: roll?.id,
+      rollName: roll?.name,
     }
     set((state) => {
       const photos = [...state.photos, newPhoto]
@@ -94,10 +130,13 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
     return newPhoto.id
   },
 
+  // 'minted' is terminal: an on-chain photo can never be re-marked. Guarding
+  // here rather than at each call site closes every re-mint path at once —
+  // the review carousel, the gallery's bulk mint, and anything added later.
   setAction: (id: string, action: Photo['action']) => {
     set((state) => {
       const photos = state.photos.map((photo) =>
-        photo.id === id ? { ...photo, action } : photo
+        photo.id === id && photo.action !== 'minted' ? { ...photo, action } : photo
       )
       persistPhotos(photos)
       return { photos }
@@ -107,7 +146,7 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
   setBulkAction: (ids: string[], action: Photo['action']) => {
     set((state) => {
       const photos = state.photos.map((photo) =>
-        ids.includes(photo.id) ? { ...photo, action } : photo
+        ids.includes(photo.id) && photo.action !== 'minted' ? { ...photo, action } : photo
       )
       persistPhotos(photos)
       return { photos }
@@ -165,7 +204,7 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
 
   clearMintedPhotos: () => {
     set((state) => {
-      const photos = state.photos.filter((photo) => photo.action !== 'mint')
+      const photos = state.photos.filter((photo) => photo.action !== 'minted')
       persistPhotos(photos)
       return { photos }
     })
@@ -174,7 +213,7 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
 
 // Async hydration on startup — same pattern as session.ts and mintQueue.ts.
 // Drop records whose image file no longer exists on disk.
-readPersistedPhotos().then((persisted) => {
+const photosHydrated: Promise<void> = readPersistedPhotos().then((persisted) => {
   if (persisted.length === 0) return
   const alive = persisted.filter((p) => {
     try {
@@ -188,5 +227,31 @@ readPersistedPhotos().then((persisted) => {
     const existingIds = new Set(state.photos.map((p) => p.id))
     const merged = [...alive.filter((p) => !existingIds.has(p.id)), ...state.photos]
     return { photos: merged }
+  })
+})
+
+// Self-heal records left behind by builds where minting only set 'mint'. Those
+// hydrate as "marked for minting" and would silently mint a second NFT of a
+// frame already on-chain — billed to the user's own wallet, since the finished
+// roll's prepaid collection context is long gone.
+//
+// Mint history is the durable record of what actually minted, so it wins. Both
+// stores hydrate from independent unawaited reads, hence the Promise.all —
+// reconciling early would run against an empty photo store and do nothing.
+void Promise.all([photosHydrated, historyHydrated]).then(() => {
+  const mintedIds = new Set(useMintQueue.getState().mintHistory.map((h) => h.id))
+  if (mintedIds.size === 0) return
+
+  usePhotoStore.setState((state) => {
+    let healed = 0
+    const photos = state.photos.map((photo) => {
+      if (photo.action === 'minted' || !mintedIds.has(photo.id)) return photo
+      healed++
+      return { ...photo, action: 'minted' as const }
+    })
+    if (healed === 0) return state
+    console.log(`[photos] reconciled ${healed} photo(s) to 'minted' from mint history`)
+    persistPhotos(photos)
+    return { photos }
   })
 })

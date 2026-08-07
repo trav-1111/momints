@@ -1,8 +1,10 @@
 import { useEffect, useCallback } from 'react'
-import { View, Text, ActivityIndicator, Pressable } from 'react-native'
+import { View, Text, ActivityIndicator, Pressable, Image } from 'react-native'
 import { useRouter } from 'expo-router'
+import { LinearGradient } from 'expo-linear-gradient'
 import { useNetworkStore } from '../store/network'
 import { useSessionStore } from '../store/session'
+import { colors, fonts, splashGradient, tracking } from '../theme'
 
 export default function SplashScreen() {
   const router = useRouter()
@@ -23,22 +25,91 @@ export default function SplashScreen() {
   }, [cluster, setCluster])
 
   return (
-    <View className="flex-1 bg-black items-center justify-center">
-      <Text className="text-5xl font-bold text-white mb-4">Momints</Text>
-      <Text className="text-lg text-gray-400 mb-8">Capture. Mint. Own.</Text>
-      <ActivityIndicator size="large" color="#8B5CF6" />
-
-      <Pressable
-        onPress={toggleCluster}
-        className="absolute bottom-12 flex-row items-center gap-2 px-4 py-2 rounded-full bg-gray-900 border border-gray-700"
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <LinearGradient
+        colors={[...splashGradient.colors]}
+        locations={[...splashGradient.locations]}
+        start={splashGradient.start}
+        end={splashGradient.end}
+        style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
       >
-        <View
-          className={`w-2 h-2 rounded-full ${cluster === 'devnet' ? 'bg-yellow-400' : 'bg-green-400'}`}
+        {/* Aperture logo — the brand art */}
+        <Image
+          source={require('../../assets/adaptive-icon.png')}
+          style={{ width: 176, height: 176, marginBottom: 30 }}
+          resizeMode="contain"
         />
-        <Text className={`text-xs font-medium ${cluster === 'devnet' ? 'text-yellow-400' : 'text-green-400'}`}>
-          {cluster === 'devnet' ? 'Devnet' : 'Mainnet'}
+        <Text
+          style={{
+            fontFamily: fonts.sans,
+            fontSize: 42,
+            letterSpacing: tracking(-0.02, 42),
+            color: colors.text,
+            lineHeight: 44,
+          }}
+        >
+          Momints
         </Text>
-      </Pressable>
+        <Text
+          style={{
+            fontFamily: fonts.mono,
+            fontSize: 12,
+            letterSpacing: tracking(0.26, 12),
+            color: '#9aa0b8',
+            marginTop: 16,
+          }}
+        >
+          POINT · SHOOT · MINT
+        </Text>
+
+        <ActivityIndicator size="small" color={colors.accentSoft} style={{ marginTop: 46 }} />
+
+        {/* Network pill — active side lit, tap to switch */}
+        <Pressable
+          onPress={toggleCluster}
+          style={{
+            position: 'absolute',
+            bottom: 34,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            paddingVertical: 9,
+            paddingHorizontal: 15,
+            borderRadius: 999,
+            backgroundColor: 'rgba(10,12,22,0.55)',
+            borderWidth: 1,
+            borderColor: 'rgba(255,255,255,0.1)',
+          }}
+        >
+          <View
+            style={{
+              width: 7,
+              height: 7,
+              borderRadius: 4,
+              backgroundColor: cluster === 'devnet' ? colors.yellow : colors.green,
+            }}
+          />
+          <Text
+            style={{
+              fontFamily: fonts.mono,
+              fontSize: 11,
+              color: cluster === 'devnet' ? colors.textSoft : colors.textMuted,
+            }}
+          >
+            DEVNET
+          </Text>
+          <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.14)' }} />
+          <Text
+            style={{
+              fontFamily: fonts.mono,
+              fontSize: 11,
+              color: cluster === 'mainnet' ? colors.textSoft : colors.textMuted,
+            }}
+          >
+            MAINNET
+          </Text>
+        </Pressable>
+      </LinearGradient>
     </View>
   )
 }

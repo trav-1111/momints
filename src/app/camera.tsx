@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import {
   View,
   Text,
@@ -10,28 +10,57 @@ import {
   Vibration,
   GestureResponderEvent,
   Modal,
+  AppState,
+  useWindowDimensions,
+  ViewStyle,
 } from 'react-native'
 import { useRouter } from 'expo-router'
+import { useIsFocused } from '@react-navigation/native'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
-import {
-  Camera,
-  useCameraDevice,
-  useCameraPermission,
-  PhotoFile,
-} from 'react-native-vision-camera'
+import { Camera, useCameraDevice, useCameraPermission, PhotoFile } from 'react-native-vision-camera'
 import {
   Gesture,
   GestureDetector,
   GestureUpdateEvent,
   PinchGestureHandlerEventPayload,
 } from 'react-native-gesture-handler'
+import { LinearGradient } from 'expo-linear-gradient'
 import { Paths, File, Directory } from 'expo-file-system'
 import { usePhotoStore } from '../store/photos'
 import { captureMetadata } from '../services/captureMetadata'
-import { useDevelopRoll } from '../hooks/useDevelopRoll'
+import { applyFilm } from '../services/filmProcessor'
+import { cropToAspect } from '../services/cropImage'
+import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
+import { useMintRoll } from '../hooks/useMintRoll'
 import { useNetworkStore } from '../store/network'
 import { useSessionStore } from '../store/session'
+import type { AspectRatio } from '../store/session'
+import { colors, fonts, tracking } from '../theme'
+import { IconBolt, IconBoltOff, IconCamera, IconFilm, IconFlip, IconMint } from '../components/icons'
+
+const QUICK_ASPECTS: { value: AspectRatio; label: string }[] = [
+  { value: 'full', label: 'FULL' },
+  { value: '1:1', label: '1:1' },
+  { value: '4:3', label: '4:3' },
+  { value: '16:9', label: '16:9' },
+]
+
+// Translucent over-preview chrome — hairline border on rgba(0,0,0,.5)
+const chip: ViewStyle = {
+  backgroundColor: colors.chipBg,
+  borderWidth: 1,
+  borderColor: colors.chipBorder,
+}
+
+const roundChip = (size: number): ViewStyle => ({
+  ...chip,
+  width: size,
+  height: size,
+  borderRadius: size / 2,
+  alignItems: 'center',
+  justifyContent: 'center',
+})
 
 export default function CameraScreen() {
   const router = useRouter()
@@ -49,10 +78,20 @@ export default function CameraScreen() {
   const shutterFlashAnim = useRef(new Animated.Value(0)).current
   const [walletMenuVisible, setWalletMenuVisible] = useState(false)
 
+  // Release the camera when the screen loses focus or the app is backgrounded
+  // (e.g. wallet handoff) — Android throws camera-is-restricted otherwise
+  const isFocused = useIsFocused()
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active')
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => setAppActive(s === 'active'))
+    return () => sub.remove()
+  }, [])
+
   const photos = usePhotoStore((state) => state.photos)
   const addPhoto = usePhotoStore((state) => state.addPhoto)
   const setAction = usePhotoStore((state) => state.setAction)
   const setPhotoMeta = usePhotoStore((state) => state.setPhotoMeta)
+  const updatePhotoUri = usePhotoStore((state) => state.updatePhotoUri)
 
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
@@ -61,14 +100,36 @@ export default function CameraScreen() {
   const setCluster = useNetworkStore((s) => s.setCluster)
 
   const activeMode = useSessionStore((s) => s.activeMode)
-  const activeRoll = useSessionStore((s) => s.activeRoll)
+  const rollInProgress = useSessionStore((s) => s.activeRoll)
   const addFrameToRoll = useSessionStore((s) => s.addFrameToRoll)
-  const { developRoll } = useDevelopRoll()
+  const developRoll = useSessionStore((s) => s.developRoll)
+  // Queues every frame of the finished roll and routes to the mint queue.
+  const { mintRoll } = useMintRoll()
 
-  const rollIsFull =
-    activeMode === 'roll' &&
-    activeRoll !== null &&
-    activeRoll.frameIds.length >= activeRoll.size
+  // The roll the camera shoots into — only relevant while in roll mode.
+  const activeRoll = activeMode === 'roll' ? rollInProgress : null
+
+  // Quick mode picks aspect live on the camera; roll mode uses the roll's fixed aspect.
+  const [quickAspect, setQuickAspect] = useState<AspectRatio>('full')
+  const [aspectMenuOpen, setAspectMenuOpen] = useState(false)
+  const quickAspectLabel = QUICK_ASPECTS.find((a) => a.value === quickAspect)?.label ?? 'FULL'
+  const effectiveAspect: AspectRatio = activeMode === 'roll' ? (activeRoll?.aspect ?? 'full') : quickAspect
+  const { width: screenW, height: screenH } = useWindowDimensions()
+
+  const rollIsFull = activeRoll !== null && activeRoll.frameIds.length >= activeRoll.size
+  const remainingExp = activeRoll ? activeRoll.size - activeRoll.frameIds.length : 0
+
+  // The quick-mint button only concerns photos outside any roll — a roll's
+  // frames go straight to the mint queue, not this screen's review flow.
+  // Keyed off the photo's own rollId, so frames of a *finished* roll stay
+  // excluded once the session's activeRoll is cleared.
+  const quickPhotos = useMemo(() => photos.filter((p) => !p.rollId), [photos])
+  // Already-minted photos are terminal — they shouldn't inflate the "needs a
+  // mint decision" badge.
+  const quickMintBadgeCount = useMemo(
+    () => quickPhotos.filter((p) => p.action !== 'minted').length,
+    [quickPhotos],
+  )
 
   const frontDevice = useCameraDevice('front')
   const backDevice = useCameraDevice('back')
@@ -92,10 +153,12 @@ export default function CameraScreen() {
   const handleCapture = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return
 
-    if (rollIsFull) {
-      Alert.alert('Roll Full', 'Develop your roll to mint the frames.', [
-        { text: 'Keep Waiting', style: 'cancel' },
-        { text: 'Develop', onPress: developRoll },
+    // A fully shot roll is closed to further frames — the only way on is to
+    // mint it (or discard it from the gallery).
+    if (activeRoll?.developed || rollIsFull) {
+      Alert.alert('Roll Complete', 'Every frame on this roll is shot. Mint the roll to see them.', [
+        { text: 'Later', style: 'cancel' },
+        { text: 'Mint Roll', onPress: () => mintRoll() },
       ])
       return
     }
@@ -127,7 +190,27 @@ export default function CameraScreen() {
 
       sourceFile.move(destFile)
 
-      const photoId = addPhoto(destFile.uri)
+      // Stamp roll membership at creation so it outlives the session's
+      // activeRoll — completeRoll() clears that, and frames must stay grouped
+      // as a roll (and out of the quick-photo flows) forever after.
+      const photoId = addPhoto(
+        destFile.uri,
+        activeMode === 'roll' && activeRoll !== null
+          ? { id: activeRoll.id, name: activeRoll.name }
+          : undefined,
+      )
+
+      // Post-capture processing: crop to the aspect ratio first, then apply the
+      // roll's film emulation (B&W). Both no-op where not needed and fall back
+      // to the original on failure, so a capture is never lost.
+      let processedUri = destFile.uri
+      if (effectiveAspect !== 'full') {
+        processedUri = await cropToAspect(processedUri, effectiveAspect)
+      }
+      if (activeMode === 'roll' && activeRoll !== null && activeRoll.film.mode !== 'color') {
+        processedUri = await applyFilm(processedUri, activeRoll.film)
+      }
+      if (processedUri !== destFile.uri) updatePhotoUri(photoId, processedUri)
 
       // Best-effort location/weather — fire-and-forget, never blocks capture
       captureMetadata()
@@ -141,11 +224,14 @@ export default function CameraScreen() {
         addFrameToRoll(photoId)
         setAction(photoId, 'mint')
 
-        // That capture filled the roll — offer to develop
+        // That capture finished the roll. A roll is always shot to the end, so
+        // it develops itself here — there is no manual develop action — and
+        // the frames are first seen in the mint queue.
         if (activeRoll.frameIds.length + 1 >= activeRoll.size) {
-          Alert.alert('Roll Complete! 🎞️', 'All frames are shot. Ready to develop?', [
+          developRoll()
+          Alert.alert('Roll Complete! 🎞️', `All ${activeRoll.size} frames are shot. Mint the roll?`, [
             { text: 'Later', style: 'cancel' },
-            { text: 'Develop', onPress: developRoll },
+            { text: 'Mint Roll', onPress: () => mintRoll() },
           ])
         }
       }
@@ -155,7 +241,23 @@ export default function CameraScreen() {
     } finally {
       setIsCapturing(false)
     }
-  }, [flash, isCapturing, addPhoto, supportsFlash, activeMode, activeRoll, addFrameToRoll, setAction, setPhotoMeta, shutterFlashAnim, rollIsFull, developRoll])
+  }, [
+    flash,
+    isCapturing,
+    addPhoto,
+    supportsFlash,
+    activeMode,
+    activeRoll,
+    addFrameToRoll,
+    setAction,
+    setPhotoMeta,
+    updatePhotoUri,
+    effectiveAspect,
+    shutterFlashAnim,
+    rollIsFull,
+    developRoll,
+    mintRoll,
+  ])
 
   const toggleFlash = useCallback(() => {
     if (!supportsFlash) return
@@ -193,7 +295,7 @@ export default function CameraScreen() {
         console.log('Focus not supported or failed:', error)
       }
     },
-    [activeDevice, focusOpacity]
+    [activeDevice, focusOpacity],
   )
 
   const pinchGesture = Gesture.Pinch()
@@ -207,12 +309,12 @@ export default function CameraScreen() {
     .runOnJS(true)
 
   const handleReview = useCallback(() => {
-    if (photos.length === 0) {
+    if (quickPhotos.length === 0) {
       Alert.alert('No Photos', 'Take some photos first before reviewing.')
       return
     }
     router.push('/review')
-  }, [photos.length, router])
+  }, [quickPhotos.length, router])
 
   const handleConnectWallet = useCallback(async () => {
     try {
@@ -246,15 +348,36 @@ export default function CameraScreen() {
 
   if (!hasPermission) {
     return (
-      <View className="flex-1 bg-black items-center justify-center px-8">
-        <Text className="text-white text-xl text-center mb-4">
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: colors.bg,
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: 32,
+        }}
+      >
+        <Text
+          style={{
+            fontFamily: fonts.sansSemiBold,
+            fontSize: 18,
+            color: colors.text,
+            textAlign: 'center',
+            marginBottom: 16,
+          }}
+        >
           Camera permission is required
         </Text>
         <Pressable
           onPress={() => Linking.openSettings()}
-          className="bg-purple-600 px-6 py-3 rounded-xl"
+          style={{
+            backgroundColor: colors.accent,
+            paddingHorizontal: 24,
+            paddingVertical: 12,
+            borderRadius: 14,
+          }}
         >
-          <Text className="text-white font-bold">Open Settings</Text>
+          <Text style={{ fontFamily: fonts.sansBold, fontSize: 14, color: colors.white }}>Open Settings</Text>
         </Pressable>
       </View>
     )
@@ -262,32 +385,44 @@ export default function CameraScreen() {
 
   if (!activeDevice) {
     return (
-      <View className="flex-1 bg-black items-center justify-center">
-        <Text className="text-white text-xl">No camera device found</Text>
+      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 18, color: colors.text }}>No camera device found</Text>
       </View>
     )
   }
 
   return (
-    <View className="flex-1 bg-black">
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <GestureDetector gesture={pinchGesture}>
         <Pressable style={StyleSheet.absoluteFill} onPress={handleFocus}>
           <Camera
             ref={cameraRef}
             style={StyleSheet.absoluteFill}
             device={activeDevice}
-            isActive={true}
+            isActive={isFocused && appActive}
             photo={true}
             zoom={zoom}
+          />
+
+          {/* Aspect-ratio framing guide */}
+          <AspectFramingOverlay aspect={effectiveAspect} width={screenW} height={screenH} />
+
+          {/* Legibility scrims — controls float above these */}
+          <LinearGradient
+            pointerEvents="none"
+            colors={['rgba(0,0,0,0.6)', 'rgba(0,0,0,0)']}
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 150 }}
+          />
+          <LinearGradient
+            pointerEvents="none"
+            colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.72)']}
+            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 190 }}
           />
 
           {/* Shutter Flash Overlay */}
           <Animated.View
             pointerEvents="none"
-            style={[
-              StyleSheet.absoluteFill,
-              { backgroundColor: '#000', opacity: shutterFlashAnim },
-            ]}
+            style={[StyleSheet.absoluteFill, { backgroundColor: '#000', opacity: shutterFlashAnim }]}
           />
 
           {/* Focus Indicator */}
@@ -299,9 +434,9 @@ export default function CameraScreen() {
                 top: focusPoint.y - 40,
                 width: 80,
                 height: 80,
-                borderWidth: 2,
-                borderColor: '#FFD700',
-                borderRadius: 8,
+                borderWidth: 1.5,
+                borderColor: colors.accentSoft,
+                borderRadius: 10,
                 opacity: focusOpacity,
               }}
             />
@@ -311,113 +446,307 @@ export default function CameraScreen() {
 
       {/* Zoom Indicator */}
       {zoom > 1.1 && (
-        <View className="absolute top-1/2 right-4 bg-black/60 px-3 py-1 rounded-full">
-          <Text className="text-white text-sm font-bold">{zoom.toFixed(1)}x</Text>
+        <View
+          style={[
+            chip,
+            {
+              position: 'absolute',
+              top: '50%',
+              right: 16,
+              paddingHorizontal: 10,
+              paddingVertical: 4,
+              borderRadius: 999,
+            },
+          ]}
+        >
+          <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: colors.text }}>{zoom.toFixed(1)}×</Text>
         </View>
       )}
 
-      {/* Top Controls */}
-      <View className="absolute top-12 left-0 right-0 flex-row justify-between items-center px-6">
-        {/* Flash Toggle */}
+      {/* Top row — flash · wallet */}
+      <View
+        style={{
+          position: 'absolute',
+          top: 20,
+          left: 18,
+          right: 18,
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
         <Pressable
           onPress={toggleFlash}
           disabled={!supportsFlash}
-          className={`w-12 h-12 rounded-full items-center justify-center ${
-            supportsFlash ? 'bg-black/50' : 'bg-black/30'
-          }`}
-          style={{ opacity: supportsFlash ? 1 : 0.4 }}
+          style={[roundChip(42), { opacity: supportsFlash ? 1 : 0.4 }]}
         >
-          {supportsFlash ? (
-            <Text className="text-xl">{flash === 'on' ? '⚡' : '✕'}</Text>
+          {flash === 'on' && supportsFlash ? (
+            <IconBolt size={19} color={colors.text} />
           ) : (
-            <Text className="text-gray-500 text-xl">⚡</Text>
+            <IconBoltOff size={19} color={colors.text} />
           )}
         </Pressable>
 
-        {/* Wallet Status — tappable when connected */}
         {account && walletAddress ? (
           <Pressable
             onPress={() => setWalletMenuVisible(true)}
-            className="bg-green-600/80 px-4 py-2 rounded-full flex-row items-center gap-2"
+            style={[
+              chip,
+              {
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 7,
+                paddingVertical: 8,
+                paddingHorizontal: 12,
+                borderRadius: 999,
+              },
+            ]}
           >
-            {cluster === 'devnet' && (
-              <View className="w-1.5 h-1.5 rounded-full bg-yellow-400" />
-            )}
-            <Text className="text-white text-sm font-medium">
+            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.green }} />
+            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.text }}>
               {formatWalletDisplay(walletAddress, domain)}
             </Text>
+            {cluster === 'devnet' && (
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.yellow }} />
+            )}
           </Pressable>
         ) : (
           <Pressable
             onPress={handleConnectWallet}
-            className="bg-purple-600 px-4 py-2 rounded-full"
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 7,
+              paddingVertical: 8,
+              paddingHorizontal: 14,
+              borderRadius: 999,
+              backgroundColor: colors.accentTint,
+              borderWidth: 1,
+              borderColor: colors.accent,
+            }}
           >
-            <Text className="text-white text-sm font-bold">Connect Wallet</Text>
+            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accentSoft }}>CONNECT</Text>
           </Pressable>
         )}
-
-        {/* Camera Flip */}
-        <Pressable
-          onPress={toggleCamera}
-          className="w-12 h-12 bg-black/50 rounded-full items-center justify-center"
-        >
-          <Text className="text-white text-xl">🔄</Text>
-        </Pressable>
       </View>
 
-      {/* Mode Indicator Chip */}
+      {/* Second row — mode chip · EXP dial */}
       <Pressable
-        onLongPress={() => {
-          if (activeRoll !== null) {
-            Alert.alert('Roll in progress', 'Develop or abandon the roll before switching modes.')
-          } else {
-            router.push('/mode-select')
-          }
-        }}
-        className="absolute top-28 left-6 flex-row items-center gap-1.5 bg-black/60 px-3 py-1.5 rounded-full"
+        onPress={() => router.push('/mode-select')}
+        style={[
+          chip,
+          {
+            position: 'absolute',
+            top: 74,
+            left: 18,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+            paddingVertical: 7,
+            paddingHorizontal: 11,
+            borderRadius: 10,
+          },
+        ]}
       >
-        <Text className="text-base">{activeMode === 'quick' ? '⚡' : '🎞️'}</Text>
+        {activeMode === 'roll' ? (
+          <IconFilm size={15} color={colors.text} />
+        ) : (
+          <IconCamera size={15} color={colors.text} />
+        )}
+        <Text
+          style={{
+            fontFamily: fonts.sansBold,
+            fontSize: 11,
+            letterSpacing: tracking(0.1, 11),
+            color: colors.text,
+          }}
+        >
+          {activeMode === 'roll' ? 'FILM' : 'QUICK'}
+        </Text>
         {activeMode === 'roll' && activeRoll !== null && (
-          <Text className="text-white text-xs font-medium">
-            {activeRoll.frameIds.length} / {activeRoll.size}
-          </Text>
+          <>
+            <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+            {activeRoll.film.mode === 'bw' && (
+              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>B&W</Text>
+            )}
+            {activeRoll.aspect !== 'full' && (
+              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>{activeRoll.aspect}</Text>
+            )}
+            {activeRoll.film.mode !== 'bw' && activeRoll.aspect === 'full' && (
+              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>COLOR</Text>
+            )}
+          </>
         )}
       </Pressable>
 
-      {/* Bottom Controls */}
-      <View className="absolute bottom-12 left-0 right-0 flex-row justify-center items-center gap-8">
-        {/* Gallery/Review Button */}
-        <Pressable
-          onPress={handleReview}
-          className="w-16 h-16 bg-white/20 rounded-2xl items-center justify-center"
+      {/* EXP dial — frames remaining, counts down like a film counter */}
+      {activeMode === 'roll' && activeRoll !== null && (
+        <View
+          style={[roundChip(52), { position: 'absolute', top: 74, right: 18, borderColor: 'rgba(255,255,255,0.16)' }]}
         >
-          {photos.length > 0 && (
-            <View className="absolute -top-2 -right-2 bg-purple-600 w-6 h-6 rounded-full items-center justify-center">
-              <Text className="text-white text-xs font-bold">{photos.length}</Text>
+          <Text style={{ fontFamily: fonts.monoBold, fontSize: 18, lineHeight: 20, color: colors.text }}>
+            {remainingExp}
+          </Text>
+          <Text
+            style={{
+              fontFamily: fonts.mono,
+              fontSize: 7,
+              letterSpacing: tracking(0.18, 7),
+              color: colors.accentSoft,
+              marginTop: 1,
+            }}
+          >
+            EXP
+          </Text>
+        </View>
+      )}
+
+      {/* Quick-mode aspect dropdown — collapsed shows the current ratio */}
+      {activeMode === 'quick' && (
+        <View
+          pointerEvents="box-none"
+          style={{ position: 'absolute', top: 74, left: 0, right: 0, alignItems: 'center' }}
+        >
+          <Pressable
+            onPress={() => setAspectMenuOpen((o) => !o)}
+            style={[
+              chip,
+              {
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 7,
+                paddingVertical: 8,
+                paddingHorizontal: 14,
+                borderRadius: 999,
+              },
+            ]}
+          >
+            <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.text }}>{quickAspectLabel}</Text>
+            <Text style={{ fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft }}>
+              {aspectMenuOpen ? '▲' : '▼'}
+            </Text>
+          </Pressable>
+          {aspectMenuOpen && (
+            <View
+              style={{
+                marginTop: 6,
+                borderRadius: 14,
+                overflow: 'hidden',
+                backgroundColor: 'rgba(0,0,0,0.8)',
+                borderWidth: 1,
+                borderColor: colors.chipBorder,
+              }}
+            >
+              {QUICK_ASPECTS.filter((a) => a.value !== quickAspect).map(({ value, label }) => (
+                <Pressable
+                  key={value}
+                  onPress={() => {
+                    setQuickAspect(value)
+                    setAspectMenuOpen(false)
+                  }}
+                  style={{ paddingHorizontal: 30, paddingVertical: 10 }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: fonts.mono,
+                      fontSize: 11,
+                      color: colors.textSoft,
+                      textAlign: 'center',
+                    }}
+                  >
+                    {label}
+                  </Text>
+                </Pressable>
+              ))}
             </View>
           )}
-          <Text className="text-white text-2xl">🖼️</Text>
+        </View>
+      )}
+
+      {/* Bottom row — flip · shutter · mint */}
+      <View
+        style={{
+          position: 'absolute',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 150,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: 26,
+        }}
+      >
+        <Pressable onPress={toggleCamera} style={roundChip(44)}>
+          <IconFlip size={20} color={colors.text} />
         </Pressable>
 
-        {/* Capture Button */}
         <Pressable
           onPress={handleCapture}
           disabled={isCapturing}
-          className="w-20 h-20 bg-white rounded-full items-center justify-center border-4 border-purple-600"
-          style={{ opacity: isCapturing || rollIsFull ? 0.5 : 1 }}
+          style={{
+            width: 80,
+            height: 80,
+            borderRadius: 40,
+            borderWidth: 2,
+            borderColor: colors.accent,
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: isCapturing || rollIsFull || activeRoll?.developed ? 0.5 : 1,
+          }}
         >
-          <View className="w-16 h-16 bg-white rounded-full" />
+          <View
+            style={{
+              width: 64,
+              height: 64,
+              borderRadius: 32,
+              backgroundColor: colors.text,
+              borderWidth: 4,
+              borderColor: 'rgba(12,13,22,0.35)',
+            }}
+          />
         </Pressable>
 
-        {/* Mint Button */}
-        <Pressable
-          onPress={handleReview}
-          disabled={photos.length === 0}
-          className="w-16 h-16 bg-purple-600 rounded-2xl items-center justify-center"
-          style={{ opacity: photos.length === 0 ? 0.5 : 1 }}
-        >
-          <Text className="text-white text-sm font-bold">MINT</Text>
-        </Pressable>
+        {/* Quick mode only — a roll's frames mint as a whole roll, not here */}
+        {activeMode === 'roll' ? (
+          <View style={{ width: 44, height: 44 }} />
+        ) : (
+          <View style={{ alignItems: 'center', gap: 5 }}>
+            <Pressable onPress={handleReview} style={roundChip(44)}>
+              <IconMint size={20} color={colors.text} strokeWidth={1.5} />
+              {quickMintBadgeCount > 0 && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: -4,
+                    right: -4,
+                    minWidth: 18,
+                    height: 18,
+                    borderRadius: 9,
+                    paddingHorizontal: 4,
+                    backgroundColor: colors.accent,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text style={{ fontFamily: fonts.monoBold, fontSize: 10, color: colors.white }}>
+                    {quickMintBadgeCount}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+            <Text
+              style={{
+                fontFamily: fonts.mono,
+                fontSize: 9,
+                letterSpacing: tracking(0.14, 9),
+                color: colors.textSoft,
+              }}
+            >
+              MINT
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Wallet Menu Modal */}
@@ -428,18 +757,43 @@ export default function CameraScreen() {
         onRequestClose={() => setWalletMenuVisible(false)}
       >
         <Pressable
-          style={StyleSheet.absoluteFill}
-          className="bg-black/70"
+          style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.7)' }]}
           onPress={() => setWalletMenuVisible(false)}
         />
         <View
-          style={{ position: 'absolute', top: '30%', left: 24, right: 24 }}
-          className="bg-gray-900 rounded-2xl overflow-hidden border border-gray-700"
+          style={{
+            position: 'absolute',
+            top: '30%',
+            left: 24,
+            right: 24,
+            borderRadius: 16,
+            overflow: 'hidden',
+            backgroundColor: colors.surface,
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
         >
           {/* Wallet Address */}
-          <View className="px-5 py-4 border-b border-gray-700">
-            <Text className="text-gray-400 text-xs mb-1">Connected Wallet</Text>
-            <Text className="text-white text-sm font-mono" numberOfLines={1}>
+          <View
+            style={{
+              paddingHorizontal: 20,
+              paddingVertical: 16,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.mono,
+                fontSize: 10,
+                letterSpacing: tracking(0.16, 10),
+                color: colors.textMuted,
+                marginBottom: 6,
+              }}
+            >
+              CONNECTED WALLET
+            </Text>
+            <Text numberOfLines={1} style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.text }}>
               {walletAddress}
             </Text>
           </View>
@@ -447,29 +801,61 @@ export default function CameraScreen() {
           {/* Network Toggle */}
           <Pressable
             onPress={handleToggleNetwork}
-            className="flex-row items-center justify-between px-5 py-4 border-b border-gray-700"
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingHorizontal: 20,
+              paddingVertical: 16,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            }}
           >
-            <View className="flex-row items-center gap-3">
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <View
-                className={`w-2.5 h-2.5 rounded-full ${cluster === 'devnet' ? 'bg-yellow-400' : 'bg-green-400'}`}
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: cluster === 'devnet' ? colors.yellow : colors.green,
+                }}
               />
-              <Text className="text-white font-medium">
+              <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>
                 {cluster === 'devnet' ? 'Devnet' : 'Mainnet'}
               </Text>
             </View>
-            <Text className="text-purple-400 text-sm">
-              Switch to {cluster === 'devnet' ? 'Mainnet' : 'Devnet'}
+            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accentSoft }}>
+              SWITCH TO {cluster === 'devnet' ? 'MAINNET' : 'DEVNET'}
             </Text>
           </Pressable>
 
           {/* Disconnect */}
-          <Pressable onPress={handleDisconnect} className="px-5 py-4 border-b border-gray-700">
-            <Text className="text-red-400 font-medium text-center">Disconnect Wallet</Text>
+          <Pressable
+            onPress={handleDisconnect}
+            style={{
+              paddingHorizontal: 20,
+              paddingVertical: 16,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.sansSemiBold,
+                fontSize: 14,
+                color: colors.redSoft,
+                textAlign: 'center',
+              }}
+            >
+              Disconnect Wallet
+            </Text>
           </Pressable>
 
           {/* Close */}
-          <Pressable onPress={() => setWalletMenuVisible(false)} className="px-5 py-4">
-            <Text className="text-gray-400 text-center">Cancel</Text>
+          <Pressable onPress={() => setWalletMenuVisible(false)} style={{ paddingHorizontal: 20, paddingVertical: 16 }}>
+            <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.textSecondary, textAlign: 'center' }}>
+              Cancel
+            </Text>
           </Pressable>
         </View>
       </Modal>
