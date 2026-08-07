@@ -47,6 +47,22 @@ export class RollDb {
       .first<RollRow>()
   }
 
+  /**
+   * Close a roll without waiting for all `size` frames to mint.
+   *
+   * `syncMintedCount` only completes a roll at mintedCount >= size, which the
+   * shooter cannot always reach — a discarded roll, or a frame that never
+   * mints, would otherwise hold the wallet's single OPEN slot forever (see the
+   * partial unique index in 0001_init.sql). Nothing is deleted: minted frames
+   * and their on-chain assets are untouched.
+   */
+  async closeRoll(collectionAddress: string): Promise<void> {
+    await this.db
+      .prepare("UPDATE rolls SET status = 'COMPLETE' WHERE collection_address = ? AND status = 'OPEN'")
+      .bind(collectionAddress)
+      .run()
+  }
+
   /** Count of this wallet's rolls named for the given day — drives the .NN suffix. */
   async countRollsForDay(wallet: string, dayPrefix: string): Promise<number> {
     const row = await this.db
