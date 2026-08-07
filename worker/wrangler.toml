@@ -14,6 +14,21 @@ compatibility_flags = ["nodejs_compat"]
 #   SOLANA_RPC_URL     Helius devnet endpoint. REQUIRED — the public
 #                      api.devnet.solana.com blocks Workers' egress IPs for
 #                      transaction sends. No public fallback exists in code.
+#   DISCORD_WEBHOOK_URL  Channel webhook for treasury-monitor alerts. Optional:
+#                      without it the monitor still runs and logs, it just
+#                      cannot notify. A secret — never in this file.
+#   OPERATOR_DISCORD_ID  Operator's Discord user ID, @-mentioned on CRITICAL
+#                      alerts only. Low sensitivity, but kept a secret for
+#                      consistency; critical alerts still post without it.
+
+# Treasury monitor (src/ops/monitor.ts): reads the Irys balance and posts a
+# Discord alert when the funding severity level CHANGES. READ-ONLY — it never
+# funds, signs, or moves anything. Cadence is a floor on how late an alert can
+# be: at 6h the operator hears about a crossing within 6 hours of it happening,
+# which the generous roll-headroom thresholds are sized around.
+# TODO tune cadence alongside ALERT_THRESHOLD_* in src/ops/monitor.ts.
+[triggers]
+crons = ["0 */6 * * *"]
 
 [[d1_databases]]
 binding = "DB"

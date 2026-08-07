@@ -17,6 +17,18 @@ export interface Env {
   STORAGE_PROVIDER?: string
   /** Optional: Pinata JWT — only needed for the TEST-ONLY Pinata fallback. */
   PINATA_JWT?: string
+  /**
+   * Discord channel webhook for operator alerts (Worker Secret). Optional and
+   * deliberately NOT required by validateEnv: without it the Worker still
+   * serves rolls and the treasury monitor still runs and logs — it just cannot
+   * notify. Never logged; ops/discord.ts redacts it out of anything it prints.
+   */
+  DISCORD_WEBHOOK_URL?: string
+  /**
+   * Operator's Discord user ID, used to @-mention on CRITICAL alerts only.
+   * Optional: without it critical alerts still post, just without the ping.
+   */
+  OPERATOR_DISCORD_ID?: string
 }
 
 /** Env after validation — the two required secrets are guaranteed present. */

@@ -1,8 +1,12 @@
-// Thin, typed D1 access layer. All SQL for rolls + frames lives here.
+// Thin, typed D1 access layer. All SQL for rolls + frames lives here, plus the
+// ops alert state the scheduled treasury monitor keeps.
 // (Treasury bookkeeping SQL lives with its seam impl in providers/treasury.)
 
 export type RollStatus = 'OPEN' | 'COMPLETE'
 export type FrameStatus = 'IMAGE_UPLOADED' | 'METADATA_UPLOADED' | 'MINT_PENDING' | 'MINTED'
+
+/** Ops alert severity, ordered healthy < low < critical (see ops/monitor.ts). */
+export type AlertLevel = 'healthy' | 'low' | 'critical'
 
 export interface RollRow {
   collection_address: string
@@ -17,6 +21,13 @@ export interface RollRow {
   status: RollStatus
   create_signature: string | null
   created_at: string
+}
+
+export interface OpsAlertStateRow {
+  alert_key: string
+  last_level: AlertLevel
+  last_value: string | null
+  updated_at: string
 }
 
 export interface FrameRow {
@@ -173,5 +184,42 @@ export class RollDb {
       .run()
     const roll = await this.getRoll(collectionAddress)
     return { mintedCount: roll?.minted_count ?? 0, status: roll?.status ?? 'OPEN' }
+  }
+}
+
+/**
+ * Last-posted alert level per ops alert stream — the memory behind the
+ * treasury monitor's hysteresis (post only when the level CHANGES; see
+ * ops/monitor.ts). Read-and-notify bookkeeping only: nothing here touches
+ * funds. Future checks add a ROW (another alert_key), not another table.
+ */
+export class OpsAlertStore {
+  constructor(private readonly db: D1Database) {}
+
+  async get(alertKey: string): Promise<OpsAlertStateRow | null> {
+    return await this.db
+      .prepare('SELECT * FROM ops_alert_state WHERE alert_key = ?')
+      .bind(alertKey)
+      .first<OpsAlertStateRow>()
+  }
+
+  /**
+   * Insert-or-update a stream's level. Called on every run, changed level or
+   * not, so a stale `updated_at` is a reliable "the cron stopped running"
+   * signal. The one case that must NOT record is a level change whose Discord
+   * post failed — see checkFundingBalance.
+   */
+  async record(alertKey: string, level: AlertLevel, value: string | null): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO ops_alert_state (alert_key, last_level, last_value, updated_at)
+         VALUES (?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         ON CONFLICT (alert_key) DO UPDATE SET
+           last_level = excluded.last_level,
+           last_value = excluded.last_value,
+           updated_at = excluded.updated_at`,
+      )
+      .bind(alertKey, level, value)
+      .run()
   }
 }

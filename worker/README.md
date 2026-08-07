@@ -3,8 +3,10 @@
 Single Cloudflare Worker backing the Momints roll feature: prepaid rolls of 12
 or 24 exposures, each roll an immutable Metaplex Core collection, each frame a
 Core asset minted into it, all media on permanent Arweave storage via Irys.
-Devnet only. No VPS, no always-on keepers — manual operator tasks are listed
-in the [runbook](#operator-runbook) below.
+Devnet only. No VPS, and no keeper acts on funds — the only scheduled job is
+the read-only [treasury monitor](#treasury-monitor--discord-alerts), which
+watches the Irys balance and pings Discord. Top-ups and conversions stay manual
+operator tasks, listed in the [runbook](#operator-runbook) below.
 
 The single-Worker shape, the Irys-in-Workers approach, and the two hard
 constraints this design bends around were all validated by real spikes — see
@@ -73,14 +75,16 @@ Roll/mint/cover logic calls only these interfaces (`src/providers/types.ts`):
 |---|---|---|
 | `StorageProvider` | **IrysProvider** — Arweave, permanent (the real one). `PinataProvider` exists as a clearly-marked TEST-ONLY fallback; IPFS pinning is not permanent and must not back any permanence claim. | — |
 | `TreasurySink` | **ManualSink** — records accrued SOL to D1 as conversion-pending; operator-readable summary at `/treasury/status`. No auto-swap. | `AutomatedSink` — SOL→$SKR Jupiter keeper |
-| `FundingProvider` | **ManualFunding** — checks the Irys balance, reports sufficiency, warns when low. Never funds inline. | `AutomatedFunding` — top-up keeper |
+| `FundingProvider` | **ManualFunding** — checks the Irys balance, reports sufficiency, warns when low. Never funds inline. The scheduled [treasury monitor](#treasury-monitor--discord-alerts) reads it on a cron and alerts Discord — notify only, never funds. | `AutomatedFunding` — top-up keeper |
 
 ## Endpoints
 
 ```
 GET  /health                       config + D1 reachability
-GET  /funding/status               Irys balance vs one typical frame (operator)
+GET  /funding/status               Irys balance vs one typical frame + roll headroom (operator)
 GET  /treasury/status              accrued fees pending manual conversion (operator)
+GET  /ops/status                   monitor's current level, roll headroom, last-alerted state
+GET  /ops/test-alert?severity=…    post a dummy Discord alert: low | critical | healthy
 POST /rolls                        JSON { wallet, size, artist?, skrIdentity?, localDate?, feeSignature? }
 GET  /rolls/open?wallet=<address>  the wallet's open roll, if any
 GET  /rolls/<collection>           roll + per-frame checkpoint status
@@ -103,6 +107,9 @@ npm run db:migrate:remote               # or db:migrate:local for wrangler dev -
 
 wrangler secret put IRYS_FUNDING_KEY    # devnet funding wallet, base58 secret key
 wrangler secret put SOLANA_RPC_URL      # Helius devnet endpoint
+
+wrangler secret put DISCORD_WEBHOOK_URL # optional: treasury-monitor alert channel
+wrangler secret put OPERATOR_DISCORD_ID # optional: your Discord user ID (@-mention on critical)
 
 npm run typecheck
 npm run deploy
@@ -127,10 +134,12 @@ Funding confirmation takes **120+ seconds** — it can never happen during a
 user request. Rolls fail fast (503, operator-facing message) when the balance
 is short. So: top up **ahead of** demand, not in response to failures.
 
-**When:** check `GET /funding/status` before any demo/session and whenever a
-response carries a `fundingWarning` (it warns while balance is below 2× the
-anticipated work — i.e. before requests start failing). Low-balance warnings
-also appear in `wrangler tail` as `[funding] …`.
+**When:** the [treasury monitor](#treasury-monitor--discord-alerts) tells you —
+it posts to Discord the moment the balance crosses into `low`, days of runway
+ahead. Otherwise: check `GET /funding/status` before any demo/session and
+whenever a response carries a `fundingWarning` (it warns while balance is below
+2× the anticipated work — i.e. before requests start failing). Low-balance
+warnings also appear in `wrangler tail` as `[funding] …`.
 
 **How** (from any machine with the funding wallet key — never from the
 Worker):
@@ -147,6 +156,85 @@ Size the top-up to anticipated work: a 24-frame roll is ~24 × 3 MB + cover;
 `GET /funding/status` reports the atomic price of a typical frame — multiply
 out and keep comfortable headroom. Verify afterwards with `/funding/status`
 (`sufficient: true`, no warning).
+
+### Treasury monitor — Discord alerts
+
+So you find out the Irys balance is running down **on Discord, days ahead**,
+instead of finding out when a user's frame upload 503s.
+
+A Cron Trigger (`[triggers] crons` in `wrangler.toml`, currently **every 6
+hours**) runs `scheduled()` → `src/ops/monitor.ts`. Each run reads the Irys
+balance through the same `FundingProvider` that backs `/funding/status`,
+converts it to **rolls of headroom**, and posts to Discord **only when the
+severity level changes**.
+
+**It is read-and-notify only.** It never calls `.fund()`, signs, or moves
+anything — that would be `AutomatedFunding`, which deliberately does not exist.
+
+#### Levels and thresholds
+
+Headroom is `balance ÷ (price of one typical frame × 24)` — a worst-case
+24-frame roll priced off the conservative 3 MiB/frame basis `/funding/status`
+already uses, rounded **down**. Thresholds are in `src/ops/monitor.ts`:
+
+| Level | Condition | Post | Ping |
+|---|---|---|---|
+| `healthy` | ≥ `ALERT_THRESHOLD_LOW_ROLLS` (**20**) rolls | green, on recovery only | no |
+| `low` | 5–19 rolls | amber "top up soon" | no |
+| `critical` | < `ALERT_THRESHOLD_CRITICAL_ROLLS` (**5**) rolls | red "top up today" | **@operator** |
+
+Both thresholds are deliberately generous (`TODO` markers to tune). A top-up
+takes 120+ seconds to confirm and you check in roughly daily, so the first
+alert has to arrive while there is still comfortable runway. Tightening them to
+"a few rolls left" recreates the failure they exist to prevent.
+
+#### Hysteresis — why the channel stays quiet
+
+An alert posts **only on a level change**, never twice for the same level.
+`healthy → low` posts amber; `low → critical` (or `healthy → critical`) posts
+red and pings you; any climb back posts a recovery — green when fully healthy,
+so you get positive confirmation your top-up landed. Same level twice in a row
+posts nothing. The last posted level lives in D1 (`ops_alert_state`, keyed
+`funding_balance`).
+
+Two deliberate behaviours worth knowing:
+
+- **No state row = `healthy`.** A first run at a healthy balance stays quiet; a
+  first run already below a threshold does fire.
+- **A failed Discord post does not advance the stored level**, so the next run
+  retries the crossing rather than treating an alert you never saw as
+  delivered.
+
+#### Setup and checks
+
+```sh
+wrangler secret put DISCORD_WEBHOOK_URL   # channel webhook (Server Settings → Integrations)
+wrangler secret put OPERATOR_DISCORD_ID   # your Discord user ID (Developer Mode → Copy User ID)
+```
+
+Both are optional: without the webhook the monitor still runs and logs but
+cannot notify; without the ID critical alerts still post, just without the
+ping. `DISCORD_WEBHOOK_URL` is a **secret** — never in the repo,
+`wrangler.toml`, or `.env`; anything logged from `ops/discord.ts` is redacted.
+
+```sh
+# does the webhook work? one dummy message per severity, no balance read
+curl "$WORKER_URL/ops/test-alert?severity=low"        # amber
+curl "$WORKER_URL/ops/test-alert?severity=critical"   # red + @-mention
+curl "$WORKER_URL/ops/test-alert?severity=healthy"    # green
+
+# what does the monitor think right now, without waiting for the cron?
+curl "$WORKER_URL/ops/status"
+```
+
+`/ops/status` reports the current level, roll headroom, balance, the
+thresholds, and `wouldPost` — what the next cron run would do. Cron activity
+shows up in `wrangler tail` as `[ops] cron …`, and `ops_alert_state.updated_at`
+is bumped on every run, so a stale timestamp means the cron itself stopped.
+
+> `/ops/test-alert` is unauthenticated. Anyone who learns the URL can spam the
+> channel (never the webhook itself — the secret is not exposed). Fine on
+> devnet; **remove or protect it before mainnet.**
 
 ### Run the SOL → $SKR conversion by hand
 

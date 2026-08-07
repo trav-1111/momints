@@ -1,9 +1,19 @@
-// Momints roll backend — Worker entry. On-demand endpoints only: no cron, no
-// keepers, no always-on anything. Manual operator tasks (Irys top-up,
-// SOL -> $SKR conversion) are documented in README.md.
-import { RollDb } from './db'
+// Momints roll backend — Worker entry. On-demand endpoints, plus ONE cron: the
+// read-only treasury monitor (ops/monitor.ts), which reads the Irys balance and
+// posts Discord alerts. No keeper acts on funds — top-up and SOL -> $SKR
+// conversion remain manual operator tasks, documented in README.md.
+import { OpsAlertStore, RollDb } from './db'
 import { ConfigError, validateEnv, type Env, type ValidatedEnv } from './env'
 import { HttpError, json } from './lib/http'
+import { postDiscordAlert, type AlertSeverity } from './ops/discord'
+import {
+  ALERT_THRESHOLD_CRITICAL_ROLLS,
+  ALERT_THRESHOLD_LOW_ROLLS,
+  FUNDING_ALERT_KEY,
+  readFundingSnapshot,
+  runTreasuryMonitor,
+  type AlertLevel,
+} from './ops/monitor'
 import { buildIrysUploader } from './providers/irysUploader'
 import { ManualFunding } from './providers/funding/manual'
 import { IrysProvider } from './providers/storage/irys'
@@ -18,6 +28,8 @@ const USAGE = `Momints roll backend (devnet).
   GET  /health                          config + D1 reachability
   GET  /funding/status                  Irys balance sufficiency (operator)
   GET  /treasury/status                 accrued fees pending manual conversion (operator)
+  GET  /ops/status                      treasury monitor: current level, roll headroom, last alert
+  GET  /ops/test-alert?severity=low     post a dummy Discord alert (low|critical|healthy)
   POST /rolls                           create a prepaid roll (JSON body)
   GET  /rolls/open?wallet=<address>     the wallet's open roll, if any
   GET  /rolls/<collection>              roll + per-frame checkpoint status
@@ -27,20 +39,23 @@ See README.md for request shapes and the operator runbook.
 `
 
 /**
- * Per-request context. D1-backed pieces are cheap and always available;
- * the Irys-backed seams (StorageProvider + FundingProvider) construct
- * lazily — pure-read endpoints never touch the bundler node.
+ * Per-invocation context, shared by fetch() and the cron scheduled() handler.
+ * D1-backed pieces are cheap and always available; the Irys-backed seams
+ * (StorageProvider + FundingProvider) construct lazily — pure-read endpoints
+ * never touch the bundler node.
  * Business logic sees only the three provider seams; swap impls here,
  * nowhere else.
  */
-class RequestContext {
+class WorkerContext {
   readonly db: RollDb
   readonly treasury: ManualSink
+  readonly opsAlerts: OpsAlertStore
   private uploaderSeams: Promise<{ storage: StorageProvider; funding: FundingProvider }> | null = null
 
   constructor(readonly env: ValidatedEnv) {
     this.db = new RollDb(env.DB)
     this.treasury = new ManualSink(env.DB)
+    this.opsAlerts = new OpsAlertStore(env.DB)
   }
 
   irysSeams(): Promise<{ storage: StorageProvider; funding: FundingProvider }> {
@@ -65,7 +80,7 @@ class RequestContext {
   }
 }
 
-async function handleCreateRoll(ctx: RequestContext, request: Request): Promise<Response> {
+async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<Response> {
   let body: CreateRollRequest
   try {
     body = (await request.json()) as CreateRollRequest
@@ -85,7 +100,7 @@ async function handleCreateRoll(ctx: RequestContext, request: Request): Promise<
   return json(result, 201)
 }
 
-async function handleMintFrame(ctx: RequestContext, request: Request, collectionAddress: string): Promise<Response> {
+async function handleMintFrame(ctx: WorkerContext, request: Request, collectionAddress: string): Promise<Response> {
   let form: FormData
   try {
     form = await request.formData()
@@ -132,7 +147,7 @@ async function handleMintFrame(ctx: RequestContext, request: Request, collection
   return json(result, result.alreadyMinted ? 200 : 201)
 }
 
-async function handleGetRoll(ctx: RequestContext, collectionAddress: string): Promise<Response> {
+async function handleGetRoll(ctx: WorkerContext, collectionAddress: string): Promise<Response> {
   const roll = await ctx.db.getRoll(collectionAddress)
   if (!roll) throw new HttpError(404, `No roll with collection address ${collectionAddress}`)
   const frames = await ctx.db.listFrames(collectionAddress)
@@ -157,7 +172,7 @@ async function handleGetRoll(ctx: RequestContext, collectionAddress: string): Pr
  * success, so a client that retries (or races its own auto-completion when the
  * last frame lands) never sees a spurious failure.
  */
-async function handleCompleteRoll(ctx: RequestContext, collectionAddress: string): Promise<Response> {
+async function handleCompleteRoll(ctx: WorkerContext, collectionAddress: string): Promise<Response> {
   const roll = await ctx.db.getRoll(collectionAddress)
   if (!roll) throw new HttpError(404, `No roll with collection address ${collectionAddress}`)
 
@@ -175,7 +190,7 @@ async function handleCompleteRoll(ctx: RequestContext, collectionAddress: string
   })
 }
 
-async function handleGetOpenRoll(ctx: RequestContext, url: URL): Promise<Response> {
+async function handleGetOpenRoll(ctx: WorkerContext, url: URL): Promise<Response> {
   const wallet = url.searchParams.get('wallet')
   if (!wallet) throw new HttpError(400, 'Missing ?wallet= query parameter')
   const roll = await ctx.db.getOpenRoll(wallet)
@@ -195,6 +210,8 @@ async function handleHealth(env: Env): Promise<Response> {
   const checks: Record<string, boolean | string> = {
     rpcConfigured: Boolean(env.SOLANA_RPC_URL),
     irysKeyConfigured: Boolean(env.IRYS_FUNDING_KEY),
+    // Informational only — alerting is optional and deliberately not part of `ok`.
+    discordWebhookConfigured: Boolean(env.DISCORD_WEBHOOK_URL),
   }
   try {
     await env.DB.prepare('SELECT 1').first()
@@ -206,9 +223,76 @@ async function handleHealth(env: Env): Promise<Response> {
   return json({ ok, checks }, ok ? 200 : 500)
 }
 
+/**
+ * Read-only introspection into what the treasury monitor currently thinks,
+ * without waiting for the next cron. Reads the balance; posts nothing.
+ */
+async function handleOpsStatus(ctx: WorkerContext): Promise<Response> {
+  const { funding } = await ctx.irysSeams()
+  const snapshot = await readFundingSnapshot(funding)
+  const state = await ctx.opsAlerts.get(FUNDING_ALERT_KEY)
+  // Missing state reads as `healthy` — same rule the scheduled check applies.
+  const lastLevel: AlertLevel = state?.last_level ?? 'healthy'
+
+  return json({
+    alertKey: FUNDING_ALERT_KEY,
+    level: snapshot.level,
+    rollsRemaining: snapshot.rollsRemaining,
+    balanceSol: snapshot.balanceSol,
+    balanceAtomic: snapshot.balanceAtomic,
+    perRollSol: snapshot.perRollSol,
+    perRollAtomic: snapshot.perRollAtomic,
+    perFrameAtomic: snapshot.perFrameAtomic,
+    sufficientForOneFrame: snapshot.funding.sufficient,
+    thresholds: { lowRolls: ALERT_THRESHOLD_LOW_ROLLS, criticalRolls: ALERT_THRESHOLD_CRITICAL_ROLLS },
+    lastAlerted: state
+      ? { level: state.last_level, value: state.last_value, updatedAt: state.updated_at }
+      : null,
+    /** What the next cron run would do at this instant. */
+    wouldPost: snapshot.level !== lastLevel,
+    discordConfigured: Boolean(ctx.env.DISCORD_WEBHOOK_URL),
+    operatorMentionConfigured: Boolean(ctx.env.OPERATOR_DISCORD_ID),
+  })
+}
+
+/**
+ * Post a dummy alert of the requested severity — proves the webhook, the embed
+ * colours, and the @-mention render correctly BEFORE the scheduled path is
+ * trusted. Reads no balance and touches no funds.
+ *
+ * TODO(mainnet): remove or put behind operator auth. It is unauthenticated, so
+ * anyone who learns the URL can spam the channel (never the webhook itself —
+ * the secret is not exposed). Acceptable on devnet only.
+ */
+async function handleOpsTestAlert(ctx: WorkerContext, url: URL): Promise<Response> {
+  const requested = url.searchParams.get('severity') ?? 'low'
+  if (requested !== 'healthy' && requested !== 'low' && requested !== 'critical') {
+    throw new HttpError(400, `severity must be one of healthy, low, critical (got "${requested}")`)
+  }
+  const severity: AlertSeverity = requested
+
+  const delivery = await postDiscordAlert(ctx.env, {
+    severity,
+    title: `TEST alert (${severity}) — treasury monitor wiring check`,
+    description:
+      'Manual test from GET /ops/test-alert. No balance was read and nothing was funded — this only ' +
+      'exercises the webhook, the severity colour, and (on critical) the operator mention.',
+    mention: severity === 'critical',
+    fields: [
+      { name: 'Source', value: 'GET /ops/test-alert' },
+      { name: 'Severity', value: severity },
+      { name: 'Real alert?', value: 'No — dummy payload' },
+    ],
+  })
+
+  return json({ severity, delivered: delivery.ok, error: delivery.error ?? null }, delivery.ok ? 200 : 502)
+}
+
 type Route =
   | { kind: 'funding-status' }
   | { kind: 'treasury-status' }
+  | { kind: 'ops-status' }
+  | { kind: 'ops-test-alert' }
   | { kind: 'create-roll' }
   | { kind: 'open-roll' }
   | { kind: 'get-roll'; collection: string }
@@ -219,6 +303,8 @@ type Route =
 function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/funding/status') return { kind: 'funding-status' }
   if (method === 'GET' && path === '/treasury/status') return { kind: 'treasury-status' }
+  if (method === 'GET' && path === '/ops/status') return { kind: 'ops-status' }
+  if (method === 'GET' && path === '/ops/test-alert') return { kind: 'ops-test-alert' }
   if (method === 'POST' && path === '/rolls') return { kind: 'create-roll' }
   if (method === 'GET' && path === '/rolls/open') return { kind: 'open-roll' }
   const rollMatch = path.match(/^\/rolls\/([1-9A-HJ-NP-Za-km-z]{32,44})(\/frames|\/complete)?$/)
@@ -251,15 +337,28 @@ export default {
 
       // Fail fast, operator-facing, before any work: required secrets present
       // and not pointing at a public RPC (no public fallback exists).
-      const ctx = new RequestContext(validateEnv(env))
+      const ctx = new WorkerContext(validateEnv(env))
 
       switch (route.kind) {
         case 'funding-status': {
           const { funding } = await ctx.irysSeams()
-          return json(await funding.balanceStatus())
+          // Same single balance read the cron uses (ops/monitor.ts). Response
+          // is the original FundingStatus plus the derived roll headroom.
+          const snapshot = await readFundingSnapshot(funding)
+          return json({
+            ...snapshot.funding,
+            balanceSol: snapshot.balanceSol,
+            perRollSol: snapshot.perRollSol,
+            rollsRemaining: snapshot.rollsRemaining,
+            level: snapshot.level,
+          })
         }
         case 'treasury-status':
           return json(await ctx.treasury.status())
+        case 'ops-status':
+          return await handleOpsStatus(ctx)
+        case 'ops-test-alert':
+          return await handleOpsTestAlert(ctx, url)
         case 'create-roll':
           return await handleCreateRoll(ctx, request)
         case 'open-roll':
@@ -280,6 +379,40 @@ export default {
       }
       console.error('[unhandled]', err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err))
       return json({ error: err instanceof Error ? err.message : 'Internal error' }, 500)
+    }
+  },
+
+  /**
+   * Cron entry — schedule lives in wrangler.toml [triggers]. A thin dispatcher:
+   * every check, and all of the severity/hysteresis logic, lives in
+   * ops/monitor.ts.
+   *
+   * READ-AND-NOTIFY ONLY. It reads the Irys balance and posts to Discord. It
+   * never funds, signs, or moves anything — auto top-up would be the
+   * AutomatedFunding keeper, which deliberately does not exist
+   * (providers/funding/automated.ts).
+   *
+   * NEVER THROWS. A scheduled handler that throws fails silently, so the
+   * operator would lose monitoring at exactly the moment they need it. Errors
+   * are logged (visible in `wrangler tail` / Workers logs) and the next run
+   * retries.
+   */
+  async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    try {
+      const ctx = new WorkerContext(validateEnv(env))
+      const { checks } = await runTreasuryMonitor({
+        env: ctx.env,
+        alerts: ctx.opsAlerts,
+        getFunding: async () => (await ctx.irysSeams()).funding,
+      })
+      for (const check of checks) {
+        console.log(`[ops] cron ${controller.cron} · ${check.key}: ${check.ok ? 'ok' : 'FAILED'} — ${check.note}`)
+      }
+    } catch (err) {
+      console.error(
+        `[ops] scheduled run (${controller.cron}) failed:`,
+        err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err),
+      )
     }
   },
 }
