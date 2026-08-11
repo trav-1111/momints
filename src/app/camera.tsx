@@ -30,6 +30,7 @@ import { usePhotoStore } from '../store/photos'
 import { captureMetadata } from '../services/captureMetadata'
 import { applyFilm } from '../services/filmProcessor'
 import { cropToAspect } from '../services/cropImage'
+import { ensureUnderCeiling } from '../services/compressImage'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useMintRoll } from '../hooks/useMintRoll'
@@ -201,14 +202,25 @@ export default function CameraScreen() {
       )
 
       // Post-capture processing: crop to the aspect ratio first, then apply the
-      // roll's film emulation (B&W). Both no-op where not needed and fall back
-      // to the original on failure, so a capture is never lost.
+      // roll's film emulation (B&W), then fit quick shots under the upload
+      // ceiling. Each no-ops where not needed and falls back to the original on
+      // failure, so a capture is never lost.
       let processedUri = destFile.uri
       if (effectiveAspect !== 'full') {
         processedUri = await cropToAspect(processedUri, effectiveAspect)
       }
       if (activeMode === 'roll' && activeRoll !== null && activeRoll.film.mode !== 'color') {
         processedUri = await applyFilm(processedUri, activeRoll.film)
+      }
+      // Quick shots only. Roll frames have no server-side size ceiling, so they
+      // keep full capture quality. This is the same predicate addPhoto uses to
+      // stamp rollId above, which is exactly what the gallery filters on to
+      // decide what mints through the quick path — so the two cannot disagree.
+      //
+      // Must come after applyFilm: film re-encodes at quality 95 and would
+      // otherwise be free to push an already-fitted image back over.
+      if (activeMode !== 'roll' || activeRoll === null) {
+        processedUri = await ensureUnderCeiling(processedUri)
       }
       if (processedUri !== destFile.uri) updatePhotoUri(photoId, processedUri)
 
