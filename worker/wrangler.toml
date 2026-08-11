@@ -38,8 +38,8 @@ crons = ["0 */6 * * *"]
 [vars]
 # Static "developing" metadata every quick mint is minted against before its
 # real image exists. Uploaded ONCE by scripts/upload-placeholder.mjs — permanent
-# and reused forever. TODO: fill in after the first run.
-QUICK_PLACEHOLDER_URI = ""
+# and reused forever, so this only changes if the holding artwork changes.
+QUICK_PLACEHOLDER_URI = "https://gateway.irys.xyz/GH6fEJ2DLpGob2mZ2UfxpcsyrURCCfzmak9VEiCkmGDP"
 # Receives quick-mint fees. MUST match the app's EXPO_PUBLIC_ROLL_TREASURY:
 # the Worker verifies payment to this exact address out of the landed
 # transaction, so a mismatch rejects finalizes the user has already paid for.

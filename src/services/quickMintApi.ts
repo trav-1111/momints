@@ -105,6 +105,25 @@ export function finalizeQuickMint(params: FinalizeQuickMintParams): Promise<Fina
   )
 }
 
+/**
+ * Give back a stage the user abandoned by declining the wallet prompt.
+ *
+ * Best-effort and deliberately swallowing: it exists to free a quota slot and
+ * an R2 object, so failing to reach the Worker is not worth surfacing on top of
+ * a cancellation the user already knows about. The 24h sweep is the backstop.
+ *
+ * ONLY safe for a mint that was never signed. Once a signature exists the fee
+ * may have landed, and the Worker refuses (409) rather than destroy the record
+ * of work it owes — but the caller should not rely on that guard alone.
+ */
+export async function releaseQuickStage(stagingKey: string): Promise<void> {
+  try {
+    await request<unknown>(`/quick/stage/${stagingKey}`, { method: 'DELETE' }, READ_TIMEOUT_MS)
+  } catch (err) {
+    console.warn(`[quickMint] could not release stage ${stagingKey}:`, err instanceof Error ? err.message : err)
+  }
+}
+
 /** Where a quick mint got to. 404s (RollApiError, status 404) if unknown. */
 export function getQuickMintStatus(assetAddress: string): Promise<QuickMintStatusResponse> {
   return request<QuickMintStatusResponse>(`/quick/${assetAddress}`, { method: 'GET' }, READ_TIMEOUT_MS)

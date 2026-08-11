@@ -148,11 +148,42 @@ export interface MintResult {
   mintAddress: string
 }
 
+/**
+ * The user closing the wallet without approving. On Android MWA this surfaces
+ * as `java.util.concurrent.CancellationException`, which reads like a crash and
+ * is not one.
+ *
+ * Kept separate from useMint's categorizeError deliberately: hooks import from
+ * services, so reaching the other way would be a cycle. Same reason
+ * isRateLimitError lives here.
+ */
+function isUserCancellation(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return (
+    msg.includes('cancellationexception') ||
+    msg.includes('cancel') ||
+    msg.includes('declined') ||
+    msg.includes('rejected') ||
+    msg.includes('user dismissed') ||
+    msg.includes('user closed')
+  )
+}
+
 function devMintLog(phase: string, err: unknown): void {
   if (!__DEV__) return
   const msg = err instanceof Error ? err.message : String(err)
   const cause = err instanceof Error && err.cause instanceof Error ? err.cause.message : undefined
-  console.error(`[mint:${phase}]`, msg, cause ? `(cause: ${cause})` : '')
+  const line = `[mint:${phase}]`
+  const detail = cause ? `(cause: ${cause})` : ''
+  // Declining is a normal outcome, not a failure — and now that quick mints
+  // carry a fee, it is a common one. Logging it through console.error puts a
+  // red LogBox overlay in front of the developer every time someone changes
+  // their mind, which is exactly how a warning surface gets ignored.
+  if (isUserCancellation(err)) {
+    console.log(line, 'cancelled by user —', msg, detail)
+    return
+  }
+  console.error(line, msg, detail)
 }
 
 function mintPhaseError(phaseLabel: string, err: unknown): Error {

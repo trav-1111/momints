@@ -92,6 +92,7 @@ POST /rolls/<collection>/frames    multipart: image (file), frameIndex, descript
 POST /rolls/<collection>/complete  close a roll early, freeing the wallet's OPEN slot
 POST /quick/stage                  multipart: image (file), metadata (JSON), wallet
 POST /quick/finalize               JSON { stagingKey, signature, assetAddress }
+DEL  /quick/stage/<stagingKey>     give back an unminted stage (user declined the prompt)
 GET  /quick/<asset>                quick-mint finalize status
 ```
 
@@ -137,6 +138,14 @@ transaction is verified. So the asset is minted against a permanent, static
 `/quick/stage` is deliberately unauthenticated. Staging cannot spend Arweave,
 so a bogus stage costs only an R2 object — bounded by the 3 MiB image ceiling,
 `MAX_STAGES_PER_WALLET_PER_DAY`, and the bucket's 24h lifecycle rule.
+
+Staging happens *before* the wallet prompt, so declining leaves an orphan that
+would otherwise hold one of those daily slots until the sweep. The app calls
+`DELETE /quick/stage/<stagingKey>` to give it back immediately. That endpoint
+**refuses anything past STAGED** (409): once a row is claimed the fee is
+collected and the asset is minted, so deleting it would destroy the only record
+of work the operator still owes. The app additionally only calls it for mints
+that never reached a signature, so the guard is enforced on both sides.
 
 Once a fee is collected the posture inverts: the consumer must never drop work.
 An empty Irys balance **retries** (with an alert) rather than dead-lettering,

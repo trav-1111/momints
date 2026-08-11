@@ -32,7 +32,7 @@ import { ManualSink } from './providers/treasury/manual'
 import type { FundingProvider, StorageProvider } from './providers/types'
 import { finalizeQuickMintJob, type AlertFn } from './quick/consumer'
 import { finalizeQuickMint, type FinalizeQuickMintRequest } from './quick/finalize'
-import { stageQuickMint } from './quick/stage'
+import { releaseQuickStage, stageQuickMint } from './quick/stage'
 import { sweepQuickMints } from './quick/sweep'
 import { createRoll, type CreateRollRequest } from './rolls/create'
 import { mintFrame, summarizeFrames } from './rolls/frames'
@@ -51,6 +51,7 @@ const USAGE = `Momints roll backend (devnet).
   POST /rolls/<collection>/complete     close a roll early (frees the wallet's slot)
   POST /quick/stage                     park a quick-mint image, get its mint params (multipart form)
   POST /quick/finalize                  prove the fee landed on-chain, queue the Arweave upload (JSON body)
+  DEL  /quick/stage/<stagingKey>        give back an unminted stage (user declined the wallet prompt)
   GET  /quick/<asset>                   quick-mint finalize status
 See README.md for request shapes and the operator runbook.
 `
@@ -277,6 +278,11 @@ async function handleFinalizeQuickMint(ctx: WorkerContext, request: Request): Pr
   return json(result, result.alreadyFinalizing ? 200 : 202)
 }
 
+async function handleReleaseQuickStage(ctx: WorkerContext, stagingKey: string): Promise<Response> {
+  const result = await releaseQuickStage({ db: ctx.db, bucket: ctx.env.QUICK_STAGING }, stagingKey)
+  return json(result)
+}
+
 async function handleGetQuickMint(ctx: WorkerContext, assetAddress: string): Promise<Response> {
   const row = await ctx.db.getQuickMintByAsset(assetAddress)
   if (!row) throw new HttpError(404, `No quick mint for asset ${assetAddress}`)
@@ -402,6 +408,7 @@ type Route =
   | { kind: 'complete-roll'; collection: string }
   | { kind: 'stage-quick' }
   | { kind: 'finalize-quick' }
+  | { kind: 'release-quick'; stagingKey: string }
   | { kind: 'get-quick'; asset: string }
 
 /** Match secret-requiring routes. Unknown paths 404 before env validation. */
@@ -414,6 +421,9 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/rolls/open') return { kind: 'open-roll' }
   if (method === 'POST' && path === '/quick/stage') return { kind: 'stage-quick' }
   if (method === 'POST' && path === '/quick/finalize') return { kind: 'finalize-quick' }
+  // stagingKey is a uuid, not an address — matched before the base58 rule below.
+  const releaseMatch = path.match(/^\/quick\/stage\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)
+  if (releaseMatch && method === 'DELETE') return { kind: 'release-quick', stagingKey: releaseMatch[1] }
   const rollMatch = path.match(/^\/rolls\/([1-9A-HJ-NP-Za-km-z]{32,44})(\/frames|\/complete)?$/)
   if (rollMatch) {
     const [, collection, suffix] = rollMatch
@@ -484,6 +494,8 @@ export default {
           return await handleStageQuickMint(ctx, request)
         case 'finalize-quick':
           return await handleFinalizeQuickMint(ctx, request)
+        case 'release-quick':
+          return await handleReleaseQuickStage(ctx, route.stagingKey)
         case 'get-quick':
           return await handleGetQuickMint(ctx, route.asset)
       }

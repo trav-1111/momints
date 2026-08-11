@@ -3,7 +3,7 @@ import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { buildMintMetadata, uploadToIPFS } from '../services/ipfs'
 import { formatCapturedAt } from '../services/captureMetadata'
 import { mintNFT, mintNFTBatch, type MintPhaseCallback, type QuickMintTerms } from '../services/mint'
-import { finalizeQuickMint, stageQuickMint } from '../services/quickMintApi'
+import { finalizeQuickMint, releaseQuickStage, stageQuickMint } from '../services/quickMintApi'
 import { mintWorkerFrame, RollApiError } from '../services/rollApi'
 import { isWorkerRollEnabled } from '../config/rollApi'
 import { clearPendingFinalize, recordPendingFinalize } from '../store/quickFinalize'
@@ -209,11 +209,17 @@ export function useMint() {
 
       const walletAddress = account.address.toString()
 
+      // Hoisted so the catch can give the stage back. `signed` is what makes
+      // that safe: past a signature the fee may already have landed, and
+      // releasing would discard the record of a mint the Worker owes.
+      let quick: Awaited<ReturnType<typeof stageAndRecord>> | null = null
+      let signed = false
+
       try {
         // Worker path: park the image, mint against the placeholder with the fee
         // bundled in, then hand the landed signature back for verification.
         // On-device path: upload to the storage provider first, mint after.
-        const quick = isQuickWorkerMint(params)
+        quick = isQuickWorkerMint(params)
           ? await stageAndRecord({
               wallet: walletAddress,
               photoUri: params.photoUri,
@@ -236,7 +242,8 @@ export function useMint() {
             ...(quick ? { quick: quick.terms } : {}),
             onSigned: quick
               ? ({ signature, mintAddress }) => {
-                  void recordPendingFinalize({ stagingKey: quick.stagingKey, signature, assetAddress: mintAddress })
+                  signed = true
+                  void recordPendingFinalize({ stagingKey: quick!.stagingKey, signature, assetAddress: mintAddress })
                 }
               : undefined,
             onPhase: (phase) => {
@@ -266,6 +273,12 @@ export function useMint() {
           mintAddress: result.mintAddress,
         }
       } catch (err) {
+        // Never signed means nothing was paid, so the staged image is dead
+        // weight — hand it back rather than leave it holding one of the
+        // wallet's daily stage slots until the sweep runs.
+        if (quick && !signed) {
+          void releaseQuickStage(quick.stagingKey)
+        }
         const errorMessage = categorizeError(err)
         setStatus('error')
         setError(errorMessage)
@@ -366,6 +379,9 @@ export function useMint() {
         const quickByPhotoId = new Map(
           ready.filter((r) => r.quick).map((r) => [r.item.photoId, r.quick!] as const),
         )
+        // Which quick items got as far as a signature. Anything NOT in here on
+        // failure was never paid for, so its stage can safely be given back.
+        const signedPhotoIds = new Set<string>()
 
         ready.forEach(({ item }) => onItem(item.photoId, { status: 'signing' }))
         try {
@@ -387,6 +403,7 @@ export function useMint() {
               onItemSigned: (photoId, { signature, mintAddress }) => {
                 const quick = quickByPhotoId.get(photoId)
                 if (quick) {
+                  signedPhotoIds.add(photoId)
                   void recordPendingFinalize({ stagingKey: quick.stagingKey, signature, assetAddress: mintAddress })
                 }
               },
@@ -428,7 +445,15 @@ export function useMint() {
             }
           }
         } catch (err) {
-          // Wallet sign failed — nothing in this chunk was sent
+          // Wallet sign failed — nothing in this chunk was sent. Give back every
+          // stage that never reached a signature; keyed off signedPhotoIds
+          // rather than assuming the throw was pre-signature, so a paid mint can
+          // never be released by a future change to where this throws from.
+          for (const [photoId, quick] of quickByPhotoId) {
+            if (!signedPhotoIds.has(photoId)) {
+              void releaseQuickStage(quick.stagingKey)
+            }
+          }
           const errorMessage = categorizeError(err)
           ready.forEach(({ item }) => onItem(item.photoId, { status: 'failed', error: errorMessage }))
           summary.failed += ready.length

@@ -84,20 +84,35 @@ function persist(next: PendingFinalize[]): Promise<void> {
  * die holding a paid mint nobody knows about. A recorded entry for a
  * transaction that never landed is harmless: finalize refuses it and it is
  * dropped.
+ *
+ * NEVER REJECTS. Both call sites are synchronous `onSigned` callbacks that
+ * cannot await, so a rejection here would surface as an unhandled promise
+ * rejection in the middle of a mint. Failing to persist is bad — it costs the
+ * crash-safety net for this one mint — but it must not also break the mint that
+ * is currently succeeding.
  */
 export async function recordPendingFinalize(
   entry: Omit<PendingFinalize, 'createdAt' | 'attempts'>,
 ): Promise<void> {
-  const pending = await load()
-  if (pending.some((e) => e.stagingKey === entry.stagingKey)) return
-  const next = [...pending, { ...entry, createdAt: Date.now(), attempts: 0 }].slice(-MAX_PENDING)
-  await persist(next)
+  try {
+    const pending = await load()
+    if (pending.some((e) => e.stagingKey === entry.stagingKey)) return
+    const next = [...pending, { ...entry, createdAt: Date.now(), attempts: 0 }].slice(-MAX_PENDING)
+    await persist(next)
+  } catch (err) {
+    console.warn(`[quickFinalize] could not record ${entry.assetAddress}:`, err)
+  }
 }
 
+/** NEVER REJECTS, for the same reason as recordPendingFinalize. */
 export async function clearPendingFinalize(stagingKey: string): Promise<void> {
-  const pending = await load()
-  const next = pending.filter((e) => e.stagingKey !== stagingKey)
-  if (next.length !== pending.length) await persist(next)
+  try {
+    const pending = await load()
+    const next = pending.filter((e) => e.stagingKey !== stagingKey)
+    if (next.length !== pending.length) await persist(next)
+  } catch (err) {
+    console.warn(`[quickFinalize] could not clear ${stagingKey}:`, err)
+  }
 }
 
 export async function countPendingFinalizes(): Promise<number> {

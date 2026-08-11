@@ -43,6 +43,55 @@ export interface StageQuickMintDeps {
   workerPubkey: string
 }
 
+export interface ReleaseQuickStageResult {
+  stagingKey: string
+  released: boolean
+  reason: 'released' | 'not-found'
+}
+
+/**
+ * Give back a stage the user abandoned — they declined the wallet prompt, so
+ * the image will never be minted.
+ *
+ * Without this the row and its R2 object sit until the 24h sweep, and every
+ * abandoned attempt eats one of the wallet's daily stage slots. Declining is
+ * common now that quick mints cost money, so a shooter who changes their mind
+ * enough times would otherwise get a baffling 429 mid-shoot.
+ *
+ * REFUSES anything past STAGED. A row that has been claimed represents a fee
+ * that is already collected and an asset already minted, so deleting it would
+ * destroy the only record of work the operator owes. The status guard lives in
+ * the SQL as well as here.
+ */
+export async function releaseQuickStage(
+  deps: Pick<StageQuickMintDeps, 'db' | 'bucket'>,
+  stagingKey: string,
+): Promise<ReleaseQuickStageResult> {
+  const { db, bucket } = deps
+
+  const row = await db.getQuickMint(stagingKey)
+  // Unknown or already released — the caller wanted it gone, and it is gone.
+  if (!row) {
+    return { stagingKey, released: false, reason: 'not-found' }
+  }
+  if (row.status !== 'STAGED') {
+    throw new HttpError(
+      409,
+      `Quick mint ${stagingKey} is ${row.status} — it has been paid for and cannot be released. ` +
+        'Only an unminted stage can be given back.',
+    )
+  }
+
+  if (row.staging_key) {
+    await bucket.delete(row.staging_key).catch((err: unknown) => {
+      // The row still goes; a stray object is reaped by the lifecycle rule.
+      console.warn(`[quick] could not delete staged object ${row.staging_key}:`, err)
+    })
+  }
+  await db.deleteStagedQuickMint(row.id)
+  return { stagingKey, released: true, reason: 'released' }
+}
+
 export interface StageQuickMintResult {
   stagingKey: string
   placeholderUri: string
