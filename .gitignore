@@ -43,3 +43,12 @@ app-example
 # generated native folders
 /ios
 /android
+
+# installed agent skills — vendored third-party content, re-created by
+# `npx skills add <source>`. .claude/skills holds symlinks into .agents.
+# skills-lock.json records the source + content hash; ignored with the rest,
+# but it is the one piece worth committing if the skill set should be
+# reproducible across machines.
+/.agents
+/.claude/skills
+skills-lock.json
