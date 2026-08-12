@@ -1,6 +1,6 @@
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults'
 import { mplTokenMetadata, createNft } from '@metaplex-foundation/mpl-token-metadata'
-import { mplCore, create as createCoreAsset } from '@metaplex-foundation/mpl-core'
+import { mplCore, create as createCoreAsset, fetchCollection } from '@metaplex-foundation/mpl-core'
 import {
   createNoopSigner,
   generateSigner,
@@ -294,14 +294,22 @@ async function buildMintTransaction(
   return { kitTx, mintAddress: mintSigner.publicKey.toString() }
 }
 
+/** What `create` needs to attach an asset to a collection — always fetched. */
+type FetchedCollection = Awaited<ReturnType<typeof fetchCollection>>
+
 // Prepaid-roll frame: a Metaplex Core asset minted into the roll's collection.
 // The wallet is the collection's update authority (it created it), so its
-// signature authorizes adding the asset — no extra signer needed. Our
-// collections carry no plugins, hence the empty oracle/hook lists.
+// signature authorizes adding the asset — no extra signer needed.
+//
+// The collection is FETCHED, never hand-built. Core derives the extra accounts
+// a mint needs from the collection's external plugin adapters (oracles,
+// lifecycle hooks); a literal with empty lists asserts there are none, which is
+// an assumption this file cannot actually make on the collection's behalf. Get
+// it wrong and the mint either fails or skips validation it should have run.
 async function buildCoreFrameTransaction(
   umi: Umi,
   walletPk: UmiPublicKey,
-  item: { name: string; metadataUri: string; collectionAddress: string },
+  item: { name: string; metadataUri: string; collection: FetchedCollection },
   blockhash: BlockhashWithExpiryBlockHeight,
 ): Promise<{ kitTx: Transaction; mintAddress: string }> {
   const assetSigner = generateSigner(umi)
@@ -312,7 +320,7 @@ async function buildCoreFrameTransaction(
     .add(
       createCoreAsset(umi, {
         asset: assetSigner,
-        collection: { publicKey: publicKey(item.collectionAddress), oracles: [], lifecycleHooks: [] },
+        collection: item.collection,
         name: item.name,
         uri: item.metadataUri,
         owner: walletPk,
@@ -487,6 +495,22 @@ export async function mintNFTBatch(
   const { umi, walletPk } = createMintUmi(walletAddress, rpcOverride)
   const blockhash = await umi.rpc.getLatestBlockhash()
 
+  // One fetch per distinct collection, not per frame — a chunk of roll frames
+  // shares one collection, and the read is only needed to build the mint.
+  const collections = new Map<string, FetchedCollection>()
+  const getCollection = async (address: string): Promise<FetchedCollection> => {
+    const cached = collections.get(address)
+    if (cached) return cached
+    let fetched: FetchedCollection
+    try {
+      fetched = await fetchCollection(umi, publicKey(address))
+    } catch (e) {
+      throw mintPhaseError(`collection read (${address})`, e)
+    }
+    collections.set(address, fetched)
+    return fetched
+  }
+
   const built: { kitTx: Transaction; mintAddress: string }[] = []
   for (const item of items) {
     if (item.quick) {
@@ -503,7 +527,11 @@ export async function mintNFTBatch(
         await buildCoreFrameTransaction(
           umi,
           walletPk,
-          { name: item.name, metadataUri: item.metadataUri, collectionAddress: item.collectionAddress },
+          {
+            name: item.name,
+            metadataUri: item.metadataUri,
+            collection: await getCollection(item.collectionAddress),
+          },
           blockhash,
         ),
       )
