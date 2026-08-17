@@ -1,5 +1,6 @@
 import type { Umi } from '@metaplex-foundation/umi'
 import type { QuickMintRow, RollDb } from '../db'
+import { buildNftMetadata } from '../lib/metadata'
 import { withBackoff } from '../lib/retry'
 import type { FundingProvider, StorageProvider } from '../providers/types'
 import { ESTIMATED_METADATA_BYTES } from '../rolls/config'
@@ -124,19 +125,18 @@ export async function finalizeQuickMintJob(deps: FinalizeConsumerDeps, quickMint
   let arweaveUri = row.arweave_uri
   if (!arweaveUri) {
     const staged = JSON.parse(row.metadata_json) as StagedMetadata
-    arweaveUri = await storage.uploadJSON({
-      name: staged.name,
-      symbol: staged.symbol,
-      description: staged.description,
-      ...(staged.external_url ? { external_url: staged.external_url } : {}),
-      image: imageUri,
-      attributes: staged.attributes,
-      properties: {
-        files: [{ uri: imageUri, type: row.mime }],
-        category: 'image',
+    arweaveUri = await storage.uploadJSON(
+      buildNftMetadata({
+        name: staged.name,
+        symbol: staged.symbol,
+        description: staged.description,
+        externalUrl: staged.external_url,
+        imageUri,
+        mime: row.mime,
+        attributes: staged.attributes,
         creators: staged.creators,
-      },
-    })
+      }),
+    )
     await db.saveQuickMintUpload(row.id, { arweaveUri })
   }
 

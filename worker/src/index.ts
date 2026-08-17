@@ -36,6 +36,7 @@ import { releaseQuickStage, stageQuickMint } from './quick/stage'
 import { sweepQuickMints } from './quick/sweep'
 import { createRoll, type CreateRollRequest } from './rolls/create'
 import { mintFrame, summarizeFrames } from './rolls/frames'
+import { revokeRollDelegate, revokeRollDelegateSafely } from './rolls/handoff'
 import { createWorkerUmi, getWorkerPublicKey } from './solana/client'
 
 const USAGE = `Momints roll backend (devnet).
@@ -196,6 +197,13 @@ async function handleCompleteRoll(ctx: WorkerContext, collectionAddress: string)
   if (!alreadyComplete) {
     await ctx.db.closeRoll(collectionAddress)
   }
+  // Non-fatal and safe to call unconditionally: a no-op if already handed off,
+  // and a free extra retry attempt if a previous try (this request or the
+  // frame that completed the roll) failed silently before the sweep got to it.
+  await revokeRollDelegateSafely(
+    { db: ctx.db, rpcUrl: ctx.env.SOLANA_RPC_URL, getUmi: () => createWorkerUmi(ctx.env) },
+    collectionAddress,
+  )
   return json({
     collectionAddress: roll.collection_address,
     name: roll.name,
@@ -574,9 +582,10 @@ export default {
    * are logged (visible in `wrangler tail` / Workers logs) and the next run
    * retries.
    *
-   * The two jobs are isolated from each other on purpose: a monitor failure
-   * must not skip the sweep, because the sweep is what re-drives paid quick
-   * mints whose finalize job was never enqueued.
+   * The jobs are isolated from each other on purpose: a monitor failure must
+   * not skip the sweeps, because the quick-mint sweep re-drives paid mints
+   * whose finalize job was never enqueued, and the roll-handoff sweep retries
+   * revokes that failed at completion time.
    */
   async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
     let ctx: WorkerContext
@@ -614,6 +623,34 @@ export default {
     } catch (err) {
       console.error(
         `[quick:sweep] scheduled run (${controller.cron}) failed:`,
+        err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err),
+      )
+    }
+
+    // Backstop for the synchronous revoke calls in handleCompleteRoll and
+    // mintFrame: retries any COMPLETE roll whose delegate revoke never landed.
+    // Per-roll, not per-batch — one stuck roll must not block the rest.
+    try {
+      const stalled = await ctx.db.listStalledRollHandoffs(50)
+      let revoked = 0
+      for (const roll of stalled) {
+        try {
+          await revokeRollDelegate(
+            { db: ctx.db, rpcUrl: ctx.env.SOLANA_RPC_URL, getUmi: () => createWorkerUmi(ctx.env) },
+            roll,
+          )
+          revoked++
+        } catch (err) {
+          console.error(
+            `[handoff:sweep] revoke failed for ${roll.collection_address}:`,
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
+      console.log(`[handoff:sweep] revoked ${revoked}/${stalled.length} stalled roll delegate(s)`)
+    } catch (err) {
+      console.error(
+        `[handoff:sweep] scheduled run (${controller.cron}) failed:`,
         err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err),
       )
     }

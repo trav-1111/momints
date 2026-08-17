@@ -21,6 +21,8 @@ export interface RollRow {
   minted_count: number
   status: RollStatus
   create_signature: string | null
+  /** Set once the Worker's UpdateDelegate is revoked at completion. See rolls/handoff.ts. */
+  handoff_signature: string | null
   created_at: string
 }
 
@@ -91,6 +93,35 @@ export class RollDb {
       .prepare("UPDATE rolls SET status = 'COMPLETE' WHERE collection_address = ? AND status = 'OPEN'")
       .bind(collectionAddress)
       .run()
+  }
+
+  /**
+   * Record that the Worker's UpdateDelegate has been revoked on this roll's
+   * collection — the shooter now holds sole control. Idempotent target: called
+   * both from the synchronous completion path and from the sweep's retry, so a
+   * second call just overwrites the same signature.
+   */
+  async markRollHandoff(collectionAddress: string, signature: string): Promise<void> {
+    await this.db
+      .prepare('UPDATE rolls SET handoff_signature = ? WHERE collection_address = ?')
+      .bind(signature, collectionAddress)
+      .run()
+  }
+
+  /**
+   * COMPLETE rolls whose delegate has not been confirmed revoked — the
+   * population the sweep re-drives. No age threshold: unlike the quick-mint
+   * queue, there is no separate in-flight retry to race against, and revoking
+   * is idempotent and cost-free, so retrying immediately every cron cycle is
+   * safe. In steady state this should be empty or near-empty — the synchronous
+   * completion path handles almost all of them inline.
+   */
+  async listStalledRollHandoffs(limit: number): Promise<RollRow[]> {
+    const result = await this.db
+      .prepare("SELECT * FROM rolls WHERE status = 'COMPLETE' AND handoff_signature IS NULL LIMIT ?")
+      .bind(limit)
+      .all<RollRow>()
+    return result.results
   }
 
   /** Count of this wallet's rolls named for the given day — drives the .NN suffix. */

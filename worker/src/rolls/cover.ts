@@ -3,8 +3,7 @@
 // film-canister artwork. The cover is STATIC for the roll's life: generated
 // once at creation, never swapped for frame 01, never mutated.
 //
-// TODO: assets/base-cover.jpg is a placeholder (downscaled from the app's
-// CollectionPlaceholder.png). Replace with the final film-canister artwork —
+// assets/base-cover.jpg is the real branded artwork. If it is ever swapped,
 // keep it JPEG and modest (<100 KB) so the Worker bundle and the <200 KB
 // output budget both hold.
 import baseCoverArt from '../../assets/base-cover.jpg'

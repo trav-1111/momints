@@ -1,6 +1,6 @@
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults'
 import { mplTokenMetadata, createNft } from '@metaplex-foundation/mpl-token-metadata'
-import { mplCore, create as createCoreAsset, fetchCollection } from '@metaplex-foundation/mpl-core'
+import { mplCore, create as createCoreAsset, fetchCollection, ruleSet } from '@metaplex-foundation/mpl-core'
 import {
   createNoopSigner,
   generateSigner,
@@ -99,6 +99,22 @@ export function transferSolItem(from: UmiPublicKey, to: UmiPublicKey, lamports: 
     },
     signers: [],
     bytesCreatedOnChain: 0,
+  }
+}
+
+// Momints earns on the mint fee, not on secondary sales. 100% of the royalty
+// goes to the shooter; there is no platform cut. This is a DECIDED value, not
+// a placeholder — mirrors ROYALTY_BASIS_POINTS in worker/src/lib/royalties.ts
+// (kept in sync by hand: separate projects, no shared module between them).
+const ROYALTY_BASIS_POINTS = 500 // 5%
+
+/** The Royalties plugin, enforced on-chain, 100% to `creator`. */
+function royaltiesPlugin(creator: UmiPublicKey) {
+  return {
+    type: 'Royalties' as const,
+    basisPoints: ROYALTY_BASIS_POINTS,
+    creators: [{ address: creator, percentage: 100 }],
+    ruleSet: ruleSet('None'),
   }
 }
 
@@ -352,6 +368,12 @@ async function buildCoreFrameTransaction(
  * Core rather than Token Metadata: a Core asset is one rent-paying account
  * instead of four, which is what leaves the user paying less overall than they
  * did when quick mints were free but minted as NFTs.
+ *
+ * Carries Royalties (enforced on-chain, 100% to the shooter) and a
+ * VerifiedCreators entry marked `verified: true` — valid because the wallet
+ * co-signs this same transaction (it must, to pay the fee), the same
+ * reasoning buildMintTransaction's Token Metadata creator flag already relies
+ * on above.
  */
 async function buildQuickCoreTransaction(
   umi: Umi,
@@ -372,6 +394,7 @@ async function buildQuickCoreTransaction(
         uri: item.placeholderUri,
         owner: walletPk,
         updateAuthority: publicKey(item.terms.updateAuthority),
+        plugins: [royaltiesPlugin(walletPk), { type: 'VerifiedCreators', signatures: [{ address: walletPk, verified: true }] }],
       })
     )
     .setBlockhash(blockhash)

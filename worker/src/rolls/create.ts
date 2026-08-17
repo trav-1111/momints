@@ -1,7 +1,9 @@
-import { generateSigner } from '@metaplex-foundation/umi'
+import { generateSigner, publicKey } from '@metaplex-foundation/umi'
 import type { Umi } from '@metaplex-foundation/umi'
 import type { RollDb } from '../db'
 import { HttpError } from '../lib/http'
+import { buildNftMetadata } from '../lib/metadata'
+import { royaltiesPlugin } from '../lib/royalties'
 import { sanitizeDisplayName } from '../lib/sanitize'
 import { withBackoff } from '../lib/retry'
 import type { FundingProvider, StorageProvider, TreasurySink } from '../providers/types'
@@ -116,21 +118,38 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
   // ---- Cover (static for the roll's life) + collection metadata ----
   const cover = await generateCover(dateLabel, size)
   const coverUri = await storage.uploadImage(cover.bytes, cover.mime)
-  const metadataUri = await storage.uploadJSON({
-    name,
-    symbol: 'MOMINTS',
-    description: `Momints roll ${name} — ${size} exposures by ${artist}.`,
-    image: coverUri,
-    attributes: [
-      // Two separate identity fields, deliberately:
-      // skr_identity = provenance/truth (immutable), artist = vanity display.
-      { trait_type: 'skr_identity', value: skrIdentity },
-      { trait_type: 'artist', value: artist },
-      { trait_type: 'exposures', value: String(size) },
-    ],
-  })
+  const metadataUri = await storage.uploadJSON(
+    buildNftMetadata({
+      name,
+      symbol: 'MOMINTS',
+      description: `Momints roll ${name} — ${size} exposures by ${artist}.`,
+      imageUri: coverUri,
+      mime: cover.mime,
+      attributes: [
+        // Two separate identity fields, deliberately:
+        // skr_identity = provenance/truth (immutable), artist = vanity display.
+        { trait_type: 'skr_identity', value: skrIdentity },
+        { trait_type: 'artist', value: artist },
+        { trait_type: 'exposures', value: String(size) },
+      ],
+      creators: [{ address: req.wallet, share: 100 }],
+    }),
+  )
 
-  // ---- On-chain collection, fully defined + immutable for the roll's life ----
+  // ---- On-chain collection ----
+  //
+  // The SHOOTER is the update authority from the moment the collection exists
+  // — never the Worker. The Worker instead holds a scoped UpdateDelegate,
+  // granted in this same instruction, which is what lets it mint frames into
+  // the collection later (rolls/frames.ts). That delegate is revoked once the
+  // roll completes (rolls/handoff.ts).
+  //
+  // This is the opposite of a leaked-key-proof design: the Worker's funding
+  // key is a single keypair shared across every roll. Under the old model
+  // (Worker as update authority) a leak of that key would have permanently
+  // compromised every roll collection that ever existed — unrecoverable. Under
+  // this one a leak revokes to a scoped, single-purpose delegate that can only
+  // mint into collections, and that can be revoked out from under it.
   const umi = await getUmi()
   const { createCollection } = await import('@metaplex-foundation/mpl-core')
   const collectionSigner = generateSigner(umi)
@@ -139,6 +158,18 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
     collection: collectionSigner,
     name,
     uri: metadataUri,
+    updateAuthority: publicKey(req.wallet),
+    plugins: [
+      {
+        type: 'UpdateDelegate',
+        additionalDelegates: [],
+        authority: { type: 'Address', address: umi.identity.publicKey },
+      },
+      // Collection-level, not per-frame: Core checks a member asset's own
+      // collection for Royalties when the asset has none of its own, so one
+      // plugin here covers every frame ever minted into this roll.
+      royaltiesPlugin(publicKey(req.wallet)),
+    ],
   })
     .setBlockhash(blockhash)
     .buildAndSign(umi)

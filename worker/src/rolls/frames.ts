@@ -2,8 +2,11 @@ import { generateSigner, publicKey } from '@metaplex-foundation/umi'
 import type { Umi } from '@metaplex-foundation/umi'
 import type { FrameRow, RollDb, RollRow } from '../db'
 import { HttpError } from '../lib/http'
+import { buildNftMetadata } from '../lib/metadata'
 import { withBackoff } from '../lib/retry'
+import { verifiedCreatorPlugin } from '../lib/royalties'
 import type { FundingProvider, StorageProvider } from '../providers/types'
+import { revokeRollDelegateSafely } from './handoff'
 import { ConfirmTimeoutError, getSignatureStatus, sendAndConfirm } from '../solana/confirm'
 import { ALLOWED_MIME, ESTIMATED_METADATA_BYTES } from './config'
 
@@ -115,6 +118,9 @@ export async function mintFrame(deps: MintFrameDeps, req: MintFrameRequest): Pro
         mintSignature: existing.mint_signature,
       })
       const { mintedCount, status: rollStatus } = await db.syncMintedCount(req.collectionAddress)
+      if (rollStatus === 'COMPLETE') {
+        await revokeRollDelegateSafely({ db, rpcUrl, getUmi }, req.collectionAddress)
+      }
       return {
         collectionAddress: req.collectionAddress,
         frameIndex: req.frameIndex,
@@ -180,20 +186,25 @@ export async function mintFrame(deps: MintFrameDeps, req: MintFrameRequest): Pro
   // ---- Step 2: metadata upload ----
   let metadataUri = existing?.metadata_uri ?? null
   if (!metadataUri) {
-    metadataUri = await storage.uploadJSON({
-      name,
-      symbol: 'MOMINTS',
-      description: req.description ?? `Frame ${String(req.frameIndex).padStart(3, '0')} of Momints roll ${roll.name}.`,
-      image: imageUri,
-      attributes: [
-        // Inherited from the roll: provenance identity + vanity display name.
-        { trait_type: 'skr_identity', value: roll.skr_identity },
-        { trait_type: 'artist', value: roll.artist },
-        { trait_type: 'roll', value: roll.name },
-        { trait_type: 'frame', value: `${String(req.frameIndex).padStart(3, '0')}/${roll.size}` },
-        ...(req.attributes ?? []),
-      ],
-    })
+    metadataUri = await storage.uploadJSON(
+      buildNftMetadata({
+        name,
+        symbol: 'MOMINTS',
+        description:
+          req.description ?? `Frame ${String(req.frameIndex).padStart(3, '0')} of Momints roll ${roll.name}.`,
+        imageUri,
+        mime: req.mime,
+        attributes: [
+          // Inherited from the roll: provenance identity + vanity display name.
+          { trait_type: 'skr_identity', value: roll.skr_identity },
+          { trait_type: 'artist', value: roll.artist },
+          { trait_type: 'roll', value: roll.name },
+          { trait_type: 'frame', value: `${String(req.frameIndex).padStart(3, '0')}/${roll.size}` },
+          ...(req.attributes ?? []),
+        ],
+        creators: [{ address: roll.wallet, share: 100 }],
+      }),
+    )
     await db.upsertFrame({
       collectionAddress: req.collectionAddress,
       frameIndex: req.frameIndex,
@@ -220,6 +231,18 @@ export async function mintFrame(deps: MintFrameDeps, req: MintFrameRequest): Pro
     name,
     uri: metadataUri,
     owner: publicKey(roll.wallet),
+    // Unverified: the Worker signs this creation, not the shooter, so it
+    // cannot honestly claim their signature here. The shooter can self-verify
+    // later — see lib/royalties.ts. Royalties is deliberately NOT set per
+    // frame; it lives once on the collection (rolls/create.ts).
+    plugins: [verifiedCreatorPlugin(publicKey(roll.wallet), false)],
+    // Explicit, not incidental: `create`'s `authority` has no fallback to
+    // umi.identity when omitted — it defaults to a "not provided" sentinel
+    // account, unsigned. The collection's update authority is the shooter now
+    // (rolls/create.ts), so without this the Worker has no way to authorize
+    // minting into it at all. This is the Worker acting as the collection's
+    // UpdateDelegate, not as its owner.
+    authority: umi.identity,
   })
     .setBlockhash(blockhash)
     .buildAndSign(umi)
@@ -261,6 +284,12 @@ export async function mintFrame(deps: MintFrameDeps, req: MintFrameRequest): Pro
     mintSignature: signature,
   })
   const { mintedCount, status: rollStatus } = await db.syncMintedCount(req.collectionAddress)
+  if (rollStatus === 'COMPLETE') {
+    // Non-fatal: this frame mint has already succeeded and must report so
+    // regardless of what happens here. worker/src/index.ts's scheduled sweep
+    // retries any revoke that fails.
+    await revokeRollDelegateSafely({ db, rpcUrl, getUmi }, req.collectionAddress)
+  }
 
   return {
     collectionAddress: req.collectionAddress,

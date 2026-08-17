@@ -1,0 +1,12 @@
+-- Checkpoint for the roll-completion authority handoff.
+--
+-- New roll collections (rolls/create.ts) make the SHOOTER the update
+-- authority from creation, with the Worker holding only a scoped
+-- UpdateDelegate to mint frames. Once a roll reaches COMPLETE, that delegate
+-- is revoked (rolls/handoff.ts) so the shooter holds sole control.
+--
+-- handoff_signature is NULL until the revoke lands. A COMPLETE roll with a
+-- null handoff_signature is always safe to retry — the revoke is idempotent
+-- (fetch-before-write checks on-chain state before acting) and revoking is a
+-- removal of Worker power, never a spend, so retrying it costs nothing.
+ALTER TABLE rolls ADD COLUMN handoff_signature TEXT;
