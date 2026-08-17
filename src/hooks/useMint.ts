@@ -1,32 +1,14 @@
-import { useState, useCallback } from 'react'
+import { useCallback } from 'react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
-import { buildMintMetadata, uploadToIPFS } from '../services/ipfs'
+import { buildMintMetadata } from '../services/ipfs'
 import { formatCapturedAt } from '../services/captureMetadata'
-import { mintNFT, mintNFTBatch, type MintPhaseCallback, type QuickMintTerms } from '../services/mint'
+import { mintNFTBatch, type QuickMintTerms } from '../services/mint'
 import { finalizeQuickMint, releaseQuickStage, stageQuickMint } from '../services/quickMintApi'
 import { mintWorkerFrame, RollApiError } from '../services/rollApi'
-import { isWorkerRollEnabled } from '../config/rollApi'
 import { clearPendingFinalize, recordPendingFinalize } from '../store/quickFinalize'
 import { useNetworkStore, getClusterRpc } from '../store/network'
 import type { RollContext } from '../store/mintQueue'
 import type { CaptureMeta } from '../store/photos'
-
-interface MintParams {
-  photoUri: string
-  title: string
-  artist: string
-  capturedAt: number
-  rollContext?: RollContext
-  captureMeta?: CaptureMeta
-  onMintPhase?: MintPhaseCallback
-}
-
-interface MintResult {
-  success: boolean
-  signature?: string
-  mintAddress?: string
-  error?: string
-}
 
 /** Frames per wallet approval. MWA signs a whole chunk in one prompt; kept
  * small so the shared blockhash never expires before send, and so parallel
@@ -55,8 +37,6 @@ export interface BatchSummary {
    * never reported and remain pending. */
   aborted: boolean
 }
-
-type MintStatus = 'idle' | 'uploading' | 'signing' | 'confirming' | 'success' | 'error'
 
 export const WALLET_SESSION_EXPIRED = 'Wallet session expired — reconnect your wallet and try again'
 
@@ -104,28 +84,11 @@ export function categorizeError(err: unknown): string {
 }
 
 /**
- * Roll frames mint through the Worker when it's configured: it signs with its
- * own key and sets the shooter as owner, so they cost no wallet approval.
- * Quick mints have no roll collection and always take the on-device path.
+ * Roll frames mint through the Worker: it signs with its own key and sets the
+ * shooter as owner, so they cost no wallet approval.
  */
 function isWorkerFrame(item: BatchItemInput): boolean {
-  return (
-    isWorkerRollEnabled() &&
-    Boolean(item.rollContext?.collectionAddress) &&
-    Number.isInteger(item.rollContext?.frameNumber)
-  )
-}
-
-/**
- * Quick shots go through the Worker's paid Arweave flow when it's configured.
- *
- * Keyed on the ABSENCE of a roll context, not merely on not being a Worker
- * frame: a roll frame that somehow reaches here without a collection address
- * is a bug, and charging it a quick-mint fee would turn that bug into a
- * user-visible charge. It falls through to the on-device path instead.
- */
-function isQuickWorkerMint(item: { rollContext?: RollContext }): boolean {
-  return isWorkerRollEnabled() && !item.rollContext
+  return Boolean(item.rollContext?.collectionAddress) && Number.isInteger(item.rollContext?.frameNumber)
 }
 
 /**
@@ -193,112 +156,16 @@ function describeWorkerError(err: unknown): string {
 
 export function useMint() {
   const { account, client, signTransaction, disconnect } = useMobileWallet()
-  const [status, setStatus] = useState<MintStatus>('idle')
-  const [error, setError] = useState<string | null>(null)
 
   const cluster = useNetworkStore((s) => s.cluster)
-
-  const mint = useCallback(
-    async (params: MintParams): Promise<MintResult> => {
-      if (!account) {
-        return { success: false, error: 'Wallet not connected' }
-      }
-
-      setStatus('uploading')
-      setError(null)
-
-      const walletAddress = account.address.toString()
-
-      // Hoisted so the catch can give the stage back. `signed` is what makes
-      // that safe: past a signature the fee may already have landed, and
-      // releasing would discard the record of a mint the Worker owes.
-      let quick: Awaited<ReturnType<typeof stageAndRecord>> | null = null
-      let signed = false
-
-      try {
-        // Worker path: park the image, mint against the placeholder with the fee
-        // bundled in, then hand the landed signature back for verification.
-        // On-device path: upload to the storage provider first, mint after.
-        quick = isQuickWorkerMint(params)
-          ? await stageAndRecord({
-              wallet: walletAddress,
-              photoUri: params.photoUri,
-              metadata: buildMintMetadata(params),
-            })
-          : null
-
-        const metadataUri = quick
-          ? quick.placeholderUri
-          : (await uploadToIPFS({ ...params, creatorAddress: walletAddress })).metadataUri
-
-        const result = await mintNFT(
-          {
-            metadataUri,
-            name: params.title,
-            symbol: 'MOMINT',
-            walletAddress,
-            rpc: getClusterRpc(cluster),
-            cluster,
-            ...(quick ? { quick: quick.terms } : {}),
-            onSigned: quick
-              ? ({ signature, mintAddress }) => {
-                  signed = true
-                  void recordPendingFinalize({ stagingKey: quick!.stagingKey, signature, assetAddress: mintAddress })
-                }
-              : undefined,
-            onPhase: (phase) => {
-              if (phase === 'signing') setStatus('signing')
-              if (phase === 'confirming') setStatus('confirming')
-              params.onMintPhase?.(phase)
-            },
-          },
-          {
-            client,
-            signTransaction,
-          },
-        )
-
-        if (quick) {
-          await finalizeAndClear({
-            stagingKey: quick.stagingKey,
-            signature: result.signature,
-            assetAddress: result.mintAddress,
-          })
-        }
-
-        setStatus('success')
-        return {
-          success: true,
-          signature: result.signature,
-          mintAddress: result.mintAddress,
-        }
-      } catch (err) {
-        // Never signed means nothing was paid, so the staged image is dead
-        // weight — hand it back rather than leave it holding one of the
-        // wallet's daily stage slots until the sweep runs.
-        if (quick && !signed) {
-          void releaseQuickStage(quick.stagingKey)
-        }
-        const errorMessage = categorizeError(err)
-        setStatus('error')
-        setError(errorMessage)
-        if (errorMessage === WALLET_SESSION_EXPIRED) {
-          // Drop the dead session so the badge offers a fresh connect
-          disconnect().catch(() => {})
-        }
-        return { success: false, error: errorMessage }
-      }
-    },
-    [account, client, signTransaction, disconnect, cluster],
-  )
 
   /**
    * Mint many photos. Per-item progress streams through onItem.
    *
-   * Roll frames go to the Worker first when it's configured — one request per
-   * frame, no wallet approval, failures strictly per-frame and resumable.
+   * Roll frames go to the Worker first — one request per frame, no wallet
+   * approval, failures strictly per-frame and resumable.
    *
-   * Everything else mints on-device in chunks of MINT_CHUNK_SIZE, one wallet
+   * Quick shots mint on-device in chunks of MINT_CHUNK_SIZE, one wallet
    * approval per chunk. There, upload failures are per-item and don't stop the
    * run, but a wallet-sign failure (decline / dead session) fails the whole
    * chunk and aborts the remaining chunks — those items are never reported and
@@ -316,7 +183,19 @@ export function useMint() {
       const walletAddress = account.address.toString()
 
       const workerItems = items.filter(isWorkerFrame)
-      const clientItems = items.filter((item) => !isWorkerFrame(item))
+      // A roll frame that reaches here without a usable collection address is
+      // a bug (rollContext set, but isWorkerFrame() rejected it) — report it
+      // failed rather than quietly minting it as an unrelated, unpaid asset.
+      const malformedRollItems = items.filter((item) => !isWorkerFrame(item) && item.rollContext)
+      const clientItems = items.filter((item) => !isWorkerFrame(item) && !item.rollContext)
+
+      for (const item of malformedRollItems) {
+        summary.failed++
+        onItem(item.photoId, {
+          status: 'failed',
+          error: 'Roll frame is missing its collection address or frame number — not minted, not charged.',
+        })
+      }
 
       // One frame per request, sequentially: each does an Arweave upload plus
       // an on-chain mint server-side. Failures are per-frame and never abort
@@ -354,18 +233,14 @@ export function useMint() {
         const uploads = await Promise.all(
           chunk.map(async (item) => {
             try {
-              // Quick shots stage to the Worker and mint against the
-              // placeholder; everything else uploads for real up front.
-              if (isQuickWorkerMint(item)) {
-                const quick = await stageAndRecord({
-                  wallet: walletAddress,
-                  photoUri: item.photoUri,
-                  metadata: buildMintMetadata(item),
-                })
-                return { item, metadataUri: quick.placeholderUri, quick }
-              }
-              const { metadataUri } = await uploadToIPFS({ ...item, creatorAddress: walletAddress })
-              return { item, metadataUri, quick: null }
+              // Stage to the Worker and mint against the placeholder; the fee
+              // rides in the same wallet-signed transaction.
+              const quick = await stageAndRecord({
+                wallet: walletAddress,
+                photoUri: item.photoUri,
+                metadata: buildMintMetadata(item),
+              })
+              return { item, metadataUri: quick.placeholderUri, quick }
             } catch (err) {
               onItem(item.photoId, { status: 'failed', error: categorizeError(err) })
               summary.failed++
@@ -376,9 +251,7 @@ export function useMint() {
         const ready = uploads.filter((u): u is NonNullable<typeof u> => u !== null)
         if (ready.length === 0) continue
 
-        const quickByPhotoId = new Map(
-          ready.filter((r) => r.quick).map((r) => [r.item.photoId, r.quick!] as const),
-        )
+        const quickByPhotoId = new Map(ready.map((r) => [r.item.photoId, r.quick] as const))
         // Which quick items got as far as a signature. Anything NOT in here on
         // failure was never paid for, so its stage can safely be given back.
         const signedPhotoIds = new Set<string>()
@@ -391,8 +264,7 @@ export function useMint() {
               metadataUri,
               name: item.title,
               symbol: 'MOMINT',
-              collectionAddress: item.rollContext?.collectionAddress,
-              ...(quick ? { quick: quick.terms } : {}),
+              quick: quick.terms,
             })),
             {
               walletAddress,
@@ -470,17 +342,5 @@ export function useMint() {
     [account, client, signTransaction, disconnect, cluster],
   )
 
-  const reset = useCallback(() => {
-    setStatus('idle')
-    setError(null)
-  }, [])
-
-  return {
-    mint,
-    mintBatch,
-    reset,
-    status,
-    error,
-    isLoading: status !== 'idle' && status !== 'success' && status !== 'error',
-  }
+  return { mintBatch }
 }

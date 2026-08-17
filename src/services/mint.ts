@@ -1,10 +1,8 @@
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults'
-import { mplTokenMetadata, createNft } from '@metaplex-foundation/mpl-token-metadata'
 import { mplCore, create as createCoreAsset, fetchCollection, ruleSet } from '@metaplex-foundation/mpl-core'
 import {
   createNoopSigner,
   generateSigner,
-  percentAmount,
   publicKey,
   signTransaction as umiSignTransaction,
   transactionBuilder,
@@ -159,11 +157,6 @@ export interface MintNFTDeps {
   signTransaction: (tx: Transaction) => Promise<Transaction>
 }
 
-export interface MintResult {
-  signature: string
-  mintAddress: string
-}
-
 /**
  * The user closing the wallet without approving. On Android MWA this surfaces
  * as `java.util.concurrent.CancellationException`, which reads like a crash and
@@ -267,47 +260,12 @@ export function resolveSolanaCluster(runtimeCluster?: 'mainnet' | 'devnet'): 'de
 
 export function createMintUmi(walletAddress: string, rpcOverride?: string): { umi: Umi; walletPk: UmiPublicKey } {
   const rpcUrl = rpcOverride ?? process.env.EXPO_PUBLIC_SOLANA_RPC ?? 'https://api.mainnet-beta.solana.com'
-  const umi = createUmi(rpcUrl).use(mplTokenMetadata()).use(mplCore())
+  const umi = createUmi(rpcUrl).use(mplCore())
   const walletPk = publicKey(walletAddress)
   const noopWallet = createNoopSigner(walletPk)
   umi.payer = noopWallet
   umi.identity = noopWallet
   return { umi, walletPk }
-}
-
-// Build one createNft transaction, pre-signed by the throwaway mint keypair;
-// the wallet's signature is added by the caller. The connected wallet is the
-// sole creator with verified: true — valid because it signs the transaction —
-// so wallets display the NFT as verified instead of flagging it.
-async function buildMintTransaction(
-  umi: Umi,
-  walletPk: UmiPublicKey,
-  item: { name: string; symbol: string; metadataUri: string },
-  blockhash: BlockhashWithExpiryBlockHeight,
-): Promise<{ kitTx: Transaction; mintAddress: string }> {
-  const mintSigner = generateSigner(umi)
-  const [limitItem, priceItem] = computeBudgetItems()
-  const built = transactionBuilder()
-    .add(limitItem)
-    .add(priceItem)
-    .add(
-      createNft(umi, {
-        mint: mintSigner,
-        name: item.name,
-        symbol: item.symbol,
-        uri: item.metadataUri,
-        sellerFeeBasisPoints: percentAmount(0),
-        creators: [{ address: walletPk, verified: true, share: 100 }],
-        tokenOwner: walletPk,
-      })
-    )
-    .setBlockhash(blockhash)
-    .build(umi)
-
-  const mintSignedUmi = await umiSignTransaction(built, [mintSigner])
-  const web3Tx = toWeb3JsTransaction(mintSignedUmi)
-  const kitTx = getTransactionDecoder().decode(web3Tx.serialize())
-  return { kitTx, mintAddress: mintSigner.publicKey.toString() }
 }
 
 /** What `create` needs to attach an asset to a collection — always fetched. */
@@ -371,9 +329,7 @@ async function buildCoreFrameTransaction(
  *
  * Carries Royalties (enforced on-chain, 100% to the shooter) and a
  * VerifiedCreators entry marked `verified: true` — valid because the wallet
- * co-signs this same transaction (it must, to pay the fee), the same
- * reasoning buildMintTransaction's Token Metadata creator flag already relies
- * on above.
+ * co-signs this same transaction (it must, to pay the fee).
  */
 async function buildQuickCoreTransaction(
   umi: Umi,
@@ -441,32 +397,6 @@ export async function sendAndConfirm(client: MintNFTDeps['client'], signedTx: Tr
   return signature
 }
 
-export async function mintNFT(params: MintNFTParams, deps: MintNFTDeps): Promise<MintResult> {
-  const { metadataUri, name, symbol, walletAddress, onPhase, rpc: rpcOverride, quick, onSigned } = params
-  const { client, signTransaction } = deps
-
-  const { umi, walletPk } = createMintUmi(walletAddress, rpcOverride)
-  const blockhash = await umi.rpc.getLatestBlockhash()
-  const { kitTx, mintAddress } = quick
-    ? await buildQuickCoreTransaction(umi, walletPk, { name, placeholderUri: metadataUri, terms: quick }, blockhash)
-    : await buildMintTransaction(umi, walletPk, { name, symbol, metadataUri }, blockhash)
-
-  onPhase?.('signing')
-  let signedTx: Transaction
-  try {
-    signedTx = await signTransaction(kitTx)
-  } catch (e) {
-    throw mintPhaseError('wallet sign', e)
-  }
-
-  onSigned?.({ signature: getSignatureFromTransaction(signedTx), mintAddress })
-
-  onPhase?.('confirming')
-  const signature = await sendAndConfirm(client, signedTx)
-
-  return { signature, mintAddress }
-}
-
 export interface BatchMintItemParams {
   /** Caller's correlation id (photoId) — echoed back on the result. */
   id: string
@@ -474,10 +404,9 @@ export interface BatchMintItemParams {
   metadataUri: string
   name: string
   symbol: string
-  /** When set, mint a Metaplex Core asset into this collection (prepaid roll)
-   * instead of a standalone Token Metadata NFT. */
+  /** Mint a Metaplex Core asset into this collection (prepaid roll frame). Exactly one of this or `quick` must be set. */
   collectionAddress?: string
-  /** When set, mint a standalone Core asset and bundle the quick-mint fee. */
+  /** Mint a standalone Core asset and bundle the quick-mint fee. Exactly one of this or `collectionAddress` must be set. */
   quick?: QuickMintTerms
 }
 
@@ -559,7 +488,9 @@ export async function mintNFTBatch(
         ),
       )
     } else {
-      built.push(await buildMintTransaction(umi, walletPk, item, blockhash))
+      // Every real caller sets one or the other — see BatchMintItemParams.
+      // There is no standalone Token Metadata fallback to fall back to.
+      throw mintPhaseError('build', new Error(`Item ${item.id} has neither quick terms nor a collectionAddress`))
     }
   }
 

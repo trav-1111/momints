@@ -41,17 +41,21 @@ const ROLL_SIZE = Number(process.env.ROLL_SIZE || 12);
 const KILL_AFTER = Number(process.env.KILL_AFTER || 3);
 
 // Reconciled against the worker's documented endpoint contract:
-//   POST /rolls                     JSON { wallet, size, artist?, skrIdentity?,
-//                                          localDate?, feeSignature? }
+//   POST /rolls                     JSON { wallet, size, feeSignature, artist?,
+//                                          skrIdentity?, localDate? }
 //   GET  /rolls/<collection>        roll + per-frame checkpoint status
 //   POST /rolls/<collection>/frames MULTIPART: image (file), frameIndex,
 //                                              description?, attributes? (JSON)
 //
-// Note: the roll id in the path is the COLLECTION ADDRESS. feeSignature is
-// optional (the trailing ? in the contract), so the test creates a roll
-// without signing a fee transaction. If your deployment makes feeSignature
-// mandatory, this create call will be rejected and you'll need to sign+send a
-// fee tx first — see the note in runResumeTest().
+// Note: the roll id in the path is the COLLECTION ADDRESS. feeSignature is now
+// REQUIRED and verified on-chain (rolls/verify.ts) — the Worker checks it pays
+// getRollFeeLamports(size) to QUICK_TREASURY_ADDRESS from WALLET before
+// spending anything. This script has no signing key for TEST_WALLET (it only
+// ever needs a public address), so it cannot produce one and the create call
+// below will be rejected with 402. See the fail() in runResumeTest() — extend
+// this script with a funded devnet keypair and a signed System transfer
+// before createRoll() if you want this E2E test to exercise roll creation
+// again; until then it documents the failure instead of pretending to pass.
 const ENDPOINTS = {
   createRoll: () => ({
     method: "POST",
@@ -157,8 +161,8 @@ async function runResumeTest() {
   if (created.res.status !== 200 && created.res.status !== 201) {
     if (parse.isFundingShort(created.res, created.json))
       return fail("roll creation refused with funding-short — Irys balance is empty. Fund it, then rerun.");
-    if (created.res.status === 400 && /fee|signature/i.test(JSON.stringify(created.json || "")))
-      return fail("roll creation requires a feeSignature — the test doesn't sign a fee tx. Make feeSignature optional on devnet, or extend the script to send+sign a fee tx first.");
+    if ((created.res.status === 402 || created.res.status === 400) && /fee|signature/i.test(JSON.stringify(created.json || "")))
+      return fail("roll creation requires a verified feeSignature — the test doesn't sign a fee tx. Extend the script with a funded devnet keypair and a signed System transfer to the treasury before createRoll().");
     return fail(`create returned ${created.res.status}. Body: ${short(JSON.stringify(created.json), 160)}`);
   }
   if (!rollId) return fail(`roll created (${created.res.status}) but couldn't parse the collection address — check parse.rollId against this body: ${short(JSON.stringify(created.json), 160)}`);

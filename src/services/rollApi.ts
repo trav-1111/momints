@@ -91,8 +91,8 @@ export interface CreateRollBody {
   skrIdentity?: string
   /** yyyy-mm-dd, so the roll is named for the shooter's day, not UTC. */
   localDate?: string
-  /** Signature of the fee transfer — bookkeeping context for the treasury. */
-  feeSignature?: string
+  /** Signature of the wallet's fee transfer to the treasury — verified on-chain by the Worker before it spends anything. */
+  feeSignature: string
 }
 
 export interface CreateRollResponse {

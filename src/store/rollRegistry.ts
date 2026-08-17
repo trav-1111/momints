@@ -30,17 +30,9 @@ interface RollRegistryStore {
   incrementFramesMinted: (collectionAddress: string, by?: number) => void
   closeRoll: (collectionAddress: string) => void
   getRoll: (collectionAddress: string) => RollRecord | undefined
-  /** Rolls (open or closed) this wallet created on the same local day as `now`. */
-  countRollsCreatedOn: (wallet: string, now: number) => number
 }
 
 const STORAGE_KEY = 'roll-registry'
-
-function isSameLocalDay(a: number, b: number): boolean {
-  const da = new Date(a)
-  const db = new Date(b)
-  return da.getFullYear() === db.getFullYear() && da.getMonth() === db.getMonth() && da.getDate() === db.getDate()
-}
 
 function parseRecord(raw: unknown): RollRecord | null {
   if (raw === null || typeof raw !== 'object') return null
@@ -123,10 +115,6 @@ export const useRollRegistry = create<RollRegistryStore>((set, get) => ({
 
   getRoll: (collectionAddress) => {
     return get().rolls.find((r) => r.collectionAddress === collectionAddress)
-  },
-
-  countRollsCreatedOn: (wallet, now) => {
-    return get().rolls.filter((r) => r.wallet === wallet && isSameLocalDay(r.createdAt, now)).length
   },
 }))
 

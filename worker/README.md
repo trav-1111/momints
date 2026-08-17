@@ -21,25 +21,36 @@ cap (~41% headroom).
    cap, control/bidi chars stripped); at most ONE roll with status `OPEN` per
    wallet (enforced by check + partial unique index — quick-shoot single mints
    are a separate path and never count toward the roll).
-2. **Funding pre-check** — `FundingProvider.ensureFunded()` verifies the
+2. **Fee verification** — the client pays the roll fee in its own
+   wallet-signed transfer to `QUICK_TREASURY_ADDRESS` *before* calling this
+   endpoint (`payRollFee` in the app) and sends back the landed `feeSignature`.
+   `feeSignature` is REQUIRED; the Worker fetches that transaction and checks
+   it paid at least `getRollFeeLamports(size)` from `wallet` to the treasury
+   before doing anything else (`rolls/verify.ts`) — nothing the client claims
+   is trusted. A signature can only pay for one roll: `rolls.fee_signature` is
+   UNIQUE (`migrations/0005_roll_fee_signature.sql`), checked with a friendly
+   409 pre-check and enforced under races by the index itself. This is the
+   ONLY gate before any spend — everything below this point costs the
+   Worker's own Arweave balance or SOL.
+3. **Funding pre-check** — `FundingProvider.ensureFunded()` verifies the
    pre-funded Irys balance covers ~N frames + 1 cover. Insufficient balance
    fails the request fast (503) with an operator-facing error. **It never
    funds inline** — see [constraint 1](#the-two-hard-constraints).
-3. Derive the roll name `yyyy-mm-dd.NN` — NN is the 2-digit same-day index for
+4. Derive the roll name `yyyy-mm-dd.NN` — NN is the 2-digit same-day index for
    this wallet (first of the day = `.01`), from D1.
-4. Generate the branded cover with `@cf-wasm/photon` (date + `12 EXP`/`24 EXP`
+5. Generate the branded cover with `@cf-wasm/photon` (date + `12 EXP`/`24 EXP`
    composited onto the base film-canister artwork, output < 200 KB), upload it
    and the collection metadata JSON via `StorageProvider`. The cover is
    **static for the roll's life** — never swapped for frame 01, never mutated.
-5. Create the Metaplex Core collection — metadata fully defined up front and
+6. Create the Metaplex Core collection — metadata fully defined up front and
    never mutated in normal operation, update authority the **shooter's**
    wallet from the instant it exists, the Worker holding only a scoped
    delegate to mint frames (see [roll collection
    ownership](#roll-collection-ownership) below) — plus two separate identity
    attributes: `skr_identity` (verified handle or wallet — provenance,
    immutable) and `artist` (user-editable vanity name).
-6. Persist to D1 (`status=OPEN`, `mintedCount=0`) and record the prepaid fee
-   through `TreasurySink.record()` as conversion-pending.
+7. Persist to D1 (`status=OPEN`, `mintedCount=0`, `fee_signature`) and record
+   the prepaid fee through `TreasurySink.record()` as conversion-pending.
 
 **Mint frames** (`POST /rolls/<collection>/frames`, one frame per request)
 Each frame: image upload → metadata JSON upload → Core asset minted into the
@@ -87,9 +98,9 @@ Roll/mint/cover logic calls only these interfaces (`src/providers/types.ts`):
 GET  /health                       config + D1 reachability
 GET  /funding/status               Irys balance vs one typical frame + roll headroom (operator)
 GET  /treasury/status              accrued fees pending manual conversion (operator)
-GET  /ops/status                   monitor's current level, roll headroom, last-alerted state
-GET  /ops/test-alert?severity=…    post a dummy Discord alert: low | critical | healthy
-POST /rolls                        JSON { wallet, size, artist?, skrIdentity?, localDate?, feeSignature? }
+GET  /ops/status                   monitor's current level, roll headroom, last-alerted state (needs OPS_AUTH_TOKEN)
+GET  /ops/test-alert?severity=…    post a dummy Discord alert: low | critical | healthy (needs OPS_AUTH_TOKEN)
+POST /rolls                        JSON { wallet, size, feeSignature, artist?, skrIdentity?, localDate? }
 GET  /rolls/open?wallet=<address>  the wallet's open roll, if any
 GET  /rolls/<collection>           roll + per-frame checkpoint status
 POST /rolls/<collection>/frames    multipart: image (file), frameIndex, description?, attributes? (JSON array)
@@ -326,21 +337,25 @@ Two deliberate behaviours worth knowing:
 ```sh
 wrangler secret put DISCORD_WEBHOOK_URL   # channel webhook (Server Settings → Integrations)
 wrangler secret put OPERATOR_DISCORD_ID   # your Discord user ID (Developer Mode → Copy User ID)
+wrangler secret put OPS_AUTH_TOKEN        # any random string, e.g. `openssl rand -hex 32`
 ```
 
-Both are optional: without the webhook the monitor still runs and logs but
-cannot notify; without the ID critical alerts still post, just without the
-ping. `DISCORD_WEBHOOK_URL` is a **secret** — never in the repo,
+`DISCORD_WEBHOOK_URL` and `OPERATOR_DISCORD_ID` are optional: without the
+webhook the monitor still runs and logs but cannot notify; without the ID
+critical alerts still post, just without the ping. `OPS_AUTH_TOKEN` is not
+optional for these two routes — both 401 without it, even before checking
+whether a token was sent, so forgetting to set it fails closed rather than
+reopening the hole. All three are **secrets** — never in the repo,
 `wrangler.toml`, or `.env`; anything logged from `ops/discord.ts` is redacted.
 
 ```sh
 # does the webhook work? one dummy message per severity, no balance read
-curl "$WORKER_URL/ops/test-alert?severity=low"        # amber
-curl "$WORKER_URL/ops/test-alert?severity=critical"   # red + @-mention
-curl "$WORKER_URL/ops/test-alert?severity=healthy"    # green
+curl -H "Authorization: Bearer $OPS_AUTH_TOKEN" "$WORKER_URL/ops/test-alert?severity=low"        # amber
+curl -H "Authorization: Bearer $OPS_AUTH_TOKEN" "$WORKER_URL/ops/test-alert?severity=critical"   # red + @-mention
+curl -H "Authorization: Bearer $OPS_AUTH_TOKEN" "$WORKER_URL/ops/test-alert?severity=healthy"    # green
 
 # what does the monitor think right now, without waiting for the cron?
-curl "$WORKER_URL/ops/status"
+curl -H "Authorization: Bearer $OPS_AUTH_TOKEN" "$WORKER_URL/ops/status"
 ```
 
 `/ops/status` reports the current level, roll headroom, balance, the
@@ -348,9 +363,12 @@ thresholds, and `wouldPost` — what the next cron run would do. Cron activity
 shows up in `wrangler tail` as `[ops] cron …`, and `ops_alert_state.updated_at`
 is bumped on every run, so a stale timestamp means the cron itself stopped.
 
-> `/ops/test-alert` is unauthenticated. Anyone who learns the URL can spam the
-> channel (never the webhook itself — the secret is not exposed). Fine on
-> devnet; **remove or protect it before mainnet.**
+> Both routes require `Authorization: Bearer <OPS_AUTH_TOKEN>` — they read
+> funding-wallet internals and `/ops/test-alert` can trigger a real Discord
+> post, so they can't be left open once the Worker's base URL is public (it
+> ships in the app's `EXPO_PUBLIC_ROLL_API`). The scheduled cron itself calls
+> `runTreasuryMonitor()` directly, not this route, so the token requirement
+> never affects the automated 6-hourly check.
 
 ### Run the SOL → $SKR conversion by hand
 

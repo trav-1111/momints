@@ -25,6 +25,11 @@ compatibility_flags = ["nodejs_compat"]
 #   OPERATOR_DISCORD_ID  Operator's Discord user ID, @-mentioned on CRITICAL
 #                      alerts only. Low sensitivity, but kept a secret for
 #                      consistency; critical alerts still post without it.
+#   OPS_AUTH_TOKEN     Bearer token gating GET /ops/status and GET
+#                      /ops/test-alert (funding-wallet internals + a Discord
+#                      post trigger — not for a public URL). Both routes 401
+#                      if this is unset. Any random string works, e.g.
+#                      `openssl rand -hex 32`.
 
 # Treasury monitor (src/ops/monitor.ts): reads the Irys balance and posts a
 # Discord alert when the funding severity level CHANGES. READ-ONLY — it never

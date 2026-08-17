@@ -55,6 +55,15 @@ export interface Env {
    * finalize after the user has already paid.
    */
   QUICK_TREASURY_ADDRESS?: string
+  /**
+   * Bearer token (Worker Secret) gating GET /ops/status and GET /ops/test-alert.
+   * These read funding-wallet internals and can trigger a Discord post — fine
+   * for an operator to hit directly, not fine for anyone who learns the
+   * Worker's base URL (which becomes public the moment the app ships it in an
+   * APK). Set with `wrangler secret put OPS_AUTH_TOKEN`; both routes 401
+   * without it, even if the secret itself is unset — see requireOpsAuth().
+   */
+  OPS_AUTH_TOKEN?: string
 }
 
 /** Env after validation — the two required secrets are guaranteed present. */

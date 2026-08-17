@@ -44,7 +44,9 @@ const USAGE = `Momints roll backend (devnet).
   GET  /funding/status                  Irys balance sufficiency (operator)
   GET  /treasury/status                 accrued fees pending manual conversion (operator)
   GET  /ops/status                      treasury monitor: current level, roll headroom, last alert
+                                         requires: Authorization: Bearer <OPS_AUTH_TOKEN>
   GET  /ops/test-alert?severity=low     post a dummy Discord alert (low|critical|healthy)
+                                         requires: Authorization: Bearer <OPS_AUTH_TOKEN>
   POST /rolls                           create a prepaid roll (JSON body)
   GET  /rolls/open?wallet=<address>     the wallet's open roll, if any
   GET  /rolls/<collection>              roll + per-frame checkpoint status
@@ -104,13 +106,22 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
   try {
     body = (await request.json()) as CreateRollRequest
   } catch {
-    throw new HttpError(400, 'Body must be JSON: { wallet, size, artist?, skrIdentity?, localDate?, feeSignature? }')
+    throw new HttpError(400, 'Body must be JSON: { wallet, size, feeSignature, artist?, skrIdentity?, localDate? }')
+  }
+  // Not folded into validateEnv: a half-configured quick flow (missing
+  // QUICK_PLACEHOLDER_URI) must never take roll creation down with it, so this
+  // checks only the one thing roll fee verification actually needs.
+  if (!ctx.env.QUICK_TREASURY_ADDRESS) {
+    throw new ConfigError(
+      'QUICK_TREASURY_ADDRESS is not set. Put the treasury address in wrangler.toml [vars] — rolls cannot verify fee payment without it.',
+    )
   }
   const result = await createRoll(
     {
       db: ctx.db,
       rpcUrl: ctx.env.SOLANA_RPC_URL,
       treasury: ctx.treasury,
+      treasuryAddress: ctx.env.QUICK_TREASURY_ADDRESS,
       getUmi: () => createWorkerUmi(ctx.env),
       getSeams: () => ctx.irysSeams(),
     },
@@ -343,6 +354,22 @@ async function handleHealth(env: Env): Promise<Response> {
  * Read-only introspection into what the treasury monitor currently thinks,
  * without waiting for the next cron. Reads the balance; posts nothing.
  */
+/**
+ * Gate for the two ops routes. Fails CLOSED: an unset OPS_AUTH_TOKEN refuses
+ * every request rather than leaving the route open, since forgetting to set
+ * the secret must never silently reproduce the exact hole this closes.
+ */
+function requireOpsAuth(ctx: WorkerContext, request: Request): void {
+  if (!ctx.env.OPS_AUTH_TOKEN) {
+    throw new ConfigError('OPS_AUTH_TOKEN secret is not set. Set it with `wrangler secret put OPS_AUTH_TOKEN`.')
+  }
+  const auth = request.headers.get('authorization') ?? ''
+  const token = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length) : ''
+  if (token !== ctx.env.OPS_AUTH_TOKEN) {
+    throw new HttpError(401, 'Missing or invalid Authorization: Bearer <OPS_AUTH_TOKEN> header')
+  }
+}
+
 async function handleOpsStatus(ctx: WorkerContext): Promise<Response> {
   const { funding } = await ctx.irysSeams()
   const snapshot = await readFundingSnapshot(funding)
@@ -374,11 +401,8 @@ async function handleOpsStatus(ctx: WorkerContext): Promise<Response> {
 /**
  * Post a dummy alert of the requested severity — proves the webhook, the embed
  * colours, and the @-mention render correctly BEFORE the scheduled path is
- * trusted. Reads no balance and touches no funds.
- *
- * TODO(mainnet): remove or put behind operator auth. It is unauthenticated, so
- * anyone who learns the URL can spam the channel (never the webhook itself —
- * the secret is not exposed). Acceptable on devnet only.
+ * trusted. Reads no balance and touches no funds. Gated by requireOpsAuth()
+ * at the call site — the webhook secret itself is never exposed either way.
  */
 async function handleOpsTestAlert(ctx: WorkerContext, url: URL): Promise<Response> {
   const requested = url.searchParams.get('severity') ?? 'low'
@@ -485,8 +509,10 @@ export default {
         case 'treasury-status':
           return json(await ctx.treasury.status())
         case 'ops-status':
+          requireOpsAuth(ctx, request)
           return await handleOpsStatus(ctx)
         case 'ops-test-alert':
+          requireOpsAuth(ctx, request)
           return await handleOpsTestAlert(ctx, url)
         case 'create-roll':
           return await handleCreateRoll(ctx, request)

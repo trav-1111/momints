@@ -10,6 +10,7 @@ import type { FundingProvider, StorageProvider, TreasurySink } from '../provider
 import { sendAndConfirm } from '../solana/confirm'
 import { generateCover } from './cover'
 import { estimatedRollBytes, getRollFeeLamports, isRollSize, type RollSize } from './config'
+import { verifyRollFeePayment } from './verify'
 
 export interface CreateRollRequest {
   wallet: string
@@ -20,18 +21,20 @@ export interface CreateRollRequest {
   skrIdentity?: string
   /** Client-local calendar date (yyyy-mm-dd) so the roll name matches the shooter's day. */
   localDate?: string
-  /** Client-reported fee-payment signature — bookkeeping context only. */
-  feeSignature?: string
+  /** Signature of the wallet's SOL transfer paying the roll fee. Verified on-chain — see verify.ts. */
+  feeSignature: string
 }
 
 export interface CreateRollDeps {
   db: RollDb
   rpcUrl: string
   treasury: TreasurySink
+  /** Base58 address roll fees must land in. Verified against the landed transaction. */
+  treasuryAddress: string
   /**
    * Lazy on purpose: umi and the Irys seams are only constructed after
-   * validation and the single-open-roll check pass, so invalid requests never
-   * touch the bundler node or the RPC.
+   * validation, the single-open-roll check, and fee verification pass, so
+   * invalid or unpaid requests never touch the bundler node or the RPC.
    */
   getUmi: () => Promise<Umi>
   getSeams: () => Promise<{ storage: StorageProvider; funding: FundingProvider }>
@@ -60,14 +63,15 @@ function resolveDateLabel(localDate: string | undefined): string {
 }
 
 /**
- * Create a prepaid roll: validate -> single-open-roll check -> ensureFunded
- * PRE-CHECK (fail fast; never fund inline) -> derive `yyyy-mm-dd.NN` name ->
- * generate + upload the static cover -> upload collection metadata -> create
- * the immutable Metaplex Core collection -> persist to D1 -> record the fee
- * with the TreasurySink.
+ * Create a prepaid roll: validate -> single-open-roll check -> VERIFY the fee
+ * payment on-chain (the only gate before any spend) -> ensureFunded PRE-CHECK
+ * (fail fast; never fund inline) -> derive `yyyy-mm-dd.NN` name -> generate +
+ * upload the static cover -> upload collection metadata -> create the
+ * immutable Metaplex Core collection -> persist to D1 -> record the fee with
+ * the TreasurySink.
  */
 export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
-  const { db, rpcUrl, treasury, getUmi, getSeams } = deps
+  const { db, rpcUrl, treasury, treasuryAddress, getUmi, getSeams } = deps
 
   // ---- Validation ----
   if (typeof req.wallet !== 'string' || !BASE58_ADDRESS.test(req.wallet)) {
@@ -93,6 +97,36 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
         `collection ${open.collection_address}). Finish or complete it first. ` +
         'Quick-shoot single mints remain available — they never count toward the roll.',
     )
+  }
+
+  // ---- Fee verification — the ONLY gate before any spend ----
+  //
+  // The client pays the fee in its own wallet-signed transfer to the treasury
+  // BEFORE calling this endpoint (see src/services/rollCollection.ts:payRollFee
+  // in the app), then hands us the landed signature. Nothing below this point
+  // may run until that transfer is confirmed on-chain, at the required amount,
+  // paid by this exact wallet.
+  if (typeof req.feeSignature !== 'string' || req.feeSignature.length === 0) {
+    throw new HttpError(402, 'feeSignature is required — pay the roll fee to the treasury before creating the roll')
+  }
+  const alreadyUsed = await db.getRollByFeeSignature(req.feeSignature)
+  if (alreadyUsed) {
+    throw new HttpError(
+      409,
+      `feeSignature ${req.feeSignature} already paid for roll ${alreadyUsed.collection_address} — it cannot pay for a second roll`,
+    )
+  }
+  const verdict = await verifyRollFeePayment(rpcUrl, {
+    signature: req.feeSignature,
+    wallet: req.wallet,
+    treasury: treasuryAddress,
+    size,
+  })
+  if (!verdict.ok) {
+    if (verdict.retryable) {
+      throw new HttpError(503, `${verdict.reason}. Retry roll creation with the same feeSignature — nothing has been spent yet.`)
+    }
+    throw new HttpError(402, `Roll fee refused: ${verdict.reason}`)
   }
 
   // ---- Funding PRE-CHECK — fail fast, never fund inline ----
@@ -187,6 +221,7 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
     coverUri,
     metadataUri,
     createSignature: signature,
+    feeSignature: req.feeSignature,
   })
 
   const feeLamports = getRollFeeLamports(size)

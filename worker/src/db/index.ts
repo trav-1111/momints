@@ -23,6 +23,8 @@ export interface RollRow {
   create_signature: string | null
   /** Set once the Worker's UpdateDelegate is revoked at completion. See rolls/handoff.ts. */
   handoff_signature: string | null
+  /** The verified on-chain transfer that paid this roll's fee. See rolls/verify.ts. */
+  fee_signature: string | null
   created_at: string
 }
 
@@ -133,6 +135,17 @@ export class RollDb {
     return row?.n ?? 0
   }
 
+  /**
+   * A friendly pre-check before the INSERT's UNIQUE constraint (idx_rolls_fee_signature)
+   * rejects a replayed signature under a race — same pattern as getOpenRoll.
+   */
+  async getRollByFeeSignature(feeSignature: string): Promise<RollRow | null> {
+    return await this.db
+      .prepare('SELECT * FROM rolls WHERE fee_signature = ?')
+      .bind(feeSignature)
+      .first<RollRow>()
+  }
+
   async insertRoll(roll: {
     collectionAddress: string
     wallet: string
@@ -143,12 +156,13 @@ export class RollDb {
     coverUri: string
     metadataUri: string
     createSignature: string
+    feeSignature: string
   }): Promise<void> {
     await this.db
       .prepare(
         `INSERT INTO rolls
-           (collection_address, wallet, name, size, artist, skr_identity, cover_uri, metadata_uri, create_signature)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (collection_address, wallet, name, size, artist, skr_identity, cover_uri, metadata_uri, create_signature, fee_signature)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         roll.collectionAddress,
@@ -160,6 +174,7 @@ export class RollDb {
         roll.coverUri,
         roll.metadataUri,
         roll.createSignature,
+        roll.feeSignature,
       )
       .run()
   }

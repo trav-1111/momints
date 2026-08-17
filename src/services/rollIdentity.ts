@@ -18,21 +18,3 @@ export function sanitizeArtistName(raw: string): string {
     .trim()
     .slice(0, ARTIST_NAME_MAX_LENGTH)
 }
-
-/** Local date as `yyyy-mm-dd`. */
-export function formatRollDate(now: number): string {
-  const d = new Date(now)
-  const mm = String(d.getMonth() + 1).padStart(2, '0')
-  const dd = String(d.getDate()).padStart(2, '0')
-  return `${d.getFullYear()}-${mm}-${dd}`
-}
-
-/**
- * Collection name for the wallet's next roll: `yyyy-mm-dd.NN`, where NN is a
- * 2-digit zero-padded same-day index. `rollsCreatedToday` is how many rolls
- * (open or closed) this wallet already created today — first roll = `.01`.
- */
-export function buildRollName(now: number, rollsCreatedToday: number): string {
-  const index = String(rollsCreatedToday + 1).padStart(2, '0')
-  return `${formatRollDate(now)}.${index}`
-}

@@ -1,18 +1,17 @@
 /**
- * Roll backend Worker.
+ * Roll backend Worker. REQUIRED — there is no on-device fallback: rolls and
+ * quick mints both go through the server-side pipeline, which generates
+ * covers, stores everything permanently on Arweave via Irys, verifies fee
+ * payment on-chain before spending anything, and mints Core assets owned by
+ * the shooter's wallet (signed by the Worker's key for roll frames, so those
+ * cost the user no wallet approval at all).
  *
- * When `EXPO_PUBLIC_ROLL_API` is set, rolls go through the server-side
- * pipeline: the Worker generates the cover, stores everything permanently on
- * Arweave via Irys, and mints each frame as a Core asset owned by the
- * shooter's wallet — signed by the Worker's key, so frames cost the user no
- * wallet approvals at all.
- *
- * Left unset, the app keeps the on-device path (Pinata/IPFS uploads and
- * MWA-signed mints). Both paths stay live so a bad Worker day is one env var
- * away from a working fallback.
+ * Left unset, `rollApi.ts`'s `request()` throws a clear "not configured"
+ * error rather than degrading to a different, less-verified code path.
  */
 export const ROLL_API_BASE = (process.env.EXPO_PUBLIC_ROLL_API ?? '').trim().replace(/\/+$/, '')
 
+/** Whether the roll Worker is configured. Used for UI gating and defensive checks — not a feature toggle. */
 export function isWorkerRollEnabled(): boolean {
   return ROLL_API_BASE.length > 0
 }
