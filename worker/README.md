@@ -31,9 +31,13 @@ cap (~41% headroom).
    composited onto the base film-canister artwork, output < 200 KB), upload it
    and the collection metadata JSON via `StorageProvider`. The cover is
    **static for the roll's life** — never swapped for frame 01, never mutated.
-5. Create the Metaplex Core collection, fully defined and immutable, with two
-   separate identity attributes: `skr_identity` (verified handle or wallet —
-   provenance, immutable) and `artist` (user-editable vanity name).
+5. Create the Metaplex Core collection — metadata fully defined up front and
+   never mutated in normal operation, update authority the **shooter's**
+   wallet from the instant it exists, the Worker holding only a scoped
+   delegate to mint frames (see [roll collection
+   ownership](#roll-collection-ownership) below) — plus two separate identity
+   attributes: `skr_identity` (verified handle or wallet — provenance,
+   immutable) and `artist` (user-editable vanity name).
 6. Persist to D1 (`status=OPEN`, `mintedCount=0`) and record the prepaid fee
    through `TreasurySink.record()` as conversion-pending.
 
@@ -156,6 +160,42 @@ that was never sent at all.
 Pricing lives in `src/quick/config.ts`. `QUICK_MINT_FEE_LAMPORTS` is anchored to
 the `MAX_QUICK_IMAGE_BYTES` ceiling so a large photo can never lose money —
 **keep those two coupled** when tuning either.
+
+## Roll collection ownership
+
+Every roll collection belongs to the **shooter**, not the Worker, from the
+moment it is created (`rolls/create.ts`) — `updateAuthority` is set to the
+wallet in the same instruction that creates the collection. The Worker is
+granted only a scoped `UpdateDelegate` plugin in that same transaction, which
+is what lets it sign frame mints on the shooter's behalf afterward
+(`rolls/frames.ts` passes `authority: umi.identity` explicitly — `create()`
+has no fallback to it once the Worker is no longer the bare owner, so omitting
+this would silently break frame minting).
+
+That delegate is **revoked** the instant a roll reaches `COMPLETE` — whichever
+path gets it there first, the last frame mint or an early `/complete`
+(`rolls/handoff.ts`). After the revoke, the shooter holds sole control; the
+Worker cannot touch that collection's metadata or membership again.
+
+**Why not just have the Worker own it forever, the simpler design:** the
+Worker's funding key is one keypair shared across every roll ever created. As
+permanent owner, a leaked key would compromise every roll collection that
+ever existed, unrecoverably. As a revocable delegate, a leak costs a
+`revokeCollectionPluginAuthority` call, not the collections themselves.
+
+**Never fails the request that triggers it.** A revoke failure — a bad RPC, a
+timeout — is logged and left for the [sweep](#re-driving-a-stuck-roll-handoff)
+below; it must never turn a frame mint or a completion request that already
+succeeded into a failure response. `rolls.handoff_signature` is the
+checkpoint: `NULL` on a `COMPLETE` roll means the revoke hasn't landed yet, and
+— because revoking is one-way — the code always fetches the collection's
+current delegate state before acting rather than blindly retrying
+(`rolls/handoff.ts`, the same fetch-before-write discipline as the quick-mint
+URI swap above).
+
+Rolls created before this shipped are the one exception: the Worker is their
+bare, permanent update authority, with no delegate to revoke. They are staying
+that way by decision, not oversight — no migration is planned for them.
 
 ## Setup
 
@@ -370,3 +410,21 @@ marks itself `FINALIZED`.
 
 Rows in `STAGED` are the opposite case — nothing was ever paid or uploaded.
 Leave them; the sweep and the bucket lifecycle rule reap them within a day.
+
+### Re-driving a stuck roll handoff
+
+A `COMPLETE` roll with `handoff_signature` still `NULL` means the Worker's
+delegate revoke hasn't landed on that collection yet:
+
+```sh
+wrangler d1 execute momints-rolls --remote --command \
+  "SELECT collection_address, name, status, handoff_signature FROM rolls WHERE status='COMPLETE' AND handoff_signature IS NULL"
+```
+
+Nothing to do by hand — the same scheduled sweep that re-drives quick mints
+retries every row it finds here, every 6h. Safe to leave alone in the
+meantime: the roll is fully usable either way, the Worker has just not
+relinquished a delegate it no longer needs. Re-running the revoke is always
+safe too — it fetches the collection first and only sends a transaction if the
+delegate is still actually present (see [roll collection
+ownership](#roll-collection-ownership)).
