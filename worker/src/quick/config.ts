@@ -1,24 +1,32 @@
 import { ESTIMATED_FRAME_BYTES } from '../rolls/config'
 
-// TODO: placeholder pricing — final numbers are not decided, same status as
-// ROLL_FEE_LAMPORTS_* in rolls/config.ts. Do not ship these numbers.
+// DECIDED — not a placeholder. Anchored to the MAX_QUICK_IMAGE_BYTES ceiling
+// so a large photo can never lose money (a smaller one just carries wider
+// margin):
 //
-// Cost basis, anchored to the MAX_QUICK_IMAGE_BYTES ceiling so a large photo
-// can never lose money (a smaller one just carries wider margin):
-//
-//   Arweave storage @ 3 MiB   ~1_200_045 atomic  (measured, GET /funding/status)
-//   URI-swap transaction      ~    5_000         (Worker-paid)
-//   margin                     ~ 794_955
+//   Core asset rent           3_511_440 atomic  (measured: a real minted asset)
+//   Arweave image @ 3 MiB     1_261_912 atomic  (measured, GET /funding/status)
+//   URI-swap transaction          ~5_000        (Worker-paid, negligible)
 //   ------------------------------------------
-//   QUICK_MINT_FEE_LAMPORTS    2_000_000         (0.002 SOL)
+//   real cost                 4_775_352
+//   × ~1.36 margin
+//   ------------------------------------------
+//   QUICK_MINT_FEE_LAMPORTS   6_500_000         (0.0065 SOL)
 //
-// Denominated in lamports, never a dollar amount, so it tracks the SOL price.
+// The previous figure (2_000_000) never accounted for the asset's own rent —
+// only Arweave + the URI-swap tx — despite the Worker paying that rent out of
+// the same balance it pays storage from. It was covering ~42% of real cost.
+//
+// Denominated in lamports so this tracks SOL/USD automatically — but NOT
+// AR/SOL: Arweave storage is priced in AR and converted through Irys's
+// internal rate, which moves independently of SOL's own price. Re-check this
+// if AR/SOL has moved a lot since the measurement above.
 //
 // Worth remembering when tuning: moving quick mints from a Token Metadata NFT
 // to a standalone Core asset dropped the user's own mint cost by roughly
-// 0.009 SOL (four rent-paying accounts down to one), so a fee in this range
-// still leaves a quick shot cheaper than it was before it was chargeable.
-export const QUICK_MINT_FEE_LAMPORTS = 2_000_000
+// 0.009 SOL (four rent-paying accounts down to one), so this fee still leaves
+// a quick shot cheaper overall than it was before it was chargeable.
+export const QUICK_MINT_FEE_LAMPORTS = 6_500_000
 
 // Free quick mints per wallet per day before the fee applies. 0 = every quick
 // mint pays. TODO: revisit once there is real usage data; a small allowance is

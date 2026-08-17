@@ -11,10 +11,12 @@ export type PrepaidRollSize = 12 | 24
 
 export const PREPAID_ROLL_SIZES: PrepaidRollSize[] = [12, 24]
 
-// TODO: placeholder amounts — final pricing is not decided. Must cover
-// 12/24 frame uploads + 1 cover upload. Do not ship these numbers.
-export const ROLL_FEE_LAMPORTS_12 = 10_000_000 // 0.010 SOL — TODO placeholder
-export const ROLL_FEE_LAMPORTS_24 = 18_000_000 // 0.018 SOL — TODO placeholder
+// DECIDED — not a placeholder. Mirrors worker/src/rolls/config.ts, which has
+// the full cost-basis derivation (measured Core asset + collection rent,
+// measured Arweave storage cost, ~1.4× margin). No shared module between the
+// two projects, so keep this in sync by hand if those numbers ever change.
+export const ROLL_FEE_LAMPORTS_12 = 85_000_000 // 0.085 SOL
+export const ROLL_FEE_LAMPORTS_24 = 165_000_000 // 0.165 SOL
 
 /** Fee treasury — set EXPO_PUBLIC_ROLL_TREASURY in .env (base58 wallet address). */
 export const ROLL_TREASURY_ADDRESS = (process.env.EXPO_PUBLIC_ROLL_TREASURY ?? '').trim()
