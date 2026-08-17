@@ -84,14 +84,21 @@ export default function MintFormScreen() {
     }
   }, [activeRoll, photo])
 
-  const [title, setTitle] = useState('')
-  const [artist, setArtist] = useState('')
+  // The queue entry this photo already has, if it is being edited rather than
+  // filled in for the first time. Read once via getState() rather than
+  // subscribed: it is a seed for the inputs, and a live subscription would
+  // fight the user's own typing.
+  const existing = useMemo(() => useMintQueue.getState().queue.find((q) => q.photoId === id), [id])
+
+  const [title, setTitle] = useState(existing?.title ?? '')
+  const [artist, setArtist] = useState(existing?.artist ?? '')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [focusedField, setFocusedField] = useState<'title' | 'artist' | null>(null)
 
-  // Pre-populate title from roll on first mount
+  // Pre-populate title from roll on first mount — but never over a title the
+  // user already saved, or re-opening a queued frame would silently discard it.
   useEffect(() => {
-    if (rollContext) {
+    if (rollContext && !existing) {
       setTitle(`${rollContext.rollName} — Frame ${rollContext.frameNumber}`)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

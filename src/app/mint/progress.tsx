@@ -134,10 +134,10 @@ export default function MintProgressScreen() {
     [updateProgress, addToHistory, setAction, removeFromQueue],
   )
 
-  // Mint everything still pending. Photos without a queue entry (quick mints
-  // that skipped the form) go through the mint form first — one per press.
-  // Once every pending photo is queued, the whole set mints in chunks with one
-  // wallet approval per MINT_CHUNK_SIZE frames.
+  // Mint everything still pending, in chunks with one wallet approval per
+  // MINT_CHUNK_SIZE frames. Photos missing their metadata are handled by
+  // tapping their row, not here — the button stays disabled until none are
+  // left, so this only ever mints.
   const startMinting = useCallback(async () => {
     if (isProcessing || !account) return
 
@@ -145,24 +145,25 @@ export default function MintProgressScreen() {
     const pending = progress.filter((p) => p.status === 'pending')
     if (pending.length === 0) return
 
-    const unqueued = pending.find((p) => !currentQueue.some((q) => q.photoId === p.photoId))
-    if (unqueued) {
-      router.push(`/mint/form/${unqueued.photoId}`)
-      return
-    }
-
-    const items = pending.map((p) => {
-      const q = currentQueue.find((item) => item.photoId === p.photoId)!
-      return {
-        photoId: p.photoId,
-        photoUri: q.photoUri,
-        title: q.title,
-        artist: q.artist,
-        capturedAt: q.capturedAt,
-        rollContext: q.rollContext,
-        captureMeta: q.captureMeta,
-      }
+    // Pair up rather than assert: a pending photo with no queue entry has no
+    // metadata to mint with, and the disabled button is a UI guard, not a
+    // guarantee this function should be staking a crash on.
+    const items = pending.flatMap((p) => {
+      const q = currentQueue.find((item) => item.photoId === p.photoId)
+      if (!q) return []
+      return [
+        {
+          photoId: p.photoId,
+          photoUri: q.photoUri,
+          title: q.title,
+          artist: q.artist,
+          capturedAt: q.capturedAt,
+          rollContext: q.rollContext,
+          captureMeta: q.captureMeta,
+        },
+      ]
     })
+    if (items.length === 0) return
 
     // Freeze titles into the rows so they survive queue removal on success
     setProgress((prev) =>
@@ -179,7 +180,7 @@ export default function MintProgressScreen() {
     } finally {
       setIsProcessing(false)
     }
-  }, [isProcessing, account, progress, router, mintBatch, onItemUpdate])
+  }, [isProcessing, account, progress, mintBatch, onItemUpdate])
 
   const handleRetry = useCallback(
     (photoId: string) => {
@@ -260,12 +261,26 @@ export default function MintProgressScreen() {
   ).length
   const approvalsNeeded = Math.ceil(clientSidePending / MINT_CHUNK_SIZE)
 
+  // Quick shots that still need a title/artist. Roll frames arrive pre-queued
+  // from useMintRoll, so anything without a queue entry is a quick shot the
+  // user has not filled in yet.
+  const needingDetails = progress.filter(
+    (p) => p.status === 'pending' && !queue.some((q) => q.photoId === p.photoId),
+  ).length
+
+  const openDetails = useCallback(
+    (photoId: string) => {
+      router.push(`/mint/form/${photoId}`)
+    },
+    [router],
+  )
+
   const getStatusText = (status: MintStatus) => {
     switch (status) {
       case 'pending':
         return 'Waiting…'
       case 'uploading':
-        return 'Uploading to IPFS…'
+        return 'Uploading…'
       case 'signing':
         return 'Sign in your wallet…'
       case 'confirming':
@@ -353,20 +368,48 @@ export default function MintProgressScreen() {
         {progress.map((item) => {
           const queueItem = queue.find((q) => q.photoId === item.photoId)
           const isActive = item.status === 'uploading' || item.status === 'confirming'
+          // No queue entry at all means a quick shot awaiting its details; a
+          // queued roll frame always carries rollContext, and its title is
+          // derived rather than user-entered.
+          // Scoped to pending: a successful mint REMOVES its queue entry
+          // (onItemUpdate), so a missing entry means "already minted" just as
+          // often as it means "never filled in". Without the status check a
+          // finished row claims it still needs details.
+          const needsDetails = item.status === 'pending' && !queueItem
+          const canEdit = item.status === 'pending' && !queueItem?.rollContext
+          // The affordance lives in the status line rather than a trailing pill:
+          // pending rows already carry REMOVE, and a second pill crowds a row
+          // that also has a thumbnail and a title.
+          const statusLabel = item.error
+            ? `Failed — ${item.error}`
+            : needsDetails
+              ? 'Tap to add details'
+              : canEdit
+                ? `${getStatusText(item.status)} · tap to edit`
+                : getStatusText(item.status)
 
           return (
-            <View
+            <Pressable
               key={item.photoId}
-              style={{
+              onPress={canEdit ? () => openDetails(item.photoId) : undefined}
+              disabled={!canEdit}
+              style={({ pressed }) => ({
                 flexDirection: 'row',
                 alignItems: 'center',
                 gap: 12,
                 padding: 12,
                 borderRadius: 14,
                 backgroundColor: colors.surface,
+                opacity: pressed && canEdit ? 0.7 : 1,
                 borderWidth: 1,
-                borderColor: isActive ? colors.accent : item.status === 'failed' ? colors.redBorder : colors.border,
-              }}
+                borderColor: isActive
+                  ? colors.accent
+                  : item.status === 'failed'
+                    ? colors.redBorder
+                    : needsDetails
+                      ? colors.accentSoft
+                      : colors.border,
+              })}
             >
               <Image
                 source={{ uri: item.photoUri }}
@@ -385,9 +428,13 @@ export default function MintProgressScreen() {
                   )}
                   <Text
                     numberOfLines={1}
-                    style={{ fontFamily: fonts.mono, fontSize: 10.5, color: getStatusColor(item.status) }}
+                    style={{
+                      fontFamily: fonts.mono,
+                      fontSize: 10.5,
+                      color: needsDetails ? colors.accentSoft : getStatusColor(item.status),
+                    }}
                   >
-                    {item.error ? `Failed — ${item.error}` : getStatusText(item.status)}
+                    {statusLabel}
                   </Text>
                 </View>
               </View>
@@ -435,7 +482,7 @@ export default function MintProgressScreen() {
                   <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSecondary }}>REMOVE</Text>
                 </Pressable>
               )}
-            </View>
+            </Pressable>
           )
         })}
         <View style={{ height: 12 }} />
@@ -457,7 +504,10 @@ export default function MintProgressScreen() {
           </Pressable>
         ) : (
           <>
-            {pendingCount > 1 && !isProcessing && (
+            {/* Held back until every photo has details: the approval count is
+                derived from queued items, so it would understate the real
+                figure while some photos are still missing their metadata. */}
+            {pendingCount > 1 && !isProcessing && needingDetails === 0 && (
               <Text
                 style={{
                   fontFamily: fonts.mono,
@@ -477,7 +527,7 @@ export default function MintProgressScreen() {
             )}
             <Pressable
               onPress={startMinting}
-              disabled={isProcessing}
+              disabled={isProcessing || needingDetails > 0}
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
@@ -485,9 +535,9 @@ export default function MintProgressScreen() {
                 gap: 8,
                 paddingVertical: 15,
                 borderRadius: 14,
-                backgroundColor: isProcessing ? colors.surface : colors.accent,
+                backgroundColor: isProcessing || needingDetails > 0 ? colors.surface : colors.accent,
                 borderWidth: 1,
-                borderColor: isProcessing ? colors.border : colors.accent,
+                borderColor: isProcessing || needingDetails > 0 ? colors.border : colors.accent,
               }}
             >
               {isProcessing ? (
@@ -497,6 +547,12 @@ export default function MintProgressScreen() {
                     Processing…
                   </Text>
                 </>
+              ) : needingDetails > 0 ? (
+                // Says what is outstanding instead of offering a mint it cannot
+                // perform — the rows themselves are where that work happens now.
+                <Text style={{ fontFamily: fonts.sansBold, fontSize: 14, color: colors.textSecondary }}>
+                  {needingDetails === 1 ? '1 photo needs details' : `${needingDetails} photos need details`}
+                </Text>
               ) : (
                 <Text style={{ fontFamily: fonts.sansBold, fontSize: 14, color: colors.white }}>
                   {hasStarted ? 'Continue Minting' : 'Start Minting'}
