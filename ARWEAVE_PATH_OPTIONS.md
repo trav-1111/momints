@@ -23,8 +23,14 @@ Why:
 - The lean integration **shrinks the Worker bundle by 665 KiB gzip** instead of
   growing it by 765 KiB — headroom goes from 41% to ~63%, rather than down to 16%.
 
-**It needs one runtime spike before committing** (scoped at the end): everything
-except *keyed signing + a real upload inside workerd* is already proven.
+> **UPDATE 2026-08-31 — the spike ran and PASSED.** Keyed ANS-104 signing and a
+> real Turbo upload both work inside a Cloudflare Worker. Data item
+> `WHpqfLYr5R7iwhxKytnQxxBA25hNsQx40bDbnvdq-Zs` was signed in-Worker, uploaded,
+> and mined into Arweave block 1,991,279; it resolves at
+> `https://arweave.net/WHpqfLYr5R7iwhxKytnQxxBA25hNsQx40bDbnvdq-Zs` as
+> `application/json`. It cost **0 winc** (free small-item tier). Full evidence:
+> `worker-turbo-spike/RESULT.md`. **The last gate is cleared — this path is safe
+> to build.**
 
 ---
 
@@ -71,18 +77,19 @@ A real spike was run against `compatibility_date = "2026-07-22"` and
 | Module imports + evaluates inside workerd | **PASS** — `/import` returned 40 exports incl. `TurboFactory` |
 | Live Turbo API call from inside the isolate | **PASS** — `/price` returned real winc quotes and fiat rates |
 | Signing classes load under workerd | **PASS** — `ArweaveSigner`, `HexSolanaSigner`, `SolanaSigner`, `Rsa4096`, `CryptoDriver` all import from `@dha-team/arbundles` |
-| **Keyed signing + a real upload in workerd** | **NOT PROVEN** — requires a key and a paid upload; both out of bounds here |
+| **Keyed signing + a real upload in workerd** | **PASS** — spiked 2026-08-31; signer constructed, item signed and self-verified, uploaded, mined on Arweave (`worker-turbo-spike/RESULT.md`) |
 
 The dependency tree contains native modules (`keccak`, `secp256k1`,
 `bigint-buffer`, `bufferutil`, `utf-8-validate`), but the `@ardrive/turbo-sdk/web`
 export path does not pull them into the bundle — the dry-run resolved cleanly
 without them. That was the single biggest compatibility worry and it is answered.
 
-**Residual risk is narrow but real.** Signer *construction and use* is the one
-path a no-key investigation cannot exercise. Solana signing is pure-JS
-(`tweetnacl` ed25519) and Arweave signing is RSA-PSS via WebCrypto, both of which
-workerd supports — but that is reasoning, not evidence, so it is flagged rather
-than claimed.
+**Residual risk — now closed.** Signer construction and use was the one path a
+no-key investigation could not exercise. The follow-up spike exercised it with a
+real key: the signer constructed (`signatureType: 2`, `ownerLength: 32`), signed
+a 359-byte payload into a 536-byte data item, and `isValid()` verified it — all
+inside workerd. Signing is `@noble/ed25519` v1.6.1 (pure JS) plus arbundles'
+deepHash; no Node-only crypto is reached.
 
 ### Bundle size — measured, and it decides the integration style
 
@@ -223,24 +230,34 @@ The `StorageProvider` seam was built for exactly this, and it holds.
 
 ---
 
-## The spike to run before committing
+## The spike — RUN, PASSED (2026-08-31)
 
-**One route, one afternoon.** In a throwaway Worker on the real runtime: top up a
-few dollars of Turbo credits from the funding wallet, then sign a small data item
-with `HexSolanaSigner` using that key and POST it to
-`https://upload.ardrive.io/v1/tx/solana`. Success = the returned id resolves at
-`https://arweave.net/<id>` with the right content type. That closes the only gap
-left — keyed signing and a real upload inside workerd — and is the same shape as
-the original Irys spike.
+A throwaway one-route Worker on the real runtime signed a small data item with
+`SolanaSigner` and POSTed it to `https://upload.ardrive.io/v1/tx/solana`. It
+returned an id that now resolves at `https://arweave.net/<id>` as
+`application/json`, bundled into Arweave tx
+`ZCARKH4O-XW2FFxNhEsoM1viJma7IWarPLh8Jy9lMY8`, block 1,991,279 — about 9 minutes
+from signing to mined.
 
-Run it before writing the provider, because a failure there is architectural: it
-would push signing off the Worker and change the design, not just the code.
+Two things worth carrying forward:
+
+- **It cost nothing.** `winc: "0"` — the 536-byte item rode Turbo's small-item
+  free tier. Real 3 MiB frames are far above that ceiling, so the cost model in
+  this document is unchanged.
+- **The key format is the same as production's.** `SolanaSigner` takes a
+  base58-encoded 64-byte Solana secret key — identical to `IRYS_FUNDING_KEY`, so
+  one wallet both funds and signs.
+
+Worker torn down (`wrangler delete`); source and full evidence kept in
+`worker-turbo-spike/` (`RESULT.md`).
 
 ## Honest flags
 
-- **Keyed signing in workerd is unproven.** Everything around it passed, and the
-  primitives are workerd-supported, but this is the one claim not backed by
-  evidence. Do not skip the spike.
+- ~~Keyed signing in workerd is unproven.~~ **RESOLVED 2026-08-31 — spiked and
+  passed end-to-end onto genuine Arweave.** See `worker-turbo-spike/RESULT.md`.
+  One narrower unknown remains: the spike ran *with* `nodejs_compat` (matching
+  production) and did not test whether signing needs it. Irrelevant in practice —
+  production has the flag — but don't claim it works without.
 - **Turbo credit withdrawability is unconfirmed.** Confirm before a large top-up.
 - **Bundle headroom is a live constraint.** The full SDK fits today at ~16%
   headroom; that is thin for a Worker still gaining features. The lean path is
