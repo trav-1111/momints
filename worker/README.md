@@ -10,7 +10,7 @@ operator tasks, listed in the [runbook](#operator-runbook) below.
 
 The single-Worker shape, the Irys-in-Workers approach, and the two hard
 constraints this design bends around were all validated by real spikes — see
-`../worker-irys-spike/RESULT.md` and `RESULT2.md` before re-litigating any of
+`../docs/spikes/irys/RESULT.md` and `RESULT2.md` before re-litigating any of
 them. Bundle: Irys + mpl-core + umi + photon ≈ 1.8 MB gzip vs the 3 MB Free
 cap (~41% headroom).
 

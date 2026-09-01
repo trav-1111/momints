@@ -73,7 +73,7 @@ export interface FundingStatus {
  * it reports whether the pre-funded Irys balance is sufficient for the
  * anticipated work and surfaces a warning to the operator. It must NEVER call
  * .fund() inline — funding sends a real transaction and blocks 120+ seconds
- * (measured, reproducibly — worker-irys-spike/RESULT2.md), which no
+ * (measured, reproducibly — docs/spikes/irys/RESULT2.md), which no
  * user-facing request may ever wait on. Top-ups are a manual operator task
  * (see README runbook) until AutomatedFunding exists.
  */

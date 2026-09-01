@@ -2,7 +2,7 @@
   "name": "momints-roll-worker",
   "private": true,
   "version": "0.1.0",
-  "description": "Momints roll backend: Cloudflare Worker + D1 + Irys/Arweave. Single Worker (validated by spikes — see worker-irys-spike/RESULT2.md).",
+  "description": "Momints roll backend: Cloudflare Worker + D1 + Irys/Arweave. Single Worker (validated by spikes — see docs/spikes/irys/RESULT2.md).",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --local",

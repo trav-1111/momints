@@ -13,7 +13,7 @@ const LOW_BALANCE_WARN_MULTIPLIER = 2
  * NEVER funds inline. The Irys SDK tracks a pre-funded balance on the bundler
  * node — it does not auto-fund from on-chain SOL during .upload(), and
  * .fund() sends a real transaction that blocks 120+ seconds (measured,
- * reproducibly, at every payload size tested — worker-irys-spike/RESULT2.md).
+ * reproducibly, at every payload size tested — docs/spikes/irys/RESULT2.md).
  * No user-facing request may ever wait on that. The operator keeps the
  * balance topped up ahead of demand (README runbook); this class only reports
  * sufficiency and surfaces low-balance warnings.

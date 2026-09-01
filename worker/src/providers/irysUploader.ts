@@ -1,7 +1,7 @@
 import type { ValidatedEnv } from '../env'
 
 /**
- * Shared Irys uploader factory (pattern validated in worker-irys-spike).
+ * Shared Irys uploader factory (pattern validated in docs/spikes/irys).
  * Dynamic imports keep module-evaluation failures catchable per-request;
  * wrangler still bundles them statically at build time.
  *

@@ -1,0 +1,6 @@
+node_modules/
+.wrangler/
+.bundle-check/
+.out/
+# Local dev secrets — the signing key is a Worker secret, never a file in the repo.
+.dev.vars

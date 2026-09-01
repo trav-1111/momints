@@ -1,0 +1,13 @@
+# THROWAWAY spike Worker. Delete after RESULT.md is filled in (`npm run teardown`).
+#
+# Runtime settings MUST mirror the production Worker exactly, or the spike
+# proves nothing about the production Worker.
+name = "momints-turbo-spike"
+main = "src/index.ts"
+compatibility_date = "2026-07-22"
+compatibility_flags = ["nodejs_compat"]
+
+# Secret (set with `wrangler secret put TURBO_SIGNING_KEY` — never in this file):
+#   TURBO_SIGNING_KEY  base58-encoded 64-byte Solana secret key. EXACTLY the
+#                      same format as the production IRYS_FUNDING_KEY, so the
+#                      same wallet can be reused. See README "Key format".
