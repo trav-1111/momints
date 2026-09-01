@@ -2,5 +2,23 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true
-  }
+  },
+  // Scope the app's type-check to the app. The Cloudflare Worker projects each
+  // have their own tsconfig (different lib/types — e.g. @cloudflare/workers-types
+  // for D1Database), so type-checking them from here only ever produced false
+  // errors. Run `npm run typecheck` inside worker/ for those.
+  //
+  // NOTE: `exclude` REPLACES the one inherited from expo/tsconfig.base rather
+  // than merging with it, so the base's entries are repeated here on purpose.
+  "exclude": [
+    "node_modules",
+    "babel.config.js",
+    "metro.config.js",
+    "jest.config.js",
+    "android",
+    "ios",
+    "worker",
+    "worker-turbo-spike",
+    "docs"
+  ]
 }
