@@ -1,5 +1,5 @@
 # Momints roll backend — single Worker, validated by the bundle spike:
-# Irys + mpl-core + photon fit in one Worker (worker-irys-spike/RESULT2.md).
+# Irys + mpl-core + photon fit in one Worker (docs/spikes/irys/RESULT2.md).
 # Do NOT split into multiple Workers.
 #
 # PLAN: Workers PAID. Required by the quick-mint finalize queue (Queues is not
