@@ -52,3 +52,7 @@ app-example
 /.agents
 /.claude/skills
 skills-lock.json
+
+# Agent worktrees — scratch checkouts, never part of the repo. Three of these
+# were once committed as accidental gitlinks; this stops that recurring.
+/.claude/worktrees
