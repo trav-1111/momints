@@ -1,4 +1,4 @@
-import { generateSigner, publicKey } from '@metaplex-foundation/umi'
+import { generateSigner, ProgramError, publicKey } from '@metaplex-foundation/umi'
 import type { Umi } from '@metaplex-foundation/umi'
 import type { FrameRow, RollDb, RollRow } from '../db'
 import { HttpError } from '../lib/http'
@@ -9,6 +9,12 @@ import type { FundingProvider, StorageProvider } from '../providers/types'
 import { revokeRollDelegateSafely } from './handoff'
 import { ConfirmTimeoutError, getSignatureStatus, sendAndConfirm } from '../solana/confirm'
 import { ALLOWED_MIME, ESTIMATED_METADATA_BYTES } from './config'
+
+// Longer than the client's own 90s give-up timeout and the 45s on-chain
+// confirm timeout combined with realistic upload latency, so a lock is never
+// reclaimed out from under a request that's genuinely still running — only a
+// request whose Worker isolate actually died without releasing it.
+const FRAME_LOCK_STALE_SECONDS = 120
 
 export interface MintFrameRequest {
   collectionAddress: string
@@ -76,6 +82,30 @@ export async function mintFrame(deps: MintFrameDeps, req: MintFrameRequest): Pro
   if (!Number.isInteger(req.frameIndex) || req.frameIndex < 1 || req.frameIndex > roll.size) {
     throw new HttpError(400, `frameIndex must be an integer in 1..${roll.size}, got ${req.frameIndex}`)
   }
+
+  // Serialize concurrent requests for this frame. Sequential re-POSTs are
+  // already safe via the D1 checkpoint below, but nothing previously stopped
+  // two requests in flight at once (e.g. a client navigation leaving the
+  // original request running, then a retry) from both reading the same
+  // pre-mint checkpoint and each sending their own create() transaction into
+  // the collection — see migrations/0006_frame_lock.sql.
+  const locked = await db.claimFrameLock(req.collectionAddress, req.frameIndex, FRAME_LOCK_STALE_SECONDS)
+  if (!locked) {
+    throw new HttpError(
+      503,
+      `Frame ${req.frameIndex} is already being minted by another request — retry in a few seconds.`,
+    )
+  }
+
+  try {
+    return await mintFrameLocked(deps, req, roll)
+  } finally {
+    await db.releaseFrameLock(req.collectionAddress, req.frameIndex)
+  }
+}
+
+async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll: RollRow): Promise<MintFrameResult> {
+  const { db, rpcUrl, getUmi, getSeams } = deps
 
   const existing = await db.getFrame(req.collectionAddress, req.frameIndex)
 
@@ -269,6 +299,20 @@ export async function mintFrame(deps: MintFrameDeps, req: MintFrameRequest): Pro
         504,
         `Frame ${req.frameIndex} mint sent (${err.signature}) but not confirmed in time. ` +
           'Re-POST this frame: the checkpoint will detect whether it landed and will not double-mint.',
+      )
+    }
+    if (err instanceof ProgramError) {
+      // The on-chain program itself rejected the transaction (e.g. mpl-core's
+      // own DeserializationError) — not a timeout, not this Worker's own
+      // bug. Log the full message + program logs for diagnosis, but never
+      // hand the raw dump to the client: it's long, unactionable, and (per
+      // the incident that added this branch) usually really means two
+      // requests raced this same frame.
+      console.error(`[rolls] on-chain mint failed for frame ${req.frameIndex}:`, err.message)
+      throw new HttpError(
+        502,
+        `Frame ${req.frameIndex} mint was rejected on-chain (${err.program.name}: ${err.name}). ` +
+          `Check GET /rolls/${req.collectionAddress} before retrying — an earlier attempt may have already landed.`,
       )
     }
     throw err

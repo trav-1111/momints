@@ -6,8 +6,7 @@ import { Paths, File } from 'expo-file-system'
 import { useMintQueue, historyHydrated } from './mintQueue'
 
 export interface CaptureMeta {
-  location?: string // "Austin, Texas" — city level, never raw coords
-  weather?: string // "24°C · Partly cloudy"
+  location?: string // "Austin, Texas" — granularity the user chose, never raw coords
 }
 
 export interface Photo {
@@ -70,7 +69,6 @@ function parsePhoto(raw: unknown): Photo | null {
     const m = p.meta as Record<string, unknown>
     meta = {
       location: typeof m.location === 'string' ? m.location : undefined,
-      weather: typeof m.weather === 'string' ? m.weather : undefined,
     }
   }
   // Records written before roll membership moved onto the photo have neither

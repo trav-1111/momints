@@ -1,6 +1,6 @@
 import type { RollContext } from '../store/mintQueue'
 import type { CaptureMeta } from '../store/photos'
-import { formatCapturedAt } from './captureMetadata'
+import { formatCapturedAt, resolveLocation } from './captureMetadata'
 
 interface MetadataParams {
   title: string
@@ -36,8 +36,7 @@ export function buildMintMetadata(params: MetadataParams): MintMetadataBase {
       { trait_type: 'Device', value: 'Solana Seeker' },
       { trait_type: 'Captured', value: formatCapturedAt(capturedAt) },
       { trait_type: 'Minted With', value: 'Momints' },
-      ...(captureMeta?.location ? [{ trait_type: 'Location', value: captureMeta.location }] : []),
-      ...(captureMeta?.weather ? [{ trait_type: 'Weather', value: captureMeta.weather }] : []),
+      { trait_type: 'Location', value: resolveLocation(captureMeta) },
       ...(rollContext
         ? [
             { trait_type: 'Roll', value: rollContext.rollName },

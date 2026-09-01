@@ -1,37 +1,6 @@
 import * as Location from 'expo-location'
 import type { CaptureMeta } from '../store/photos'
-
-// WMO weather interpretation codes as emitted by Open-Meteo
-const WMO_CONDITIONS: Record<number, string> = {
-  0: 'Clear sky',
-  1: 'Mainly clear',
-  2: 'Partly cloudy',
-  3: 'Overcast',
-  45: 'Foggy',
-  48: 'Icy fog',
-  51: 'Light drizzle',
-  53: 'Drizzle',
-  55: 'Heavy drizzle',
-  56: 'Freezing drizzle',
-  57: 'Freezing drizzle',
-  61: 'Light rain',
-  63: 'Rain',
-  65: 'Heavy rain',
-  66: 'Freezing rain',
-  67: 'Freezing rain',
-  71: 'Light snow',
-  73: 'Snow',
-  75: 'Heavy snow',
-  77: 'Snow grains',
-  80: 'Rain showers',
-  81: 'Rain showers',
-  82: 'Heavy showers',
-  85: 'Snow showers',
-  86: 'Snow showers',
-  95: 'Thunderstorm',
-  96: 'Thunderstorm with hail',
-  99: 'Thunderstorm with hail',
-}
+import type { LocationGranularity } from '../store/locationSettings'
 
 const WEEKDAYS = [
   'Sunday',
@@ -51,6 +20,15 @@ export function formatCapturedAt(ts: number): string {
   const period = hours24 >= 12 ? 'PM' : 'AM'
   const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12
   return `${hours12}:${minutes} ${period} · ${WEEKDAYS[d.getDay()]}`
+}
+
+/** Shown in place of a location whenever the setting is off or resolution fails. */
+export const LOCATION_PLACEHOLDER = 'Somewhere on Earth'
+
+/** Every consumer of the Location trait/badge resolves through here, so the
+ * placeholder is defined exactly once. */
+export function resolveLocation(meta?: CaptureMeta): string {
+  return meta?.location ?? LOCATION_PLACEHOLDER
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -99,49 +77,42 @@ async function getPosition(): Promise<{ latitude: number; longitude: number } | 
   }
 }
 
-async function reverseGeocode(latitude: number, longitude: number): Promise<string | null> {
+async function reverseGeocode(
+  latitude: number,
+  longitude: number,
+  granularity: 'country' | 'state' | 'city',
+): Promise<string | null> {
   const results = await withTimeout(
     Location.reverseGeocodeAsync({ latitude, longitude }),
     4000
   )
   const place = results?.[0]
   if (!place) return null
+
+  if (granularity === 'country') {
+    return place.country || place.isoCountryCode || null
+  }
+
+  if (granularity === 'state') {
+    return place.region || place.subregion || place.country || null
+  }
+
+  // city-level — never raw coords
   const locality = place.city || place.subregion || null
   const region = place.region || place.country || null
   const parts = [locality, region].filter((p): p is string => !!p)
-  // City-level only — if we can't name the place, omit rather than emit coords
   return parts.length > 0 ? parts.join(', ') : null
 }
 
-async function fetchWeather(latitude: number, longitude: number): Promise<string | null> {
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 4000)
-  try {
-    const url =
-      `https://api.open-meteo.com/v1/forecast` +
-      `?latitude=${latitude.toFixed(4)}&longitude=${longitude.toFixed(4)}` +
-      `&current=temperature_2m,weather_code`
-    const res = await fetch(url, { signal: controller.signal })
-    if (!res.ok) return null
-    const data = await res.json()
-    const temp = data?.current?.temperature_2m
-    const code = data?.current?.weather_code
-    if (typeof temp !== 'number') return null
-    const condition = typeof code === 'number' ? WMO_CONDITIONS[code] : undefined
-    return condition ? `${Math.round(temp)}°C · ${condition}` : `${Math.round(temp)}°C`
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
 /**
- * Best-effort capture-time metadata: city-level location + current weather.
+ * Best-effort capture-time location, at the user-chosen granularity.
+ * 'off' never touches Location.* at all — no permission check, no GPS fix.
  * Never throws, never hangs past ~9s worst case. Returns {} on any failure —
- * a frame must mint fine without any of this.
+ * a frame must mint fine without it.
  */
-export async function captureMetadata(): Promise<CaptureMeta> {
+export async function captureMetadata(granularity: LocationGranularity): Promise<CaptureMeta> {
+  if (granularity === 'off') return {}
+
   try {
     const granted = await ensurePermission()
     if (!granted) return {}
@@ -149,19 +120,8 @@ export async function captureMetadata(): Promise<CaptureMeta> {
     const coords = await getPosition()
     if (!coords) return {}
 
-    const [locationResult, weatherResult] = await Promise.allSettled([
-      reverseGeocode(coords.latitude, coords.longitude),
-      fetchWeather(coords.latitude, coords.longitude),
-    ])
-
-    const meta: CaptureMeta = {}
-    if (locationResult.status === 'fulfilled' && locationResult.value) {
-      meta.location = locationResult.value
-    }
-    if (weatherResult.status === 'fulfilled' && weatherResult.value) {
-      meta.weather = weatherResult.value
-    }
-    return meta
+    const location = await reverseGeocode(coords.latitude, coords.longitude, granularity)
+    return location ? { location } : {}
   } catch {
     return {}
   }

@@ -17,8 +17,9 @@ import { usePhotoStore } from '../../../store/photos'
 import { useMintQueue } from '../../../store/mintQueue'
 import { useSessionStore } from '../../../store/session'
 import { useWalletDomain } from '../../../hooks/useWalletDomain'
+import { resolveLocation } from '../../../services/captureMetadata'
 import { colors, fonts, tracking } from '../../../theme'
-import { IconBack, IconFilm, IconMint, IconPhone, IconPin, IconWeather } from '../../../components/icons'
+import { IconBack, IconFilm, IconMint, IconPhone, IconPin } from '../../../components/icons'
 
 function FieldLabel({ children }: { children: string }) {
   return (
@@ -247,18 +248,10 @@ export default function MintFormScreen() {
               />
             )}
             <MetaBadge icon={<IconPhone size={13} color={colors.accent} strokeWidth={1.7} />} label="Shot on Seeker" />
-            {photo.meta?.location && (
-              <MetaBadge
-                icon={<IconPin size={13} color={colors.accent} strokeWidth={1.7} />}
-                label={photo.meta.location}
-              />
-            )}
-            {photo.meta?.weather && (
-              <MetaBadge
-                icon={<IconWeather size={13} color={colors.accent} strokeWidth={1.7} />}
-                label={photo.meta.weather}
-              />
-            )}
+            <MetaBadge
+              icon={<IconPin size={13} color={colors.accent} strokeWidth={1.7} />}
+              label={resolveLocation(photo.meta)}
+            />
           </View>
 
           {/* Wallet + cost row */}

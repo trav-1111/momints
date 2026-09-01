@@ -37,14 +37,32 @@ import { useMintRoll } from '../hooks/useMintRoll'
 import { useNetworkStore } from '../store/network'
 import { useSessionStore } from '../store/session'
 import type { AspectRatio } from '../store/session'
+import { useLocationSettingsStore } from '../store/locationSettings'
+import type { LocationGranularity } from '../store/locationSettings'
 import { colors, fonts, tracking } from '../theme'
-import { IconBolt, IconBoltOff, IconCamera, IconFilm, IconFlip, IconMint } from '../components/icons'
+import {
+  IconBolt,
+  IconBoltOff,
+  IconCamera,
+  IconCheck,
+  IconFilm,
+  IconFlip,
+  IconMint,
+  IconPin,
+} from '../components/icons'
 
 const QUICK_ASPECTS: { value: AspectRatio; label: string }[] = [
   { value: 'full', label: 'FULL' },
   { value: '1:1', label: '1:1' },
   { value: '4:3', label: '4:3' },
   { value: '16:9', label: '16:9' },
+]
+
+const LOCATION_OPTIONS: { value: LocationGranularity; label: string; description: string }[] = [
+  { value: 'off', label: 'Off', description: 'No location is captured' },
+  { value: 'country', label: 'Country', description: 'e.g. "United States"' },
+  { value: 'state', label: 'State', description: 'e.g. "Texas"' },
+  { value: 'city', label: 'City', description: 'e.g. "Austin, Texas"' },
 ]
 
 // Translucent over-preview chrome — hairline border on rgba(0,0,0,.5)
@@ -78,6 +96,7 @@ export default function CameraScreen() {
   const focusOpacity = useRef(new Animated.Value(0)).current
   const shutterFlashAnim = useRef(new Animated.Value(0)).current
   const [walletMenuVisible, setWalletMenuVisible] = useState(false)
+  const [locationMenuVisible, setLocationMenuVisible] = useState(false)
 
   // Release the camera when the screen loses focus or the app is backgrounded
   // (e.g. wallet handoff) — Android throws camera-is-restricted otherwise
@@ -99,6 +118,9 @@ export default function CameraScreen() {
 
   const cluster = useNetworkStore((s) => s.cluster)
   const setCluster = useNetworkStore((s) => s.setCluster)
+
+  const locationGranularity = useLocationSettingsStore((s) => s.granularity)
+  const setLocationGranularity = useLocationSettingsStore((s) => s.setGranularity)
 
   const activeMode = useSessionStore((s) => s.activeMode)
   const rollInProgress = useSessionStore((s) => s.activeRoll)
@@ -224,10 +246,11 @@ export default function CameraScreen() {
       }
       if (processedUri !== destFile.uri) updatePhotoUri(photoId, processedUri)
 
-      // Best-effort location/weather — fire-and-forget, never blocks capture
-      captureMetadata()
+      // Best-effort location — fire-and-forget, never blocks capture. 'off'
+      // short-circuits inside captureMetadata before touching GPS at all.
+      captureMetadata(locationGranularity)
         .then((meta) => {
-          if (meta.location || meta.weather) setPhotoMeta(photoId, meta)
+          if (meta.location) setPhotoMeta(photoId, meta)
         })
         .catch(() => {})
 
@@ -269,6 +292,7 @@ export default function CameraScreen() {
     rollIsFull,
     developRoll,
     mintRoll,
+    locationGranularity,
   ])
 
   const toggleFlash = useCallback(() => {
@@ -357,6 +381,35 @@ export default function CameraScreen() {
     }
     setCluster(next)
   }, [cluster, account, disconnect, setCluster])
+
+  const handleSelectGranularity = useCallback(
+    (next: LocationGranularity) => {
+      // Turning it on for the first time (off -> anything else) is the one
+      // moment that needs an explicit heads-up: everything after this is
+      // permanently attached to the photo once minted.
+      if (locationGranularity === 'off' && next !== 'off') {
+        const label = LOCATION_OPTIONS.find((o) => o.value === next)?.label ?? next
+        Alert.alert(
+          'Location Will Be Stored',
+          `Your ${label.toLowerCase()}-level location will be saved with every photo you capture from now on. Once a photo is minted, its location can't be changed or removed.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Enable',
+              onPress: () => {
+                setLocationGranularity(next)
+                setLocationMenuVisible(false)
+              },
+            },
+          ],
+        )
+        return
+      }
+      setLocationGranularity(next)
+      setLocationMenuVisible(false)
+    },
+    [locationGranularity, setLocationGranularity],
+  )
 
   if (!hasPermission) {
     return (
@@ -487,17 +540,26 @@ export default function CameraScreen() {
           alignItems: 'center',
         }}
       >
-        <Pressable
-          onPress={toggleFlash}
-          disabled={!supportsFlash}
-          style={[roundChip(42), { opacity: supportsFlash ? 1 : 0.4 }]}
-        >
-          {flash === 'on' && supportsFlash ? (
-            <IconBolt size={19} color={colors.text} />
-          ) : (
-            <IconBoltOff size={19} color={colors.text} />
-          )}
-        </Pressable>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <Pressable
+            onPress={toggleFlash}
+            disabled={!supportsFlash}
+            style={[roundChip(42), { opacity: supportsFlash ? 1 : 0.4 }]}
+          >
+            {flash === 'on' && supportsFlash ? (
+              <IconBolt size={19} color={colors.text} />
+            ) : (
+              <IconBoltOff size={19} color={colors.text} />
+            )}
+          </Pressable>
+
+          <Pressable
+            onPress={() => setLocationMenuVisible(true)}
+            style={[roundChip(42), { opacity: locationGranularity === 'off' ? 0.4 : 1 }]}
+          >
+            <IconPin size={19} color={locationGranularity === 'off' ? colors.text : colors.accent} />
+          </Pressable>
+        </View>
 
         {account && walletAddress ? (
           <Pressable
@@ -865,6 +927,94 @@ export default function CameraScreen() {
 
           {/* Close */}
           <Pressable onPress={() => setWalletMenuVisible(false)} style={{ paddingHorizontal: 20, paddingVertical: 16 }}>
+            <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.textSecondary, textAlign: 'center' }}>
+              Cancel
+            </Text>
+          </Pressable>
+        </View>
+      </Modal>
+
+      {/* Location Settings Modal */}
+      <Modal
+        visible={locationMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLocationMenuVisible(false)}
+      >
+        <Pressable
+          style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.7)' }]}
+          onPress={() => setLocationMenuVisible(false)}
+        />
+        <View
+          style={{
+            position: 'absolute',
+            top: '30%',
+            left: 24,
+            right: 24,
+            borderRadius: 16,
+            overflow: 'hidden',
+            backgroundColor: colors.surface,
+            borderWidth: 1,
+            borderColor: colors.border,
+          }}
+        >
+          {/* Explanation */}
+          <View
+            style={{
+              paddingHorizontal: 20,
+              paddingVertical: 16,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.mono,
+                fontSize: 10,
+                letterSpacing: tracking(0.16, 10),
+                color: colors.textMuted,
+                marginBottom: 6,
+              }}
+            >
+              LOCATION METADATA
+            </Text>
+            <Text style={{ fontFamily: fonts.sans, fontSize: 13, color: colors.textSecondary }}>
+              Off by default — nothing is captured unless you choose a level below.
+            </Text>
+          </View>
+
+          {/* Granularity options */}
+          {LOCATION_OPTIONS.map((option) => (
+            <Pressable
+              key={option.value}
+              onPress={() => handleSelectGranularity(option.value)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingHorizontal: 20,
+                paddingVertical: 14,
+                borderBottomWidth: 1,
+                borderBottomColor: colors.border,
+              }}
+            >
+              <View>
+                <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>
+                  {option.label}
+                </Text>
+                <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                  {option.description}
+                </Text>
+              </View>
+              {locationGranularity === option.value && <IconCheck size={18} color={colors.accent} />}
+            </Pressable>
+          ))}
+
+          {/* Close */}
+          <Pressable
+            onPress={() => setLocationMenuVisible(false)}
+            style={{ paddingHorizontal: 20, paddingVertical: 16 }}
+          >
             <Text style={{ fontFamily: fonts.sans, fontSize: 14, color: colors.textSecondary, textAlign: 'center' }}>
               Cancel
             </Text>

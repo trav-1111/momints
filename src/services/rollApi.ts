@@ -148,14 +148,31 @@ export interface MintFrameResponse {
   fundingWarning: string | null
 }
 
+// Two calls for the same frame must never both be in flight at once: the
+// Worker checkpoints make a *sequential* retry safe, but nothing on the wire
+// stops a concurrent one from racing its own create() transaction against an
+// earlier attempt that's still running (this is exactly what happened when a
+// client navigation left a frame request running in the background and a
+// later retry raced it — see worker/src/rolls/frames.ts's per-frame lock for
+// the server-side half of this fix). Keyed module-level rather than in any
+// component's state, so it holds across navigating away from and back to the
+// mint-progress screen, or a fresh remount calling mintWorkerFrame again.
+const inFlightFrameMints = new Map<string, Promise<MintFrameResponse>>()
+
 /**
  * Mint one frame. Idempotent by (collection, frameIndex): re-POSTing a frame
  * that already minted returns the existing asset, and a partially-processed
  * frame resumes from its checkpoint without re-uploading or re-minting. So
- * retrying a failed frame is always safe.
+ * retrying a failed frame is always safe — and a retry for a frame whose
+ * earlier attempt hasn't resolved yet reuses that attempt instead of sending
+ * a second, concurrent request.
  */
 export function mintWorkerFrame(params: MintFrameParams): Promise<MintFrameResponse> {
   const { collectionAddress, frameIndex, photoUri, description, attributes } = params
+  const key = `${collectionAddress}:${frameIndex}`
+
+  const inFlight = inFlightFrameMints.get(key)
+  if (inFlight) return inFlight
 
   const form = new FormData()
   // React Native's FormData file part — a JS File/Blob would need the bytes in
@@ -170,11 +187,15 @@ export function mintWorkerFrame(params: MintFrameParams): Promise<MintFrameRespo
   if (attributes?.length) form.append('attributes', JSON.stringify(attributes))
 
   // No explicit content-type: the runtime sets it with the multipart boundary.
-  return request<MintFrameResponse>(
+  const promise = request<MintFrameResponse>(
     `/rolls/${collectionAddress}/frames`,
     { method: 'POST', body: form },
     FRAME_TIMEOUT_MS,
-  )
+  ).finally(() => {
+    inFlightFrameMints.delete(key)
+  })
+  inFlightFrameMints.set(key, promise)
+  return promise
 }
 
 // ─── Read ─────────────────────────────────────────────────────────────────────

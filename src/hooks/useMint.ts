@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { buildMintMetadata } from '../services/ipfs'
-import { formatCapturedAt } from '../services/captureMetadata'
+import { formatCapturedAt, resolveLocation } from '../services/captureMetadata'
 import { mintNFTBatch, type QuickMintTerms } from '../services/mint'
 import { finalizeQuickMint, releaseQuickStage, stageQuickMint } from '../services/quickMintApi'
 import { mintWorkerFrame, RollApiError } from '../services/rollApi'
@@ -140,8 +140,7 @@ function workerFrameAttributes(item: BatchItemInput): { trait_type: string; valu
     { trait_type: 'Device', value: 'Solana Seeker' },
     { trait_type: 'Captured', value: formatCapturedAt(item.capturedAt) },
     { trait_type: 'Minted With', value: 'Momints' },
-    ...(item.captureMeta?.location ? [{ trait_type: 'Location', value: item.captureMeta.location }] : []),
-    ...(item.captureMeta?.weather ? [{ trait_type: 'Weather', value: item.captureMeta.weather }] : []),
+    { trait_type: 'Location', value: resolveLocation(item.captureMeta) },
   ]
 }
 
