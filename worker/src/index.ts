@@ -1,6 +1,6 @@
 // Momints roll backend — Worker entry. On-demand endpoints, plus ONE cron that
 // does two read-mostly jobs: the treasury monitor (ops/monitor.ts), which reads
-// the Irys balance and posts Discord alerts, and the quick-mint sweep
+// the Turbo credit balance and posts Discord alerts, and the quick-mint sweep
 // (quick/sweep.ts), which reaps abandoned stages and re-drives paid finalizes
 // that never completed. No keeper acts on funds — top-up and SOL -> $SKR
 // conversion remain manual operator tasks, documented in README.md.
@@ -24,9 +24,9 @@ import {
   runTreasuryMonitor,
   type AlertLevel,
 } from './ops/monitor'
-import { buildIrysUploader } from './providers/irysUploader'
-import { ManualFunding } from './providers/funding/manual'
-import { IrysProvider } from './providers/storage/irys'
+import { buildTurboClient, TurboFundingShortError } from './providers/turboClient'
+import { TurboFunding } from './providers/funding/turbo'
+import { TurboProvider } from './providers/storage/turbo'
 import { PinataProvider } from './providers/storage/pinata'
 import { ManualSink } from './providers/treasury/manual'
 import type { FundingProvider, StorageProvider } from './providers/types'
@@ -41,7 +41,7 @@ import { createWorkerUmi, getWorkerPublicKey } from './solana/client'
 
 const USAGE = `Momints roll backend (devnet).
   GET  /health                          config + D1 reachability
-  GET  /funding/status                  Irys balance sufficiency (operator)
+  GET  /funding/status                  Turbo credit balance sufficiency (operator)
   GET  /treasury/status                 accrued fees pending manual conversion (operator)
   GET  /ops/status                      treasury monitor: current level, roll headroom, last alert
                                          requires: Authorization: Bearer <OPS_AUTH_TOKEN>
@@ -61,9 +61,9 @@ See README.md for request shapes and the operator runbook.
 
 /**
  * Per-invocation context, shared by fetch() and the cron scheduled() handler.
- * D1-backed pieces are cheap and always available; the Irys-backed seams
+ * D1-backed pieces are cheap and always available; the Turbo-backed seams
  * (StorageProvider + FundingProvider) construct lazily — pure-read endpoints
- * never touch the bundler node.
+ * never touch Turbo.
  * Business logic sees only the three provider seams; swap impls here,
  * nowhere else.
  */
@@ -79,13 +79,12 @@ class WorkerContext {
     this.opsAlerts = new OpsAlertStore(env.DB)
   }
 
-  irysSeams(): Promise<{ storage: StorageProvider; funding: FundingProvider }> {
+  storageSeams(): Promise<{ storage: StorageProvider; funding: FundingProvider }> {
     this.uploaderSeams ??= (async () => {
-      const uploader = await buildIrysUploader(this.env)
-      await uploader.ready()
+      const turbo = buildTurboClient(this.env)
 
       let storage: StorageProvider
-      if ((this.env.STORAGE_PROVIDER ?? 'irys') === 'pinata') {
+      if ((this.env.STORAGE_PROVIDER ?? 'turbo') === 'pinata') {
         // TEST-ONLY fallback — IPFS pinning is not permanent. Never production.
         if (!this.env.PINATA_JWT) {
           throw new ConfigError('STORAGE_PROVIDER=pinata requires the PINATA_JWT secret')
@@ -93,9 +92,9 @@ class WorkerContext {
         console.warn('[storage] TEST-ONLY PinataProvider active — IPFS is NOT permanent storage')
         storage = new PinataProvider(this.env.PINATA_JWT)
       } else {
-        storage = new IrysProvider(uploader)
+        storage = new TurboProvider(turbo)
       }
-      return { storage, funding: new ManualFunding(uploader) }
+      return { storage, funding: new TurboFunding(turbo) }
     })()
     return this.uploaderSeams
   }
@@ -123,7 +122,7 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
       treasury: ctx.treasury,
       treasuryAddress: ctx.env.QUICK_TREASURY_ADDRESS,
       getUmi: () => createWorkerUmi(ctx.env),
-      getSeams: () => ctx.irysSeams(),
+      getSeams: () => ctx.storageSeams(),
     },
     body,
   )
@@ -161,7 +160,7 @@ async function handleMintFrame(ctx: WorkerContext, request: Request, collectionA
       db: ctx.db,
       rpcUrl: ctx.env.SOLANA_RPC_URL,
       getUmi: () => createWorkerUmi(ctx.env),
-      getSeams: () => ctx.irysSeams(),
+      getSeams: () => ctx.storageSeams(),
     },
     {
       collectionAddress,
@@ -336,7 +335,7 @@ async function handleGetOpenRoll(ctx: WorkerContext, url: URL): Promise<Response
 async function handleHealth(env: Env): Promise<Response> {
   const checks: Record<string, boolean | string> = {
     rpcConfigured: Boolean(env.SOLANA_RPC_URL),
-    irysKeyConfigured: Boolean(env.IRYS_FUNDING_KEY),
+    fundingKeyConfigured: Boolean(env.IRYS_FUNDING_KEY),
     // Informational only — alerting is optional and deliberately not part of `ok`.
     discordWebhookConfigured: Boolean(env.DISCORD_WEBHOOK_URL),
   }
@@ -346,7 +345,7 @@ async function handleHealth(env: Env): Promise<Response> {
   } catch (err) {
     checks.d1 = err instanceof Error ? `unreachable: ${err.message}` : 'unreachable'
   }
-  const ok = checks.rpcConfigured === true && checks.irysKeyConfigured === true && checks.d1 === true
+  const ok = checks.rpcConfigured === true && checks.fundingKeyConfigured === true && checks.d1 === true
   return json({ ok, checks }, ok ? 200 : 500)
 }
 
@@ -371,7 +370,7 @@ function requireOpsAuth(ctx: WorkerContext, request: Request): void {
 }
 
 async function handleOpsStatus(ctx: WorkerContext): Promise<Response> {
-  const { funding } = await ctx.irysSeams()
+  const { funding } = await ctx.storageSeams()
   const snapshot = await readFundingSnapshot(funding)
   const state = await ctx.opsAlerts.get(FUNDING_ALERT_KEY)
   // Missing state reads as `healthy` — same rule the scheduled check applies.
@@ -381,9 +380,9 @@ async function handleOpsStatus(ctx: WorkerContext): Promise<Response> {
     alertKey: FUNDING_ALERT_KEY,
     level: snapshot.level,
     rollsRemaining: snapshot.rollsRemaining,
-    balanceSol: snapshot.balanceSol,
+    balanceCredits: snapshot.balanceCredits,
     balanceAtomic: snapshot.balanceAtomic,
-    perRollSol: snapshot.perRollSol,
+    perRollCredits: snapshot.perRollCredits,
     perRollAtomic: snapshot.perRollAtomic,
     perFrameAtomic: snapshot.perFrameAtomic,
     sufficientForOneFrame: snapshot.funding.sufficient,
@@ -494,14 +493,14 @@ export default {
 
       switch (route.kind) {
         case 'funding-status': {
-          const { funding } = await ctx.irysSeams()
+          const { funding } = await ctx.storageSeams()
           // Same single balance read the cron uses (ops/monitor.ts). Response
           // is the original FundingStatus plus the derived roll headroom.
           const snapshot = await readFundingSnapshot(funding)
           return json({
             ...snapshot.funding,
-            balanceSol: snapshot.balanceSol,
-            perRollSol: snapshot.perRollSol,
+            balanceCredits: snapshot.balanceCredits,
+            perRollCredits: snapshot.perRollCredits,
             rollsRemaining: snapshot.rollsRemaining,
             level: snapshot.level,
           })
@@ -540,6 +539,12 @@ export default {
       if (err instanceof ConfigError) {
         return json({ error: `Worker misconfigured: ${err.message}` }, 500)
       }
+      if (err instanceof TurboFundingShortError) {
+        // Same operator-facing shape as the ensureFunded() pre-check 503s —
+        // this is the backstop for the balance moving between that check and
+        // the upload itself. Never a user-facing bug; see turboClient.ts.
+        return json({ error: `Storage funding: ${err.message}` }, 503)
+      }
       console.error('[unhandled]', err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err))
       return json({ error: err instanceof Error ? err.message : 'Internal error' }, 500)
     }
@@ -574,7 +579,7 @@ export default {
             bucket: env.QUICK_STAGING,
             rpcUrl: ctx.env.SOLANA_RPC_URL,
             getUmi: () => createWorkerUmi(ctx.env),
-            getSeams: () => ctx.irysSeams(),
+            getSeams: () => ctx.storageSeams(),
             alert,
           },
           quickMintId,
@@ -598,10 +603,10 @@ export default {
    * where all the severity/hysteresis logic lives, and the quick-mint sweep
    * (quick/sweep.ts).
    *
-   * READ-AND-NOTIFY ONLY on the funding side. It reads the Irys balance and
-   * posts to Discord. It never funds, signs, or moves anything — auto top-up
-   * would be the AutomatedFunding keeper, which deliberately does not exist
-   * (providers/funding/automated.ts).
+   * READ-AND-NOTIFY ONLY on the funding side. It reads the Turbo credit
+   * balance and posts to Discord. It never funds, signs, or moves anything —
+   * auto top-up would be the AutomatedFunding keeper, which deliberately does
+   * not exist (providers/funding/automated.ts).
    *
    * NEVER THROWS. A scheduled handler that throws fails silently, so the
    * operator would lose monitoring at exactly the moment they need it. Errors
@@ -629,7 +634,7 @@ export default {
       const { checks } = await runTreasuryMonitor({
         env: ctx.env,
         alerts: ctx.opsAlerts,
-        getFunding: async () => (await ctx.irysSeams()).funding,
+        getFunding: async () => (await ctx.storageSeams()).funding,
       })
       for (const check of checks) {
         console.log(`[ops] cron ${controller.cron} · ${check.key}: ${check.ok ? 'ok' : 'FAILED'} — ${check.note}`)

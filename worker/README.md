@@ -1,18 +1,31 @@
-# Momints roll backend — Cloudflare Worker + D1 + Irys/Arweave
+# Momints roll backend — Cloudflare Worker + D1 + Turbo/Arweave
 
 Single Cloudflare Worker backing the Momints roll feature: prepaid rolls of 12
 or 24 exposures, each roll an immutable Metaplex Core collection, each frame a
-Core asset minted into it, all media on permanent Arweave storage via Irys.
+Core asset minted into it, all media on permanent Arweave storage via Turbo.
 Devnet only. No VPS, and no keeper acts on funds — the only scheduled job is
 the read-only [treasury monitor](#treasury-monitor--discord-alerts), which
-watches the Irys balance and pings Discord. Top-ups and conversions stay manual
-operator tasks, listed in the [runbook](#operator-runbook) below.
+watches the Turbo credit balance and pings Discord. Top-ups and conversions
+stay manual operator tasks, listed in the [runbook](#operator-runbook) below.
 
-The single-Worker shape, the Irys-in-Workers approach, and the two hard
-constraints this design bends around were all validated by real spikes — see
-`../docs/spikes/irys/RESULT.md` and `RESULT2.md` before re-litigating any of
-them. Bundle: Irys + mpl-core + umi + photon ≈ 1.8 MB gzip vs the 3 MB Free
-cap (~41% headroom).
+The single-Worker shape and the hard constraint this design bends around were
+validated by real spikes — see `../docs/spikes/irys/RESULT2.md` (the funding
+constraint) and `../worker-turbo-spike/RESULT.md` (keyed ANS-104 signing + a
+real Turbo upload, proven inside this exact Workers runtime) before
+re-litigating either. Storage moved from Irys (`gateway.irys.xyz` — NOT
+genuine Arweave, 404s on `arweave.net`) to Turbo (`arweave.net/<id>`, verified
+resolvable) — see `../ARWEAVE_PATH_OPTIONS.md` for why and the cost math.
+Bundle: Turbo (lean `@dha-team/arbundles`) + mpl-core + umi + photon ≈ 1.15 MB
+gzip (measured via `npm run bundle-size`) vs the 3 MB Free-tier cap (~62%
+headroom) — smaller than the old Irys-based bundle, not bigger.
+
+> **Turbo has no devnet.** Solana minting is devnet-only, but there is no
+> Arweave/Turbo testnet — every upload this Worker makes, even while the app
+> is pointed at Solana devnet, writes real bytes to genuine mainnet Arweave
+> and spends real Turbo credits. This is a change from the old Irys
+> `.devnet()` uploader, which was a Solana-devnet-funded sandbox. Budget test
+> traffic accordingly; there is no free/throwaway storage tier to fall back on
+> beyond Turbo's small-item free allowance (10 MiB lifetime, 105 KiB/item).
 
 ## The flow
 
@@ -33,9 +46,9 @@ cap (~41% headroom).
    ONLY gate before any spend — everything below this point costs the
    Worker's own Arweave balance or SOL.
 3. **Funding pre-check** — `FundingProvider.ensureFunded()` verifies the
-   pre-funded Irys balance covers ~N frames + 1 cover. Insufficient balance
-   fails the request fast (503) with an operator-facing error. **It never
-   funds inline** — see [constraint 1](#the-two-hard-constraints).
+   pre-funded Turbo credit balance covers ~N frames + 1 cover. Insufficient
+   balance fails the request fast (503) with an operator-facing error. **It
+   never funds inline** — see [constraint 1](#the-two-hard-constraints).
 4. Derive the roll name `yyyy-mm-dd.NN` — NN is the 2-digit same-day index for
    this wallet (first of the day = `.01`), from D1.
 5. Generate the branded cover with `@cf-wasm/photon` (date + `12 EXP`/`24 EXP`
@@ -69,18 +82,24 @@ uploads).
 
 ## The two hard constraints
 
-1. **Funding is never synchronous in a user-facing request.** The Irys SDK
-   tracks a pre-funded balance on the bundler node; `.fund()` sends a real
-   transaction and blocks **120+ seconds** (measured, reproducibly, at every
-   payload size). `ensureFunded()` is a pre-emptive check that reports
-   sufficiency and warns the operator — nothing in this codebase calls
-   `.fund()`. **The operator keeps the Irys balance topped up ahead of demand**
-   (runbook below) until an AutomatedFunding keeper exists (stub only).
+1. **Funding is never synchronous in a user-facing request.** Turbo credits
+   (winc) are bought by sending SOL to Turbo's payment address and are visible
+   on the balance endpoint once that transfer confirms — there is no `.fund()`
+   call in this codebase to begin with, but the constraint that shaped the
+   design is unchanged: nothing here may block a user-facing request on a
+   top-up (the old Irys `.fund()` call this replaced blocked **120+ seconds**
+   measured, reproducibly, at every payload size — `docs/spikes/irys/RESULT2.md`).
+   `ensureFunded()` is a pre-emptive check that reports sufficiency and warns
+   the operator. **The operator keeps the Turbo credit balance topped up ahead
+   of demand** (runbook below) until an AutomatedFunding keeper exists (stub
+   only).
 2. **Public RPC endpoints are blocked from Workers for transactions.**
    `api.devnet.solana.com` 403s Workers' egress IPs on sends (reads succeed,
    masking it). `SOLANA_RPC_URL` (Helius devnet) is a required secret; if it is
    unset — or points at a public endpoint — every request fails fast with a
-   clear error. There is no public fallback in code, deliberately.
+   clear error. There is no public fallback in code, deliberately. (Turbo's own
+   HTTP API needs no RPC at all — signing and uploading are pure HTTP + the
+   funding key.)
 
 ## Provider seams
 
@@ -88,15 +107,15 @@ Roll/mint/cover logic calls only these interfaces (`src/providers/types.ts`):
 
 | Seam | Now | Later (stub + TODO only) |
 |---|---|---|
-| `StorageProvider` | **IrysProvider** — Arweave, permanent (the real one). `PinataProvider` exists as a clearly-marked TEST-ONLY fallback; IPFS pinning is not permanent and must not back any permanence claim. | — |
+| `StorageProvider` | **TurboProvider** — Turbo → genuine Arweave, permanent (the real one; lean `@dha-team/arbundles`, no `@ardrive/turbo-sdk` — see `../ARWEAVE_PATH_OPTIONS.md`). `PinataProvider` exists as a clearly-marked TEST-ONLY fallback; IPFS pinning is not permanent and must not back any permanence claim. | — |
 | `TreasurySink` | **ManualSink** — records accrued SOL to D1 as conversion-pending; operator-readable summary at `/treasury/status`. No auto-swap. | `AutomatedSink` — SOL→$SKR Jupiter keeper |
-| `FundingProvider` | **ManualFunding** — checks the Irys balance, reports sufficiency, warns when low. Never funds inline. The scheduled [treasury monitor](#treasury-monitor--discord-alerts) reads it on a cron and alerts Discord — notify only, never funds. | `AutomatedFunding` — top-up keeper |
+| `FundingProvider` | **TurboFunding** — checks the Turbo credit (winc) balance, reports sufficiency, warns when low. Never funds inline. The scheduled [treasury monitor](#treasury-monitor--discord-alerts) reads it on a cron and alerts Discord — notify only, never funds. | `AutomatedFunding` — top-up keeper |
 
 ## Endpoints
 
 ```
 GET  /health                       config + D1 reachability
-GET  /funding/status               Irys balance vs one typical frame + roll headroom (operator)
+GET  /funding/status               Turbo credit balance vs one typical frame + roll headroom (operator)
 GET  /treasury/status              accrued fees pending manual conversion (operator)
 GET  /ops/status                   monitor's current level, roll headroom, last-alerted state (needs OPS_AUTH_TOKEN)
 GET  /ops/test-alert?severity=…    post a dummy Discord alert: low | critical | healthy (needs OPS_AUTH_TOKEN)
@@ -163,10 +182,10 @@ of work the operator still owes. The app additionally only calls it for mints
 that never reached a signature, so the guard is enforced on both sides.
 
 Once a fee is collected the posture inverts: the consumer must never drop work.
-An empty Irys balance **retries** (with an alert) rather than dead-lettering,
-and only exhausting `max_retries` moves a job to the DLQ, where it becomes a
-critical Discord ping. The scheduled sweep is the backstop for a queue message
-that was never sent at all.
+An empty Turbo credit balance **retries** (with an alert) rather than
+dead-lettering, and only exhausting `max_retries` moves a job to the DLQ,
+where it becomes a critical Discord ping. The scheduled sweep is the backstop
+for a queue message that was never sent at all.
 
 Pricing lives in `src/quick/config.ts`. `QUICK_MINT_FEE_LAMPORTS` is anchored to
 the `MAX_QUICK_IMAGE_BYTES` ceiling so a large photo can never lose money —
@@ -215,7 +234,9 @@ npm install
 wrangler d1 create momints-rolls        # paste the id into wrangler.toml (TODO marker)
 npm run db:migrate:remote               # or db:migrate:local for wrangler dev --local
 
-wrangler secret put IRYS_FUNDING_KEY    # devnet funding wallet, base58 secret key
+wrangler secret put IRYS_FUNDING_KEY    # devnet funding wallet, base58 secret key —
+                                         # also the Turbo/Arweave signing key (name kept
+                                         # for continuity; no longer Irys-specific)
 wrangler secret put SOLANA_RPC_URL      # Helius devnet endpoint
 
 wrangler secret put DISCORD_WEBHOOK_URL # optional: treasury-monitor alert channel
@@ -228,9 +249,11 @@ wrangler r2 bucket create momints-quick-staging
 wrangler r2 bucket lifecycle add momints-quick-staging \
   --name expire-staging --prefix quick-staging/ --expire-days 1
 
-# Upload the placeholder ONCE, then paste the URI into wrangler.toml [vars]
-IRYS_FUNDING_KEY=<base58> SOLANA_RPC_URL=<helius> \
-  node scripts/upload-placeholder.mjs ../CollectionPlaceholder.png
+# Fund the signing wallet's Turbo credit balance BEFORE uploading the
+# placeholder (see "Top up the Turbo credit balance" below) — the upload will
+# 402 otherwise. Then upload the placeholder ONCE and paste the URI into
+# wrangler.toml [vars], replacing the old gateway.irys.xyz value:
+IRYS_FUNDING_KEY=<base58> node scripts/upload-placeholder.mjs ../CollectionPlaceholder.png
 
 npm run typecheck
 npm run deploy
@@ -243,23 +266,29 @@ user has already paid.
 Secrets are Worker Secrets only — never in the repo, `wrangler.toml`, or
 `.env`. For local dev put them in `.dev.vars` (gitignored). **`wrangler
 deploy` does not read `.dev.vars`** — deployed secrets must be set with
-`wrangler secret put`. `IRYS_FUNDING_KEY` doubles as the Worker's on-chain
-payer/authority for collection creation and frame mints; no code generates,
+`wrangler secret put`. `IRYS_FUNDING_KEY` triple-duties as the Worker's
+on-chain payer/authority for collection creation and frame mints, and as the
+`SolanaSigner` key that signs every Turbo/Arweave upload; no code generates,
 prints, or logs key material.
 
 Pending TODOs in code: `ROLL_FEE_LAMPORTS_12/24` and `QUICK_MINT_FEE_LAMPORTS`
-(placeholder pricing), `QUICK_PLACEHOLDER_URI` / `QUICK_TREASURY_ADDRESS`
-(empty until the one-time setup above), the D1 `database_id`, the final base
-cover artwork (`assets/base-cover.jpg` is a placeholder), `AutomatedSink`,
-`AutomatedFunding`.
+(candidate re-derived numbers noted in comments — see
+[Fee re-confirmation](#fee-re-confirmation-todo) below, not yet applied),
+`QUICK_PLACEHOLDER_URI` (still the old Irys URI until the operator re-runs
+`scripts/upload-placeholder.mjs`) / `QUICK_TREASURY_ADDRESS`, the D1
+`database_id`, the final base cover artwork (`assets/base-cover.jpg` is a
+placeholder), `AutomatedSink`, `AutomatedFunding`, and the
+[Turbo credit withdrawability](#open-question-turbo-credit-withdrawability)
+question below.
 
 ## Operator runbook
 
-### Top up the Irys balance ahead of demand
+### Top up the Turbo credit balance ahead of demand
 
-Funding confirmation takes **120+ seconds** — it can never happen during a
-user request. Rolls fail fast (503, operator-facing message) when the balance
-is short. So: top up **ahead of** demand, not in response to failures.
+A SOL top-up needs on-chain confirmation before Turbo credits it — it can
+never happen during a user request. Rolls fail fast (503, operator-facing
+message) when the balance is short. So: top up **ahead of** demand, not in
+response to failures.
 
 **When:** the [treasury monitor](#treasury-monitor--discord-alerts) tells you —
 it posts to Discord the moment the balance crosses into `low`, days of runway
@@ -268,30 +297,66 @@ whenever a response carries a `fundingWarning` (it warns while balance is below
 2× the anticipated work — i.e. before requests start failing). Low-balance
 warnings also appear in `wrangler tail` as `[funding] …`.
 
-**How** (from any machine with the funding wallet key — never from the
-Worker):
+**How:** Turbo credits (winc) are bought by sending SOL, on-chain, to Turbo's
+Solana payment address — there is no CLI top-up command like Irys had.
 
 ```sh
-# balance + price check
-irys balance <funding-wallet-address> -t solana --provider-url <helius-devnet-url> -n devnet
+# 1. Confirm Turbo's current Solana payment address (it can change — don't hardcode it):
+curl -s https://upload.ardrive.io/v1/info | grep -o '"solana":"[^"]*"'
 
-# top up (amount in atomic units / lamports). Expect ~2 minutes to confirm.
-irys fund 100000000 -n devnet -t solana -w <base58-secret-key> --provider-url <helius-devnet-url>
+# 2. Send SOL to that address, FROM ANY WALLET (the funding wallet does not need
+#    to be the sender — Turbo credits whichever address the transfer names as
+#    payer, so send from the funding wallet itself unless you have a reason not to).
+
+# 3. Verify the credit landed against the SIGNING wallet's address (the funding
+#    wallet's own public key — the same address the Worker signs uploads with):
+curl -s "https://payment.ardrive.io/v1/account/balance/solana?address=<funding-wallet-address>"
+# 404 "User Not Found" = zero balance (not funded yet, or still confirming).
 ```
 
-Size the top-up to anticipated work: a 24-frame roll is ~24 × 3 MB + cover;
-`GET /funding/status` reports the atomic price of a typical frame — multiply
-out and keep comfortable headroom. Verify afterwards with `/funding/status`
-(`sufficient: true`, no warning).
+Size the top-up to anticipated work: a 24-frame roll is ~24 × 3 MiB + cover;
+`GET /funding/status` reports the winc price of a typical frame (via
+`GET https://payment.ardrive.io/v1/price/bytes/<n>`) — multiply out and keep
+comfortable headroom. Verify afterwards with `/funding/status` (`sufficient:
+true`, no warning). Unlike Irys's ~2-minute `.fund()`, Turbo crediting time
+after the SOL transfer confirms was not characterized during this build —
+treat it the same way: top up well ahead of demand, don't expect it instantly.
+
+#### Open question: Turbo credit withdrawability
+
+**Unconfirmed — flagged, not resolved.** Irys balances were withdrawable back
+to SOL; whether Turbo credits are is not confirmed as of this writing (see
+`ARWEAVE_PATH_OPTIONS.md` "Honest flags"). If they are one-way, that's a
+treasury consideration — don't pre-fund far beyond near-term anticipated
+usage. **Confirm with ArDrive/Turbo support before any large top-up.**
+
+#### Fee re-confirmation (TODO)
+
+The Turbo/Arweave swap changed the real storage cost basis underneath
+`ROLL_FEE_LAMPORTS_12/24` and `QUICK_MINT_FEE_LAMPORTS` (their code comments
+in `src/rolls/config.ts` / `src/quick/config.ts` still cite an old devnet Irys
+L1 price, not genuine Arweave cost). Recomputed against real Turbo pricing
+(`ARWEAVE_PATH_OPTIONS.md` "C. Real cost", investigated 2026-08-31 at SOL/USD
+$103.76, AR/USD $2.09) margins come out **healthier**, not thinner:
+
+| | Operator cost | Current fee | Margin |
+|---|---|---|---|
+| Roll 12 | $4.7534 | $8.8196 (85,000,000 lamports) | 1.86× |
+| Roll 24 | $9.2276 | $17.1204 (165,000,000 lamports) | 1.86× |
+| Quick mint | $0.1165 | $0.6744 (6,500,000 lamports) | 5.79× |
+
+These are candidate numbers only — prices float with AR/SOL, so **re-confirm
+against live rates before treating them as a floor**, and no fee constant was
+changed by this swap.
 
 ### Treasury monitor — Discord alerts
 
-So you find out the Irys balance is running down **on Discord, days ahead**,
-instead of finding out when a user's frame upload 503s.
+So you find out the Turbo credit balance is running down **on Discord, days
+ahead**, instead of finding out when a user's frame upload 503s.
 
 A Cron Trigger (`[triggers] crons` in `wrangler.toml`, currently **every 6
-hours**) runs `scheduled()` → `src/ops/monitor.ts`. Each run reads the Irys
-balance through the same `FundingProvider` that backs `/funding/status`,
+hours**) runs `scheduled()` → `src/ops/monitor.ts`. Each run reads the Turbo
+credit balance through the same `FundingProvider` that backs `/funding/status`,
 converts it to **rolls of headroom**, and posts to Discord **only when the
 severity level changes**.
 
@@ -411,8 +476,8 @@ wrangler d1 execute momints-rolls --remote --command \
   "SELECT id, status, asset_address, image_uri, arweave_uri, created_at FROM quick_mints WHERE status='DEAD'"
 ```
 
-Fix the underlying cause first — usually an empty Irys balance (top it up per
-the section above) or an RPC outage. Then re-drive:
+Fix the underlying cause first — usually an empty Turbo credit balance (top it
+up per the section above) or an RPC outage. Then re-drive:
 
 ```sh
 # Back to FINALIZING so the consumer will act on it, then re-enqueue.

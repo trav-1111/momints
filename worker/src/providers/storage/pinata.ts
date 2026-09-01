@@ -6,7 +6,7 @@ import type { StorageProvider } from '../types'
  * IPFS pinning is NOT permanent storage: content survives only while someone
  * keeps pinning it. This impl exists purely as a development/test fallback
  * and MUST NOT back any user-facing permanence claim. Production is
- * IrysProvider (Arweave). Selected only by explicitly setting
+ * TurboProvider (genuine Arweave). Selected only by explicitly setting
  * STORAGE_PROVIDER=pinata (plus a PINATA_JWT secret).
  */
 export class PinataProvider implements StorageProvider {

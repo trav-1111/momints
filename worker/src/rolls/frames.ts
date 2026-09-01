@@ -162,8 +162,8 @@ export async function mintFrame(deps: MintFrameDeps, req: MintFrameRequest): Pro
     if (!fundingStatus.sufficient) {
       throw new HttpError(
         503,
-        `Frame upload refused: Irys storage balance is insufficient (have ${fundingStatus.balanceAtomic}, ` +
-          `need ${fundingStatus.requiredAtomic} atomic). OPERATOR: top up per the README runbook. `
+        `Frame upload refused: Turbo credit balance is insufficient (have ${fundingStatus.balanceAtomic}, ` +
+          `need ${fundingStatus.requiredAtomic} winc). OPERATOR: top up per the README runbook. `
           + 'The frame checkpoint is untouched — re-POST this frame after the top-up to resume.',
       )
     }

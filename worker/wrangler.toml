@@ -1,6 +1,8 @@
 # Momints roll backend — single Worker, validated by the bundle spike:
-# Irys + mpl-core + photon fit in one Worker (docs/spikes/irys/RESULT2.md).
-# Do NOT split into multiple Workers.
+# Turbo (lean @dha-team/arbundles) + mpl-core + photon fit in one Worker,
+# smaller than the old Irys-based bundle (docs/spikes/irys/RESULT2.md,
+# ARWEAVE_PATH_OPTIONS.md, worker-turbo-spike/RESULT.md). Do NOT split into
+# multiple Workers.
 #
 # PLAN: Workers PAID. Required by the quick-mint finalize queue (Queues is not
 # on the Free plan) and by R2. The old "~41% Free-tier headroom" bundle
@@ -13,9 +15,12 @@ compatibility_flags = ["nodejs_compat"]
 
 # Secrets (set via `wrangler secret put <NAME>` — wrangler deploy does NOT read
 # .dev.vars; .dev.vars is local-dev only and gitignored):
-#   IRYS_FUNDING_KEY   base58 secret key of the DEVNET funding wallet. Also the
-#                      Worker's on-chain payer/authority for collection creation
-#                      and frame mints. Never generated, printed, or logged.
+#   IRYS_FUNDING_KEY   base58 secret key of the DEVNET funding wallet. Triple
+#                      duty: the Worker's on-chain payer/authority for
+#                      collection creation and frame mints, AND the SolanaSigner
+#                      key that signs every Turbo/Arweave upload. Name kept for
+#                      continuity with the deployed secret — it is no longer
+#                      Irys-specific. Never generated, printed, or logged.
 #   SOLANA_RPC_URL     Helius devnet endpoint. REQUIRED — the public
 #                      api.devnet.solana.com blocks Workers' egress IPs for
 #                      transaction sends. No public fallback exists in code.
@@ -31,11 +36,11 @@ compatibility_flags = ["nodejs_compat"]
 #                      if this is unset. Any random string works, e.g.
 #                      `openssl rand -hex 32`.
 
-# Treasury monitor (src/ops/monitor.ts): reads the Irys balance and posts a
-# Discord alert when the funding severity level CHANGES. READ-ONLY — it never
-# funds, signs, or moves anything. Cadence is a floor on how late an alert can
-# be: at 6h the operator hears about a crossing within 6 hours of it happening,
-# which the generous roll-headroom thresholds are sized around.
+# Treasury monitor (src/ops/monitor.ts): reads the Turbo credit balance and
+# posts a Discord alert when the funding severity level CHANGES. READ-ONLY —
+# it never funds, signs, or moves anything. Cadence is a floor on how late an
+# alert can be: at 6h the operator hears about a crossing within 6 hours of it
+# happening, which the generous roll-headroom thresholds are sized around.
 # TODO tune cadence alongside ALERT_THRESHOLD_* in src/ops/monitor.ts.
 [triggers]
 crons = ["0 */6 * * *"]
@@ -44,6 +49,12 @@ crons = ["0 */6 * * *"]
 # Static "developing" metadata every quick mint is minted against before its
 # real image exists. Uploaded ONCE by scripts/upload-placeholder.mjs — permanent
 # and reused forever, so this only changes if the holding artwork changes.
+#
+# TODO (Turbo/Arweave storage swap): this is still the OLD Irys-uploaded
+# placeholder (gateway.irys.xyz — not genuine Arweave, 404s on arweave.net).
+# scripts/upload-placeholder.mjs now uploads via Turbo instead; the operator
+# needs to re-run it once and paste the new https://arweave.net/<id> URI here.
+# verify.ts compares against whatever this var holds, so nothing else changes.
 QUICK_PLACEHOLDER_URI = "https://gateway.irys.xyz/GH6fEJ2DLpGob2mZ2UfxpcsyrURCCfzmak9VEiCkmGDP"
 # Receives quick-mint fees. MUST match the app's EXPO_PUBLIC_ROLL_TREASURY:
 # the Worker verifies payment to this exact address out of the landed

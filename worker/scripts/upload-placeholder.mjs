@@ -1,4 +1,5 @@
-// One-time: upload the quick-mint placeholder to Arweave and print its URI.
+// One-time: upload the quick-mint placeholder to genuine Arweave via Turbo,
+// and print its URI.
 //
 // Every quick mint is minted against this ONE permanent metadata document
 // before its real image exists, then swapped to the real URI seconds later by
@@ -13,17 +14,30 @@
 // not in the Worker, so it stays outside tsconfig's `include` and needs no
 // build step.
 //
-// Usage (from worker/):
-//   IRYS_FUNDING_KEY=<base58> SOLANA_RPC_URL=<helius devnet> \
-//     node scripts/upload-placeholder.mjs ../CollectionPlaceholder.png
+// PREPARED, NOT RUN: this script signs and uploads for real the moment it's
+// invoked (Turbo's small-item free tier covers a placeholder this size, but it
+// is still a genuine spend/action) — that's an operator call, not something
+// done automatically while building the Turbo swap.
 //
-// Then paste the printed URI into wrangler.toml [vars] QUICK_PLACEHOLDER_URI.
+// Usage (from worker/):
+//   IRYS_FUNDING_KEY=<base58> node scripts/upload-placeholder.mjs ../CollectionPlaceholder.png
+//
+// Then paste the printed URI into wrangler.toml [vars] QUICK_PLACEHOLDER_URI,
+// replacing the old gateway.irys.xyz one.
 
 import { readFile } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
-import { Uploader } from '@irys/upload'
-import { Solana } from '@irys/upload-solana'
+// Explicit /web subpath — the lean build (no file/ subpath, so no transitive
+// axios dependency, no ethers/cosmjs). Matches providers/turboClient.ts, and
+// matters here specifically: plain Node has no bundler to prefer the lean
+// build for a bare specifier, so it resolves the heavier node/ build instead.
+import { createData, SolanaSigner } from '@dha-team/arbundles/web'
+import bs58 from 'bs58'
 import { PhotonImage, SamplingFilter, resize } from '@cf-wasm/photon/node'
+
+const TURBO_UPLOAD = 'https://upload.ardrive.io/v1'
+const ARWEAVE_GATEWAY = 'https://arweave.net'
+const TOKEN = 'solana'
 
 const MIME_BY_EXT = {
   '.png': 'image/png',
@@ -86,6 +100,34 @@ function requireEnv(name) {
   return value
 }
 
+/**
+ * Sign an ANS-104 data item and POST it to Turbo — the same lean path as the
+ * Worker's TurboClient (providers/turboClient.ts), so the placeholder lands
+ * through the identical signing + upload path every real mint uses.
+ */
+async function uploadToTurbo(signer, data, contentType) {
+  const item = createData(data, signer, { tags: [{ name: 'Content-Type', value: contentType }] })
+  await item.sign(signer)
+
+  const res = await fetch(`${TURBO_UPLOAD}/tx/${TOKEN}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/octet-stream' },
+    body: item.getRaw(),
+  })
+  const text = await res.text()
+  if (res.status === 402) {
+    throw new Error(`Turbo refused the upload — insufficient credit balance (402): ${text}`)
+  }
+  if (!res.ok) {
+    throw new Error(`Turbo upload failed: ${res.status} ${text}`)
+  }
+  const body = JSON.parse(text)
+  if (!body.id) {
+    throw new Error('Turbo upload succeeded but returned no id')
+  }
+  return body.id
+}
+
 const imagePath = process.argv[2]
 if (!imagePath) {
   console.error('Usage: node scripts/upload-placeholder.mjs <path-to-image>')
@@ -98,7 +140,9 @@ if (!MIME_BY_EXT[extname(imagePath).toLowerCase()]) {
 }
 
 const fundingKey = requireEnv('IRYS_FUNDING_KEY')
-const rpcUrl = requireEnv('SOLANA_RPC_URL')
+const signer = new SolanaSigner(fundingKey)
+const signingAddress = bs58.encode(signer.publicKey)
+console.log(`Signing as ${signingAddress} — make sure this wallet's Turbo credit balance is funded.`)
 
 const source = await readFile(imagePath)
 const art = normalizeArtwork(source)
@@ -107,15 +151,9 @@ console.log(
     `(${art.width}x${art.height} JPEG q${art.quality})`,
 )
 
-// Matches the Worker's uploader exactly (providers/irysUploader.ts) so the
-// placeholder lands on the same node and is paid from the same balance.
-const uploader = await Uploader(Solana).withWallet(fundingKey).withRpc(rpcUrl).devnet()
-
-console.log('Uploading image…')
-const image = await uploader.upload(Buffer.from(art.bytes), {
-  tags: [{ name: 'Content-Type', value: art.mime }],
-})
-const imageUri = `https://gateway.irys.xyz/${image.id}`
+console.log('Uploading image to Turbo…')
+const imageId = await uploadToTurbo(signer, Buffer.from(art.bytes), art.mime)
+const imageUri = `${ARWEAVE_GATEWAY}/${imageId}`
 console.log(`  image: ${imageUri}`)
 
 const metadata = {
@@ -136,10 +174,13 @@ const metadata = {
   },
 }
 
-const doc = await uploader.upload(Buffer.from(JSON.stringify(metadata)), {
-  tags: [{ name: 'Content-Type', value: 'application/json' }],
-})
-const metadataUri = `https://gateway.irys.xyz/${doc.id}`
+console.log('Uploading metadata to Turbo…')
+const metadataId = await uploadToTurbo(signer, JSON.stringify(metadata), 'application/json')
+const metadataUri = `${ARWEAVE_GATEWAY}/${metadataId}`
 
-console.log('\nDone. Put this in wrangler.toml [vars]:\n')
+console.log(
+  '\nArweave mining takes a few minutes — the URI below will 403/404 briefly before it resolves. ' +
+    'That is expected; Turbo has already accepted and bundled it.\n',
+)
+console.log('Done. Put this in wrangler.toml [vars], replacing the old gateway.irys.xyz value:\n')
 console.log(`QUICK_PLACEHOLDER_URI = "${metadataUri}"\n`)

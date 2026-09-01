@@ -18,14 +18,24 @@ import { ESTIMATED_FRAME_BYTES } from '../rolls/config'
 // the same balance it pays storage from. It was covering ~42% of real cost.
 //
 // Denominated in lamports so this tracks SOL/USD automatically — but NOT
-// AR/SOL: Arweave storage is priced in AR and converted through Irys's
-// internal rate, which moves independently of SOL's own price. Re-check this
-// if AR/SOL has moved a lot since the measurement above.
+// AR/SOL: Arweave storage is priced in AR and converted through Turbo's own
+// rate, which moves independently of SOL's own price. Re-check this if AR/SOL
+// has moved a lot since the measurement above.
 //
 // Worth remembering when tuning: moving quick mints from a Token Metadata NFT
 // to a standalone Core asset dropped the user's own mint cost by roughly
 // 0.009 SOL (four rent-paying accounts down to one), so this fee still leaves
 // a quick shot cheaper overall than it was before it was chargeable.
+//
+// TODO (flagged by the Turbo/Arweave storage swap, not resolved here — see
+// ARWEAVE_PATH_OPTIONS.md "C. Real cost", investigated 2026-08-31 at SOL/USD
+// $103.76, AR/USD $2.09): the "Arweave image @ 3 MiB" line above (1_261_912
+// atomic) is a devnet Irys L1 price, not genuine Arweave storage cost.
+// Recomputed against real Turbo/Arweave pricing:
+//   real cost $0.1165 vs fee $0.6744 (6_500_000) = 5.79× margin
+// — healthier than the margin above, not thinner. A candidate number, not a
+// directive — operator should re-confirm against live Turbo/AR/SOL prices
+// before relying on it; this comment does not change QUICK_MINT_FEE_LAMPORTS.
 export const QUICK_MINT_FEE_LAMPORTS = 6_500_000
 
 // Free quick mints per wallet per day before the fee applies. 0 = every quick

@@ -4,7 +4,7 @@
 
 Momints is a mobile NFT camera app built for the Solana Seeker. Take photos, add metadata, and mint them as Metaplex Core NFTs — either one at a time ("quick shots") or as a prepaid 12/24-exposure roll, both backed by the [roll Worker](worker/README.md).
 
-**Currently devnet only.** The Worker's RPC and Irys storage are both wired to devnet — see [worker/README.md](worker/README.md) for the backend and its fee-verification model.
+**Currently devnet only.** The Worker's RPC is wired to devnet; permanent storage writes genuine mainnet Arweave via Turbo regardless — see [worker/README.md](worker/README.md) for the backend and its fee-verification model.
 
 ## Features
 
@@ -13,7 +13,7 @@ Momints is a mobile NFT camera app built for the Solana Seeker. Take photos, add
 - Rotation editor with fine-grained slider and 90-degree steps
 - **Quick shots** — mint a single photo immediately; the storage fee rides in the same wallet signature as the mint
 - **Rolls** — pay once up front for a 12 or 24-exposure roll; frames mint server-side (Worker-signed, no per-frame wallet approval) into a collection the shooter owns from creation
-- Permanent storage on Arweave via Irys — not IPFS pinning
+- Permanent storage on genuine Arweave via Turbo — not IPFS pinning
 - On-chain royalties (5% to the shooter, no platform cut) and verified-creator signatures
 - Wallet connection through Mobile Wallet Adapter (Phantom, Solflare, Seeker built-in, etc.)
 - `.skr` domain resolution — wallet header shows your Solana domain if you have one
@@ -108,7 +108,7 @@ worker/                     # Cloudflare Worker backend — see worker/README.md
 | State | Zustand |
 | Blockchain | Solana (devnet) |
 | NFT | Metaplex Core |
-| Storage | Arweave via Irys (Worker-side) |
+| Storage | Genuine Arweave via Turbo (Worker-side) |
 | Backend | Cloudflare Workers + D1 + R2 + Queues — see [worker/README.md](worker/README.md) |
 | Wallet | Mobile Wallet Adapter (`@wallet-ui/react-native-kit`) |
 | RPC | Configurable via `.env`; the Worker uses its own Helius devnet endpoint |
@@ -125,7 +125,7 @@ worker/                     # Cloudflare Worker backend — see worker/README.md
 
 ## Known Limitations
 
-- **Devnet only** — the Worker's RPC and Irys funding are both devnet. Do not treat balances, fees, or minted assets as real value.
+- **Devnet only** — the Worker's RPC is devnet. Do not treat balances, fees, or minted assets as real value. **Storage is the exception:** Turbo has no devnet, so every mint — even in this devnet build — writes real bytes to genuine mainnet Arweave and spends real Turbo credits.
 - **Client-side RPC key** — `EXPO_PUBLIC_SOLANA_RPC` is bundled into the app via `EXPO_PUBLIC_*`, which Expo inlines as plaintext at build time. Fine for a devnet key with a low blast radius; rotate before any wider distribution.
 - **No on-device fallback** — if `EXPO_PUBLIC_ROLL_API` is unset or the Worker is unreachable, minting fails with a clear error rather than degrading to a different code path.
 

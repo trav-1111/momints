@@ -14,9 +14,13 @@ export interface Env {
    */
   QUICK_FINALIZE: Queue<QuickFinalizeMessage>
   /**
-   * Base58 secret key of the DEVNET funding wallet (Worker Secret). Doubles as
-   * the Worker's on-chain payer/authority for collection creation and frame
-   * mints. Never generated, printed, or logged by this codebase.
+   * Base58 secret key of the DEVNET funding wallet (Worker Secret). Triple
+   * duty: the Worker's on-chain payer/authority for collection creation and
+   * frame mints, AND the `SolanaSigner` key that signs every ANS-104 data
+   * item uploaded to Turbo (see providers/turboClient.ts) — one wallet funds
+   * and signs, same as it did for Irys. Name kept for continuity with the
+   * secret already set in the deployed Worker; never generated, printed, or
+   * logged by this codebase.
    */
   IRYS_FUNDING_KEY?: string
   /**
@@ -26,7 +30,7 @@ export interface Env {
    * deliberately no public-endpoint fallback anywhere in this Worker.
    */
   SOLANA_RPC_URL?: string
-  /** Optional: 'irys' (default, Arweave, permanent) or 'pinata' (TEST-ONLY). */
+  /** Optional: 'turbo' (default, genuine Arweave, permanent) or 'pinata' (TEST-ONLY). */
   STORAGE_PROVIDER?: string
   /** Optional: Pinata JWT — only needed for the TEST-ONLY Pinata fallback. */
   PINATA_JWT?: string

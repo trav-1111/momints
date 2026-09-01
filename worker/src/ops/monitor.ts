@@ -13,14 +13,14 @@ import { postDiscordAlert, type DiscordAlert } from './discord'
 
 export type { AlertLevel }
 
-/** ops_alert_state key for the Irys funding-balance stream. */
+/** ops_alert_state key for the Turbo funding-balance stream. */
 export const FUNDING_ALERT_KEY = 'funding_balance'
 
-// TODO tune (see README "Treasury monitor"). Deliberately GENEROUS: an Irys
-// top-up takes 120+ seconds to confirm and the operator checks in roughly
-// daily, so the first alert has to land while there is still comfortable
-// runway. Tightening these to "a few rolls left" recreates the 503 it exists
-// to prevent.
+// TODO tune (see README "Treasury monitor"). Deliberately GENEROUS: a Turbo
+// credit top-up needs an on-chain SOL transfer to confirm first and the
+// operator checks in roughly daily, so the first alert has to land while
+// there is still comfortable runway. Tightening these to "a few rolls left"
+// recreates the 503 it exists to prevent.
 export const ALERT_THRESHOLD_LOW_ROLLS = 20 // "top up soon"  — days of runway
 export const ALERT_THRESHOLD_CRITICAL_ROLLS = 5 // "top up today"
 
@@ -30,7 +30,13 @@ export const ALERT_THRESHOLD_CRITICAL_ROLLS = 5 // "top up today"
  */
 const HEADROOM_FRAMES_PER_ROLL = 24
 
-const LAMPORTS_PER_SOL = 1_000_000_000n
+/**
+ * Turbo denominates credits in winc ("Winston Credits"), mirroring Arweave's
+ * own 12-decimal Winston precision for display — this is a fixed display
+ * scale, not a live AR/USD or AR/SOL exchange rate (those float; see
+ * ARWEAVE_PATH_OPTIONS.md "Real cost").
+ */
+const WINC_PER_CREDIT = 1_000_000_000_000n
 
 /** Ordering for healthy < low < critical, so a change can be read as a direction. */
 const LEVEL_RANK: Record<AlertLevel, number> = { healthy: 0, low: 1, critical: 2 }
@@ -39,11 +45,11 @@ export interface FundingSnapshot {
   /** The provider read, exactly as GET /funding/status returns it. */
   funding: FundingStatus
   balanceAtomic: string
-  balanceSol: string
-  /** Irys price for one typical frame — the cost basis funding/status uses. */
+  balanceCredits: string
+  /** Turbo price for one typical frame — the cost basis funding/status uses. */
   perFrameAtomic: string
   perRollAtomic: string
-  perRollSol: string
+  perRollCredits: string
   /** Full rolls the balance still covers, rounded DOWN. */
   rollsRemaining: number
   level: AlertLevel
@@ -52,7 +58,7 @@ export interface FundingSnapshot {
 export interface MonitorDeps {
   env: Env
   alerts: OpsAlertStore
-  /** Lazy: checks that need no Irys read must not pay to build the uploader. */
+  /** Lazy: checks that need no Turbo read must not pay to build the client. */
   getFunding: () => Promise<FundingProvider>
 }
 
@@ -90,7 +96,7 @@ export async function readFundingSnapshot(funding: FundingProvider): Promise<Fun
     // A zero price means the read is broken, not that storage is free —
     // dividing by it would report infinite headroom and silence the monitor.
     throw new Error(
-      `Irys quoted ${status.requiredAtomic} atomic for ${status.anticipatedBytes} bytes — ` +
+      `Turbo quoted ${status.requiredAtomic} atomic for ${status.anticipatedBytes} bytes — ` +
         'cannot derive roll headroom from a zero price.',
     )
   }
@@ -101,10 +107,10 @@ export async function readFundingSnapshot(funding: FundingProvider): Promise<Fun
   return {
     funding: status,
     balanceAtomic: balance.toString(),
-    balanceSol: formatSol(balance),
+    balanceCredits: formatCredits(balance),
     perFrameAtomic: perFrame.toString(),
     perRollAtomic: perRoll.toString(),
-    perRollSol: formatSol(perRoll),
+    perRollCredits: formatCredits(perRoll),
     rollsRemaining,
     level: levelFor(rollsRemaining),
   }
@@ -190,7 +196,7 @@ export async function runTreasuryMonitor(deps: MonitorDeps): Promise<MonitorRunR
       // An undelivered alert is a failed check: the operator was not told.
       key: FUNDING_ALERT_KEY,
       ok: !result.deliveryFailed,
-      note: `${result.note} · ~${result.snapshot.rollsRemaining} rolls, ~${result.snapshot.balanceSol} SOL`,
+      note: `${result.note} · ~${result.snapshot.rollsRemaining} rolls, ~${result.snapshot.balanceCredits} Credits`,
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -208,19 +214,20 @@ function buildFundingAlert(snapshot: FundingSnapshot, previousLevel: AlertLevel)
   let title: string
   let description: string
   if (snapshot.level === 'critical') {
-    title = 'Irys funding CRITICAL — top up today'
+    title = 'Turbo funding CRITICAL — top up today'
     description =
       `Storage funding covers about ${snapshot.rollsRemaining} more roll(s). ` +
-      'Top up now: confirmation takes 120+ seconds, and once the balance runs short frame uploads fail with a 503.'
+      'Top up now: a SOL top-up needs on-chain confirmation before Turbo credits it, and once the balance runs ' +
+      'short frame uploads fail with a 503.'
   } else if (snapshot.level === 'low') {
-    title = worsening ? 'Irys funding low — top up soon' : 'Irys funding recovering — still low'
+    title = worsening ? 'Turbo funding low — top up soon' : 'Turbo funding recovering — still low'
     description = worsening
       ? `Storage funding covers about ${snapshot.rollsRemaining} more roll(s). Plenty of runway left — top up ` +
         'at your convenience, ahead of demand, rather than in response to a failure.'
       : `Balance improved to about ${snapshot.rollsRemaining} roll(s) of headroom, but it is still below the ` +
         `low threshold of ${ALERT_THRESHOLD_LOW_ROLLS}. Keep watching.`
   } else {
-    title = 'Irys funding recovered — healthy'
+    title = 'Turbo funding recovered — healthy'
     description =
       `Top-up landed. Storage funding now covers about ${snapshot.rollsRemaining} roll(s) — back above the ` +
       `healthy threshold of ${ALERT_THRESHOLD_LOW_ROLLS}. No action needed.`
@@ -228,8 +235,8 @@ function buildFundingAlert(snapshot: FundingSnapshot, previousLevel: AlertLevel)
 
   const fields = [
     { name: 'Rolls of headroom', value: `~${snapshot.rollsRemaining} (${HEADROOM_FRAMES_PER_ROLL}-frame rolls)` },
-    { name: 'Balance', value: `~${snapshot.balanceSol} SOL` },
-    { name: 'Balance (atomic)', value: snapshot.balanceAtomic },
+    { name: 'Balance', value: `~${snapshot.balanceCredits} Credits` },
+    { name: 'Balance (atomic winc)', value: snapshot.balanceAtomic },
     { name: 'Level', value: `${previousLevel} → ${snapshot.level}` },
     {
       name: 'Thresholds',
@@ -237,7 +244,7 @@ function buildFundingAlert(snapshot: FundingSnapshot, previousLevel: AlertLevel)
     },
     {
       name: 'Cost basis',
-      value: `~${snapshot.perRollSol} SOL/roll (${snapshot.perFrameAtomic} atomic/frame × ${HEADROOM_FRAMES_PER_ROLL})`,
+      value: `~${snapshot.perRollCredits} Credits/roll (${snapshot.perFrameAtomic} winc/frame × ${HEADROOM_FRAMES_PER_ROLL})`,
     },
   ]
   if (!snapshot.funding.sufficient) {
@@ -257,12 +264,12 @@ function buildFundingAlert(snapshot: FundingSnapshot, previousLevel: AlertLevel)
 
 /** Human-readable snapshot stored in ops_alert_state.last_value for context. */
 function describeSnapshot(snapshot: FundingSnapshot): string {
-  return `~${snapshot.rollsRemaining} rolls, ~${snapshot.balanceSol} SOL (${snapshot.balanceAtomic} atomic)`
+  return `~${snapshot.rollsRemaining} rolls, ~${snapshot.balanceCredits} Credits (${snapshot.balanceAtomic} winc)`
 }
 
 /**
- * Atomic amounts arrive as strings from the Irys SDK's BigNumber. Integers in
- * practice; parsed defensively (truncating toward zero) so an unexpected
+ * Atomic amounts arrive as strings from Turbo's JSON responses (winc). Integers
+ * in practice; parsed defensively (truncating toward zero) so an unexpected
  * decimal or exponent form degrades to a conservative number instead of NaN.
  */
 function parseAtomic(value: string, label: string): bigint {
@@ -270,14 +277,14 @@ function parseAtomic(value: string, label: string): bigint {
   if (/^\d+$/.test(trimmed)) return BigInt(trimmed)
   const asNumber = Number(trimmed)
   if (!Number.isFinite(asNumber) || asNumber < 0) {
-    throw new Error(`Irys returned an unparseable ${label}: "${value}"`)
+    throw new Error(`Turbo returned an unparseable ${label}: "${value}"`)
   }
   return BigInt(Math.floor(asNumber))
 }
 
-/** Atomic (lamports) → SOL, truncated to 4 dp. Display only. */
-function formatSol(atomic: bigint, decimals = 4): string {
-  const whole = atomic / LAMPORTS_PER_SOL
-  const fraction = (atomic % LAMPORTS_PER_SOL).toString().padStart(9, '0').slice(0, decimals)
+/** Atomic (winc) → Credits (1 Credit = 1e12 winc), truncated to 6 dp. Display only. */
+function formatCredits(atomic: bigint, decimals = 6): string {
+  const whole = atomic / WINC_PER_CREDIT
+  const fraction = (atomic % WINC_PER_CREDIT).toString().padStart(12, '0').slice(0, decimals)
   return `${whole}.${fraction}`
 }

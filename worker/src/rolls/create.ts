@@ -32,9 +32,9 @@ export interface CreateRollDeps {
   /** Base58 address roll fees must land in. Verified against the landed transaction. */
   treasuryAddress: string
   /**
-   * Lazy on purpose: umi and the Irys seams are only constructed after
-   * validation, the single-open-roll check, and fee verification pass, so
-   * invalid or unpaid requests never touch the bundler node or the RPC.
+   * Lazy on purpose: umi and the storage/funding seams are only constructed
+   * after validation, the single-open-roll check, and fee verification pass,
+   * so invalid or unpaid requests never touch Turbo or the RPC.
    */
   getUmi: () => Promise<Umi>
   getSeams: () => Promise<{ storage: StorageProvider; funding: FundingProvider }>
@@ -135,10 +135,10 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
   if (!fundingStatus.sufficient) {
     throw new HttpError(
       503,
-      `Roll creation refused: Irys storage balance is insufficient (have ${fundingStatus.balanceAtomic}, ` +
-        `need ${fundingStatus.requiredAtomic} atomic for ~${fundingStatus.anticipatedBytes} bytes). ` +
-        'This is an OPERATOR issue, not a user issue: top up the Irys balance per the README runbook. ' +
-        'Funding takes 120+ seconds to confirm, so it is never attempted inside this request.',
+      `Roll creation refused: Turbo credit balance is insufficient (have ${fundingStatus.balanceAtomic}, ` +
+        `need ${fundingStatus.requiredAtomic} winc for ~${fundingStatus.anticipatedBytes} bytes). ` +
+        'This is an OPERATOR issue, not a user issue: top up the Turbo credit balance per the README runbook. ' +
+        'A SOL top-up needs on-chain confirmation, so it is never attempted inside this request.',
     )
   }
 

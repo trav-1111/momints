@@ -37,10 +37,23 @@ export function isRollSize(size: number): size is RollSize {
 // collection + cover art overhead a quick mint never creates.
 //
 // Denominated in lamports so this tracks SOL/USD automatically — but NOT
-// AR/SOL: Arweave storage is priced in AR and converted through Irys's
-// internal rate, which moves independently of SOL's own price. The ~1.4×
-// margin is partly a buffer against that drift, not just profit; re-check
-// these numbers if AR/SOL has moved a lot since the comment above was written.
+// AR/SOL: Arweave storage is priced in AR and converted through Turbo's own
+// rate, which moves independently of SOL's own price. The ~1.4× margin is
+// partly a buffer against that drift, not just profit; re-check these numbers
+// if AR/SOL has moved a lot since the comment above was written.
+//
+// TODO (flagged by the Turbo/Arweave storage swap, not resolved here — see
+// ARWEAVE_PATH_OPTIONS.md "C. Real cost", investigated 2026-08-31 at SOL/USD
+// $103.76, AR/USD $2.09): the "Arweave image @ 3 MiB" line above (1_261_912
+// atomic) is a devnet Irys L1 price, not genuine Arweave storage cost — it
+// predates this constant being denominated correctly. Recomputed against
+// real Turbo/Arweave pricing, operator cost and margin come out HEALTHIER,
+// not thinner:
+//   Roll 12: real cost $4.7534 vs fee $8.8196 (85_000_000) = 1.86× margin
+//   Roll 24: real cost $9.2276 vs fee $17.1204 (165_000_000) = 1.86× margin
+// These are candidate numbers, not a directive — operator should re-confirm
+// against live Turbo/AR/SOL prices before relying on them; this comment does
+// not change ROLL_FEE_LAMPORTS_12/24.
 export const ROLL_FEE_LAMPORTS_12 = 85_000_000 // 0.085 SOL
 export const ROLL_FEE_LAMPORTS_24 = 165_000_000 // 0.165 SOL
 

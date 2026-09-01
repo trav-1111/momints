@@ -1,8 +1,8 @@
 /**
  * Roll backend Worker. REQUIRED — there is no on-device fallback: rolls and
  * quick mints both go through the server-side pipeline, which generates
- * covers, stores everything permanently on Arweave via Irys, verifies fee
- * payment on-chain before spending anything, and mints Core assets owned by
+ * covers, stores everything permanently on genuine Arweave via Turbo, verifies
+ * fee payment on-chain before spending anything, and mints Core assets owned by
  * the shooter's wallet (signed by the Worker's key for roll frames, so those
  * cost the user no wallet approval at all).
  *

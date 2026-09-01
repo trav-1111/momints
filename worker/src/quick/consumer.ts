@@ -31,8 +31,8 @@ export interface FinalizeConsumerDeps {
 
 /**
  * `retry` carries a delay because the two reasons to retry have very different
- * clocks: an RPC blip clears in seconds, an empty Irys balance clears when a
- * human tops it up.
+ * clocks: an RPC blip clears in seconds, an empty Turbo credit balance clears
+ * when a human tops it up.
  */
 export type FinalizeOutcome = { kind: 'done' } | { kind: 'retry'; delaySeconds: number; reason: string }
 
@@ -96,20 +96,20 @@ export async function finalizeQuickMintJob(deps: FinalizeConsumerDeps, quickMint
       // only correct behaviour is to keep waiting for the operator.
       await alert({
         severity: 'low',
-        title: 'Quick mint waiting on Irys balance',
+        title: 'Quick mint waiting on Turbo credit balance',
         description:
-          'A paid quick mint cannot finalize until the Irys balance is topped up. It will retry automatically.',
+          'A paid quick mint cannot finalize until the Turbo credit balance is topped up. It will retry automatically.',
         fields: [
           { name: 'Asset', value: row.asset_address ?? '—' },
           { name: 'Quick mint', value: row.id },
-          { name: 'Balance', value: `${status.balanceAtomic} atomic` },
-          { name: 'Required', value: `${status.requiredAtomic} atomic` },
+          { name: 'Balance', value: `${status.balanceAtomic} winc` },
+          { name: 'Required', value: `${status.requiredAtomic} winc` },
         ],
       })
       return {
         kind: 'retry',
         delaySeconds: FUNDING_RETRY_DELAY_SECONDS,
-        reason: `Irys balance insufficient (have ${status.balanceAtomic}, need ${status.requiredAtomic})`,
+        reason: `Turbo credit balance insufficient (have ${status.balanceAtomic}, need ${status.requiredAtomic})`,
       }
     }
   }
