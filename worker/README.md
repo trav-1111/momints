@@ -274,10 +274,9 @@ prints, or logs key material.
 Pending TODOs in code: `ROLL_FEE_LAMPORTS_12/24` and `QUICK_MINT_FEE_LAMPORTS`
 (candidate re-derived numbers noted in comments — see
 [Fee re-confirmation](#fee-re-confirmation-todo) below, not yet applied),
-`QUICK_PLACEHOLDER_URI` (still the old Irys URI until the operator re-runs
-`scripts/upload-placeholder.mjs`) / `QUICK_TREASURY_ADDRESS`, the D1
-`database_id`, the final base cover artwork (`assets/base-cover.jpg` is a
-placeholder), `AutomatedSink`, `AutomatedFunding`, and the
+`QUICK_TREASURY_ADDRESS`, the D1 `database_id`, the final base cover artwork
+(`assets/base-cover.jpg` is a placeholder), `AutomatedSink`,
+`AutomatedFunding`, and the
 [Turbo credit withdrawability](#open-question-turbo-credit-withdrawability)
 question below.
 

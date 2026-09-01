@@ -49,13 +49,10 @@ crons = ["0 */6 * * *"]
 # Static "developing" metadata every quick mint is minted against before its
 # real image exists. Uploaded ONCE by scripts/upload-placeholder.mjs — permanent
 # and reused forever, so this only changes if the holding artwork changes.
-#
-# TODO (Turbo/Arweave storage swap): this is still the OLD Irys-uploaded
-# placeholder (gateway.irys.xyz — not genuine Arweave, 404s on arweave.net).
-# scripts/upload-placeholder.mjs now uploads via Turbo instead; the operator
-# needs to re-run it once and paste the new https://arweave.net/<id> URI here.
-# verify.ts compares against whatever this var holds, so nothing else changes.
-QUICK_PLACEHOLDER_URI = "https://gateway.irys.xyz/GH6fEJ2DLpGob2mZ2UfxpcsyrURCCfzmak9VEiCkmGDP"
+# Genuine Arweave via Turbo (re-uploaded during the Irys -> Turbo swap; the old
+# gateway.irys.xyz placeholder is retired). verify.ts compares against
+# whatever this var holds, so nothing else needs to change when it's updated.
+QUICK_PLACEHOLDER_URI = "https://arweave.net/JbRjC4JbM7jbNRyiEZO7gj43gbOWBqt-O5RD4oZmCcw"
 # Receives quick-mint fees. MUST match the app's EXPO_PUBLIC_ROLL_TREASURY:
 # the Worker verifies payment to this exact address out of the landed
 # transaction, so a mismatch rejects finalizes the user has already paid for.
