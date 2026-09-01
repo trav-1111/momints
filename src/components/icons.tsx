@@ -149,17 +149,6 @@ export function IconPin(p: IconProps) {
   )
 }
 
-/** Weather — sun behind cloud, mint-form badge. */
-export function IconWeather(p: IconProps) {
-  return (
-    <IconBase {...p}>
-      <Circle cx="8.5" cy="8" r="3" />
-      <Path d="M8.5 1.5v1.7M3 8H1.5M12.4 3.9l-1.1 1.1M4.7 3.9l1.1 1.1M3 12.6l1.1-1.1" />
-      <Path d="M9.5 19.5h7a3 3 0 0 0 .3-6A4.5 4.5 0 0 0 8.5 12a3.3 3.3 0 0 0 1 7.5z" />
-    </IconBase>
-  )
-}
-
 /** Shot on Seeker — phone, mint-form badge. */
 export function IconPhone(p: IconProps) {
   return (

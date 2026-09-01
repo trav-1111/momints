@@ -186,6 +186,35 @@ export class RollDb {
       .first<FrameRow>()
   }
 
+  /**
+   * Claim the mint lock for one frame, atomically. Returns false when another
+   * request already holds a live lock (younger than `staleSeconds`) — the
+   * caller must refuse rather than race it. A lock older than that is treated
+   * as abandoned (the holder crashed or hit the Workers CPU limit) and can be
+   * reclaimed, so a genuinely dead request can never wedge a frame forever.
+   */
+  async claimFrameLock(collectionAddress: string, frameIndex: number, staleSeconds: number): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `INSERT INTO frame_locks (collection_address, frame_index, locked_at)
+         VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         ON CONFLICT (collection_address, frame_index) DO UPDATE SET
+           locked_at = excluded.locked_at
+         WHERE frame_locks.locked_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?)`,
+      )
+      .bind(collectionAddress, frameIndex, `-${staleSeconds} seconds`)
+      .run()
+    return (result.meta.changes ?? 0) > 0
+  }
+
+  /** Release a frame's mint lock. Safe to call even if never claimed. */
+  async releaseFrameLock(collectionAddress: string, frameIndex: number): Promise<void> {
+    await this.db
+      .prepare('DELETE FROM frame_locks WHERE collection_address = ? AND frame_index = ?')
+      .bind(collectionAddress, frameIndex)
+      .run()
+  }
+
   async listFrames(collectionAddress: string): Promise<FrameRow[]> {
     const result = await this.db
       .prepare('SELECT * FROM frames WHERE collection_address = ? ORDER BY frame_index')
@@ -212,8 +241,8 @@ export class RollDb {
            status = excluded.status,
            image_uri = COALESCE(excluded.image_uri, frames.image_uri),
            metadata_uri = COALESCE(excluded.metadata_uri, frames.metadata_uri),
-           asset_address = excluded.asset_address,
-           mint_signature = excluded.mint_signature,
+           asset_address = COALESCE(excluded.asset_address, frames.asset_address),
+           mint_signature = COALESCE(excluded.mint_signature, frames.mint_signature),
            updated_at = excluded.updated_at`,
       )
       .bind(
