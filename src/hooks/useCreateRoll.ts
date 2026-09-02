@@ -6,7 +6,7 @@ import { createWorkerRoll, getOpenWorkerRoll, RollApiError } from '../services/r
 import { categorizeError } from './useMint'
 import { useRollRegistry } from '../store/rollRegistry'
 import { useSessionStore, type FilmSettings, type AspectRatio } from '../store/session'
-import { useNetworkStore, getClusterRpc } from '../store/network'
+import { getClusterRpc } from '../store/network'
 import { localDateLabel } from '../config/rollApi'
 import type { PrepaidRollSize } from '../config/roll'
 
@@ -41,7 +41,6 @@ interface CreatedRoll {
  */
 export function useCreateRoll() {
   const { account, client, signTransaction } = useMobileWallet()
-  const cluster = useNetworkStore((s) => s.cluster)
   const [phase, setPhase] = useState<CreateRollPhase | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -57,7 +56,7 @@ export function useCreateRoll() {
       // address otherwise — never the user-editable display name.
       const skrIdentity = opts.skrHandle ?? walletAddress
       const artist = sanitizeArtistName(opts.artist) || skrIdentity
-      const rpc = getClusterRpc(cluster)
+      const rpc = getClusterRpc()
 
       setError(null)
       try {
@@ -124,7 +123,7 @@ export function useCreateRoll() {
         setPhase(null)
       }
     },
-    [account, client, signTransaction, cluster],
+    [account, client, signTransaction],
   )
 
   return { createRoll, phase, error, isCreating: phase !== null }

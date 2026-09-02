@@ -34,7 +34,6 @@ import { ensureUnderCeiling } from '../services/compressImage'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useMintRoll } from '../hooks/useMintRoll'
-import { useNetworkStore } from '../store/network'
 import { useSessionStore } from '../store/session'
 import type { AspectRatio } from '../store/session'
 import { useLocationSettingsStore } from '../store/locationSettings'
@@ -115,9 +114,6 @@ export default function CameraScreen() {
 
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
-
-  const cluster = useNetworkStore((s) => s.cluster)
-  const setCluster = useNetworkStore((s) => s.setCluster)
 
   const locationGranularity = useLocationSettingsStore((s) => s.granularity)
   const setLocationGranularity = useLocationSettingsStore((s) => s.setGranularity)
@@ -369,19 +365,6 @@ export default function CameraScreen() {
     }
   }, [disconnect])
 
-  const handleToggleNetwork = useCallback(async () => {
-    setWalletMenuVisible(false)
-    const next = cluster === 'mainnet' ? 'devnet' : 'mainnet'
-    if (account) {
-      try {
-        await disconnect()
-      } catch {
-        // continue regardless
-      }
-    }
-    setCluster(next)
-  }, [cluster, account, disconnect, setCluster])
-
   const handleSelectGranularity = useCallback(
     (next: LocationGranularity) => {
       // Turning it on for the first time (off -> anything else) is the one
@@ -580,9 +563,6 @@ export default function CameraScreen() {
             <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.text }}>
               {formatWalletDisplay(walletAddress, domain)}
             </Text>
-            {cluster === 'devnet' && (
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.yellow }} />
-            )}
           </Pressable>
         ) : (
           <Pressable
@@ -871,37 +851,6 @@ export default function CameraScreen() {
               {walletAddress}
             </Text>
           </View>
-
-          {/* Network Toggle */}
-          <Pressable
-            onPress={handleToggleNetwork}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              paddingHorizontal: 20,
-              paddingVertical: 16,
-              borderBottomWidth: 1,
-              borderBottomColor: colors.border,
-            }}
-          >
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <View
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 4,
-                  backgroundColor: cluster === 'devnet' ? colors.yellow : colors.green,
-                }}
-              />
-              <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>
-                {cluster === 'devnet' ? 'Devnet' : 'Mainnet'}
-              </Text>
-            </View>
-            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accentSoft }}>
-              SWITCH TO {cluster === 'devnet' ? 'MAINNET' : 'DEVNET'}
-            </Text>
-          </Pressable>
 
           {/* Disconnect */}
           <Pressable

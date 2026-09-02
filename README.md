@@ -4,7 +4,7 @@
 
 Momints is a mobile NFT camera app built for the Solana Seeker. Take photos, add metadata, and mint them as Metaplex Core NFTs — either one at a time ("quick shots") or as a prepaid 12/24-exposure roll, both backed by the [roll Worker](worker/README.md).
 
-**Currently devnet only.** The Worker's RPC is wired to devnet; permanent storage writes genuine mainnet Arweave via Turbo regardless — see [worker/README.md](worker/README.md) for the backend and its fee-verification model.
+Runs on Solana **mainnet** — minted assets and fees are real. See [worker/README.md](worker/README.md) for the backend and its fee-verification model.
 
 ## Features
 
@@ -106,12 +106,12 @@ worker/                     # Cloudflare Worker backend — see worker/README.md
 | Camera | react-native-vision-camera |
 | Styling | Tailwind CSS (Uniwind) |
 | State | Zustand |
-| Blockchain | Solana (devnet) |
+| Blockchain | Solana (mainnet) |
 | NFT | Metaplex Core |
 | Storage | Genuine Arweave via Turbo (Worker-side) |
 | Backend | Cloudflare Workers + D1 + R2 + Queues — see [worker/README.md](worker/README.md) |
 | Wallet | Mobile Wallet Adapter (`@wallet-ui/react-native-kit`) |
-| RPC | Configurable via `.env`; the Worker uses its own Helius devnet endpoint |
+| RPC | Configurable via `.env`; the Worker uses its own dedicated mainnet endpoint |
 
 ## Scripts
 
@@ -125,8 +125,8 @@ worker/                     # Cloudflare Worker backend — see worker/README.md
 
 ## Known Limitations
 
-- **Devnet only** — the Worker's RPC is devnet. Do not treat balances, fees, or minted assets as real value. **Storage is the exception:** Turbo has no devnet, so every mint — even in this devnet build — writes real bytes to genuine mainnet Arweave and spends real Turbo credits.
-- **Client-side RPC key** — `EXPO_PUBLIC_SOLANA_RPC` is bundled into the app via `EXPO_PUBLIC_*`, which Expo inlines as plaintext at build time. Fine for a devnet key with a low blast radius; rotate before any wider distribution.
+- **Mainnet — real value.** Balances, fees, and minted assets are real; there is no devnet mode.
+- **Client-side RPC key** — `EXPO_PUBLIC_SOLANA_RPC` is bundled into the app via `EXPO_PUBLIC_*`, which Expo inlines as plaintext at build time. This is now a real mainnet RPC key with real blast radius (rate-limit abuse, quota exhaustion) — pick a provider plan sized for that, and rotate it if it ever leaks.
 - **No on-device fallback** — if `EXPO_PUBLIC_ROLL_API` is unset or the Worker is unreachable, minting fails with a clear error rather than degrading to a different code path.
 
 ## License

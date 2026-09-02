@@ -1,23 +1,23 @@
-// Read-only MAINNET rent read for cost-plus fee pricing (fees/compute.ts).
-// Deliberately MAINNET, not the Worker's own devnet SOLANA_RPC_URL: the
-// SIMD-0437 rent reduction is a mainnet rollout, and Guard 2 validates the
-// read against mainnet's known lamports_per_byte schedule (fees/config.ts) —
-// a devnet read would not track it. Mirrors the read-only approach already
-// proven out in scripts/mainnet-rent-quote.mjs.
+// Read-only mainnet rent read for cost-plus fee pricing (fees/compute.ts).
+// Explicitly mainnet: the SIMD-0437 rent reduction is a mainnet rollout, and
+// Guard 2 validates the read against mainnet's known lamports_per_byte
+// schedule (fees/config.ts). Mirrors the read-only approach already proven
+// out in scripts/mainnet-rent-quote.mjs.
 //
 // Read-only: getAccountInfo on the rent sysvar, no transaction ever sent.
 //
-// KNOWN RISK, not yet resolved: live-tested 2026-09-02, the public
-// api.mainnet-beta.solana.com endpoint 403s ("Your IP or provider is
-// blocked from this endpoint") from at least one cloud/datacenter egress IP
-// — a blanket provider block, not the "SENDS only" behavior env.ts documents
-// for api.devnet.solana.com. Whether Cloudflare Workers' production egress
-// IPs are also blocked is UNCONFIRMED (untested from an actual deployed
-// Worker — see README "Cost-plus fee pricing"). Guard 3 (fees/compute.ts)
-// means this can never break minting even if it fails on every cycle — fees
-// just stay frozen at the last successful compute — but the operator should
-// set SOLANA_RPC_URL_MAINNET to a dedicated provider (e.g. Helius mainnet,
-// same vendor as SOLANA_RPC_URL) rather than trust the public fallback here.
+// `rpcUrlOverride` (the caller passes env.SOLANA_RPC_URL_MAINNET ??
+// env.SOLANA_RPC_URL — see fees/compute.ts) is checked first; DEFAULT_MAINNET_RPC
+// below is the LAST-RESORT fallback only if the caller passes nothing at
+// all. Live-tested 2026-09-02: that public api.mainnet-beta.solana.com
+// endpoint 403s ("Your IP or provider is blocked from this endpoint") from
+// at least one cloud/datacenter egress IP — a blanket provider block, not a
+// "sends only" restriction. Whether Cloudflare Workers' production egress
+// is also blocked is unconfirmed. Guard 3 (fees/compute.ts) means a blocked
+// read can never break minting even if it fails on every cycle — fees just
+// stay frozen at the last successful compute — but in practice this should
+// rarely reach the public fallback at all now that SOLANA_RPC_URL is itself
+// a dedicated mainnet provider.
 import { quickAssetSizeBytes, rentForSize, rollFrameAssetSizeBytes } from './coreSize'
 
 const RENT_SYSVAR_ADDRESS = 'SysvarRent111111111111111111111111111111111'

@@ -237,3 +237,31 @@ model was tuned against the small line and got the big one wrong.
 - **Not done, by design:** no mainnet transaction, no signing, no key access. A
   real mainnet mint (Task 2b) was never needed — 2(a) cross-checks against the
   cluster's own rent answer, which is the same number a mint would have paid.
+
+---
+
+## Resolved (2026-09-02)
+
+Findings #2 and #3 above, and their "What to decide" items #1 and #4, are
+resolved by work merged to `main` this session, ahead of the mainnet cutover
+this document originally fed into:
+
+- **#2 (Arweave vs. Irys L1)** — decided: Turbo (writes genuine Arweave, not
+  Irys L1). See `worker/README.md`'s intro and `ARWEAVE_PATH_OPTIONS.md`.
+- **#3 (basis errors) and the flat fee constants generally** — superseded:
+  fees are no longer flat constants at all. `worker/src/fees/compute.ts`
+  computes both roll and quick-mint fees live from the mainnet rent sysvar
+  (the same read this document's Task 2(a) pioneered) and a live Turbo
+  storage quote, recomputed every 3h, guarded and floor/ceiling-clamped. See
+  `worker/README.md` "Cost-plus fee pricing".
+
+**#1 (SIMD-0437 hasn't started)** stands as an observed fact, not an action
+item — the cost-plus system re-reads the rent sysvar every cycle, so each of
+the five reduction steps reaches live fees automatically as it activates on
+mainnet, no manual re-derivation or redeploy needed.
+
+The "$0.20 SOL / $0.15 SKR" candidate fee constants above are superseded by
+the cost-plus system as well — not applicable now that fees are formula-driven
+rather than flat. The `$0.15` SKR figure and the SKR mint address this
+document independently identified fed directly into the "Pay with $SKR"
+payment feature (`feat/skr-payment`, built after this mainnet cutover).

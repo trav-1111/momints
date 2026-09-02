@@ -48,7 +48,7 @@ import { createWorkerUmi, getWorkerPublicKey } from './solana/client'
 // its own: it is simply "not this one" in scheduled()'s dispatch.
 const FEE_RECOMPUTE_CRON = '0 */3 * * *'
 
-const USAGE = `Momints roll backend (devnet).
+const USAGE = `Momints roll backend.
   GET  /health                          config + D1 reachability
   GET  /funding/status                  Turbo credit balance sufficiency (operator)
   GET  /treasury/status                 accrued fees pending manual conversion (operator)

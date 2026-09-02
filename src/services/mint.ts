@@ -138,7 +138,6 @@ export interface MintNFTParams {
   symbol: string
   walletAddress: string
   rpc?: string
-  cluster?: 'mainnet' | 'devnet'
   onPhase?: MintPhaseCallback
   /** Set for a Worker-backed quick mint: bundles the fee, mints a Core asset. */
   quick?: QuickMintTerms
@@ -211,7 +210,7 @@ function delay(ms: number): Promise<void> {
  * the total stays well inside the shared blockhash's validity window. */
 const SEND_RETRY_BACKOFFS_MS = [400, 800, 1600]
 
-/** Transient throttling from the RPC (the public devnet endpoint rate-limits
+/** Transient throttling from the RPC (a shared/public endpoint rate-limits
  * hard once a chunk sends and polls in parallel) — worth retrying, unlike a
  * malformed transaction or an on-chain failure. */
 function isRateLimitError(err: unknown): boolean {
@@ -247,15 +246,6 @@ async function waitUntilSignatureConfirmed(rpc: Client['rpc'], signature: Signat
     await delay(1000)
   }
   throw new Error('Transaction confirmation timed out')
-}
-
-export function resolveSolanaCluster(runtimeCluster?: 'mainnet' | 'devnet'): 'devnet' | 'mainnet' {
-  if (runtimeCluster) return runtimeCluster
-  const env = process.env.EXPO_PUBLIC_SOLANA_CLUSTER?.toLowerCase()
-  if (env === 'devnet') return 'devnet'
-  const rpc = (process.env.EXPO_PUBLIC_SOLANA_RPC ?? '').toLowerCase()
-  if (rpc.includes('devnet')) return 'devnet'
-  return 'mainnet'
 }
 
 export function createMintUmi(walletAddress: string, rpcOverride?: string): { umi: Umi; walletPk: UmiPublicKey } {
@@ -434,7 +424,7 @@ export interface BatchMintDeps {
  */
 export async function mintNFTBatch(
   items: BatchMintItemParams[],
-  params: Pick<MintNFTParams, 'walletAddress' | 'rpc' | 'cluster' | 'onPhase'> & {
+  params: Pick<MintNFTParams, 'walletAddress' | 'rpc' | 'onPhase'> & {
     /** Per item, the moment its signature exists — before anything is sent. */
     onItemSigned?: (id: string, info: { signature: string; mintAddress: string }) => void
   },
@@ -530,14 +520,10 @@ export async function mintNFTBatch(
   return results
 }
 
-export function getSolscanUrl(signature: string, cluster?: 'mainnet' | 'devnet'): string {
-  const c = resolveSolanaCluster(cluster)
-  const q = c === 'devnet' ? '?cluster=devnet' : ''
-  return `https://solscan.io/tx/${signature}${q}`
+export function getSolscanUrl(signature: string): string {
+  return `https://solscan.io/tx/${signature}`
 }
 
-export function getSolscanNftUrl(mintAddress: string, cluster?: 'mainnet' | 'devnet'): string {
-  const c = resolveSolanaCluster(cluster)
-  const q = c === 'devnet' ? '?cluster=devnet' : ''
-  return `https://solscan.io/token/${mintAddress}${q}`
+export function getSolscanNftUrl(mintAddress: string): string {
+  return `https://solscan.io/token/${mintAddress}`
 }

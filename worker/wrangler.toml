@@ -15,15 +15,16 @@ compatibility_flags = ["nodejs_compat"]
 
 # Secrets (set via `wrangler secret put <NAME>` — wrangler deploy does NOT read
 # .dev.vars; .dev.vars is local-dev only and gitignored):
-#   IRYS_FUNDING_KEY   base58 secret key of the DEVNET funding wallet. Triple
-#                      duty: the Worker's on-chain payer/authority for
-#                      collection creation and frame mints, AND the SolanaSigner
-#                      key that signs every Turbo/Arweave upload. Name kept for
-#                      continuity with the deployed secret — it is no longer
-#                      Irys-specific. Never generated, printed, or logged.
-#   SOLANA_RPC_URL     Helius devnet endpoint. REQUIRED — the public
-#                      api.devnet.solana.com blocks Workers' egress IPs for
-#                      transaction sends. No public fallback exists in code.
+#   IRYS_FUNDING_KEY   base58 secret key of the funding wallet — MAINNET, real
+#                      funds. Triple duty: the Worker's on-chain payer/authority
+#                      for collection creation and frame mints, AND the
+#                      SolanaSigner key that signs every Turbo/Arweave upload.
+#                      Name kept for continuity with the deployed secret — it
+#                      is no longer Irys-specific. Never generated, printed, or
+#                      logged.
+#   SOLANA_RPC_URL     Dedicated mainnet RPC endpoint (e.g. Helius mainnet).
+#                      REQUIRED — public RPC hosts block Workers' egress IPs
+#                      for transaction sends. No public fallback exists in code.
 #   DISCORD_WEBHOOK_URL  Channel webhook for treasury-monitor alerts. Optional:
 #                      without it the monitor still runs and logs, it just
 #                      cannot notify. A secret — never in this file.
@@ -36,19 +37,15 @@ compatibility_flags = ["nodejs_compat"]
 #                      a manual fee recompute — not for a public URL). All
 #                      three routes 401 if this is unset. Any random string
 #                      works, e.g. `openssl rand -hex 32`.
-#   SOLANA_RPC_URL_MAINNET  Optional but RECOMMENDED. MAINNET RPC for the
-#                      cost-plus fee recompute's read-only rent-sysvar read
-#                      (src/fees/rent.ts) — separate from SOLANA_RPC_URL
-#                      above, which is devnet. Falls back to the public
-#                      api.mainnet-beta.solana.com, but that endpoint was
-#                      live-tested 2026-09-02 to 403 ("Your IP or provider is
-#                      blocked") from at least one cloud egress IP — whether
-#                      Workers' production egress is also blocked is
-#                      UNCONFIRMED. Guard 3 means a blocked read never breaks
-#                      minting (fees just stay frozen at the last successful
-#                      compute), but set this to a dedicated provider (e.g.
-#                      Helius mainnet) before trusting the recompute to
-#                      actually run. See worker/README.md "Cost-plus fee
+#   SOLANA_RPC_URL_MAINNET  Optional override for the cost-plus fee
+#                      recompute's read-only rent-sysvar read (src/fees/rent.ts)
+#                      — falls back to SOLANA_RPC_URL above (both are mainnet
+#                      now) and, last resort, the public
+#                      api.mainnet-beta.solana.com, which was live-tested
+#                      2026-09-02 to 403 ("Your IP or provider is blocked")
+#                      from at least one cloud egress IP. Set this only if you
+#                      want the rent read on a DIFFERENT provider than
+#                      SOLANA_RPC_URL. See worker/README.md "Cost-plus fee
 #                      pricing".
 
 # Treasury monitor (src/ops/monitor.ts): reads the Turbo credit balance and

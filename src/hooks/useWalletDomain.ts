@@ -9,11 +9,10 @@ const TLD_PRIORITY = ['.skr', '.sol', '.abc', '.bonk', '.poor', '.gm']
 // Only cache successful lookups — failures retry on next render
 const domainCache = new Map<string, string>()
 
-// Singleton TldParser pointing at mainnet (domains live on mainnet regardless of app cluster)
 let _parser: TldParser | null = null
 function getParser(): TldParser {
   if (!_parser) {
-    const rpc = getClusterRpc('mainnet')
+    const rpc = getClusterRpc()
     _parser = new TldParser(new Connection(rpc, 'confirmed'))
   }
   return _parser

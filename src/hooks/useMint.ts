@@ -6,7 +6,7 @@ import { mintNFTBatch, type QuickMintTerms } from '../services/mint'
 import { finalizeQuickMint, releaseQuickStage, stageQuickMint } from '../services/quickMintApi'
 import { mintWorkerFrame, RollApiError } from '../services/rollApi'
 import { clearPendingFinalize, recordPendingFinalize } from '../store/quickFinalize'
-import { useNetworkStore, getClusterRpc } from '../store/network'
+import { getClusterRpc } from '../store/network'
 import type { RollContext } from '../store/mintQueue'
 import type { CaptureMeta } from '../store/photos'
 
@@ -156,8 +156,6 @@ function describeWorkerError(err: unknown): string {
 export function useMint() {
   const { account, client, signTransaction, disconnect } = useMobileWallet()
 
-  const cluster = useNetworkStore((s) => s.cluster)
-
   /**
    * Mint many photos. Per-item progress streams through onItem.
    *
@@ -267,8 +265,7 @@ export function useMint() {
             })),
             {
               walletAddress,
-              rpc: getClusterRpc(cluster),
-              cluster,
+              rpc: getClusterRpc(),
               // Persist before anything is sent: past this point the fee is
               // committed, so the record has to outlive a crash.
               onItemSigned: (photoId, { signature, mintAddress }) => {
@@ -338,7 +335,7 @@ export function useMint() {
 
       return summary
     },
-    [account, client, signTransaction, disconnect, cluster],
+    [account, client, signTransaction, disconnect],
   )
 
   return { mintBatch }

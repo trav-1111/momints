@@ -11,10 +11,10 @@ import {
   SpaceGrotesk_700Bold,
 } from '@expo-google-fonts/space-grotesk'
 import { SpaceMono_400Regular, SpaceMono_700Bold } from '@expo-google-fonts/space-mono'
-import { MobileWalletProvider, createSolanaMainnet, createSolanaDevnet } from '@wallet-ui/react-native-kit'
+import { MobileWalletProvider, createSolanaMainnet } from '@wallet-ui/react-native-kit'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { isWorkerRollEnabled } from '../config/rollApi'
-import { useNetworkStore, getClusterRpc } from '../store/network'
+import { getClusterRpc } from '../store/network'
 import { drainPendingFinalizes } from '../store/quickFinalize'
 import { colors } from '../theme'
 
@@ -49,10 +49,9 @@ function useQuickFinalizeDrain(): void {
   }, [])
 }
 
-export default function Layout() {
-  const cluster = useNetworkStore((s) => s.cluster)
-  const rpc = getClusterRpc(cluster)
+const solanaCluster = createSolanaMainnet({ url: getClusterRpc() })
 
+export default function Layout() {
   useQuickFinalizeDrain()
 
   const [fontsLoaded] = useFonts({
@@ -64,8 +63,6 @@ export default function Layout() {
     SpaceMono_700Bold,
   })
 
-  const solanaCluster = cluster === 'devnet' ? createSolanaDevnet({ url: rpc }) : createSolanaMainnet({ url: rpc })
-
   // Hold on a blank brand-dark frame for the moment fonts decode
   if (!fontsLoaded) {
     return <View style={{ flex: 1, backgroundColor: colors.bg }} />
@@ -73,8 +70,7 @@ export default function Layout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      {/* key forces MobileWalletProvider to remount on cluster change */}
-      <MobileWalletProvider key={cluster} cluster={solanaCluster} identity={identity}>
+      <MobileWalletProvider cluster={solanaCluster} identity={identity}>
         <Slot />
       </MobileWalletProvider>
     </GestureHandlerRootView>

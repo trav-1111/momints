@@ -3,10 +3,12 @@
 Single Cloudflare Worker backing the Momints roll feature: prepaid rolls of 12
 or 24 exposures, each roll an immutable Metaplex Core collection, each frame a
 Core asset minted into it, all media on permanent Arweave storage via Turbo.
-Devnet only. No VPS, and no keeper acts on funds — the only scheduled job is
-the read-only [treasury monitor](#treasury-monitor--discord-alerts), which
-watches the Turbo credit balance and pings Discord. Top-ups and conversions
-stay manual operator tasks, listed in the [runbook](#operator-runbook) below.
+Runs on Solana **mainnet** — every mint, fee, and upload is real. No VPS, and
+no keeper acts on funds — the only scheduled jobs are the read-only [treasury
+monitor](#treasury-monitor--discord-alerts), which watches the Turbo credit
+balance and pings Discord, and the [cost-plus fee
+recompute](#cost-plus-fee-pricing). Top-ups and conversions stay manual
+operator tasks, listed in the [runbook](#operator-runbook) below.
 
 The single-Worker shape and the hard constraint this design bends around were
 validated by real spikes — see `../docs/spikes/irys/RESULT2.md` (the funding
@@ -19,13 +21,10 @@ Bundle: Turbo (lean `@dha-team/arbundles`) + mpl-core + umi + photon ≈ 1.15 MB
 gzip (measured via `npm run bundle-size`) vs the 3 MB Free-tier cap (~62%
 headroom) — smaller than the old Irys-based bundle, not bigger.
 
-> **Turbo has no devnet.** Solana minting is devnet-only, but there is no
-> Arweave/Turbo testnet — every upload this Worker makes, even while the app
-> is pointed at Solana devnet, writes real bytes to genuine mainnet Arweave
-> and spends real Turbo credits. This is a change from the old Irys
-> `.devnet()` uploader, which was a Solana-devnet-funded sandbox. Budget test
-> traffic accordingly; there is no free/throwaway storage tier to fall back on
-> beyond Turbo's small-item free allowance (10 MiB lifetime, 105 KiB/item).
+> **Every upload spends real Turbo credits.** There is no free/throwaway
+> storage tier to test against — Arweave/Turbo has no testnet at all — beyond
+> Turbo's small-item free allowance (10 MiB lifetime, 105 KiB/item). Budget
+> test traffic accordingly.
 
 ## The flow
 
@@ -95,13 +94,13 @@ uploads).
    the operator. **The operator keeps the Turbo credit balance topped up ahead
    of demand** (runbook below) until an AutomatedFunding keeper exists (stub
    only).
-2. **Public RPC endpoints are blocked from Workers for transactions.**
-   `api.devnet.solana.com` 403s Workers' egress IPs on sends (reads succeed,
-   masking it). `SOLANA_RPC_URL` (Helius devnet) is a required secret; if it is
-   unset — or points at a public endpoint — every request fails fast with a
-   clear error. There is no public fallback in code, deliberately. (Turbo's own
-   HTTP API needs no RPC at all — signing and uploading are pure HTTP + the
-   funding key.)
+2. **Public RPC endpoints are blocked from Workers for transactions.** Public
+   Solana RPC hosts 403 Workers' egress IPs on sends (reads succeed, masking
+   it). `SOLANA_RPC_URL` (a dedicated mainnet provider, e.g. Helius mainnet)
+   is a required secret; if it is unset — or points at a public endpoint —
+   every request fails fast with a clear error. There is no public fallback in
+   code, deliberately. (Turbo's own HTTP API needs no RPC at all — signing and
+   uploading are pure HTTP + the funding key.)
 
 ## Provider seams
 
@@ -243,17 +242,18 @@ npm install
 wrangler d1 create momints-rolls        # paste the id into wrangler.toml (TODO marker)
 npm run db:migrate:remote               # or db:migrate:local for wrangler dev --local
 
-wrangler secret put IRYS_FUNDING_KEY    # devnet funding wallet, base58 secret key —
-                                         # also the Turbo/Arweave signing key (name kept
-                                         # for continuity; no longer Irys-specific)
-wrangler secret put SOLANA_RPC_URL      # Helius devnet endpoint
+wrangler secret put IRYS_FUNDING_KEY    # funding wallet, base58 secret key — MAINNET, real funds.
+                                         # Also the Turbo/Arweave signing key (name kept for
+                                         # continuity; no longer Irys-specific)
+wrangler secret put SOLANA_RPC_URL      # dedicated mainnet RPC (e.g. Helius mainnet)
 
 wrangler secret put DISCORD_WEBHOOK_URL # optional: treasury-monitor + fee-recompute alert channel
 wrangler secret put OPERATOR_DISCORD_ID # optional: your Discord user ID (@-mention on critical)
 wrangler secret put OPS_AUTH_TOKEN      # gates /ops/status, /ops/test-alert, /ops/recompute-fees
-wrangler secret put SOLANA_RPC_URL_MAINNET  # RECOMMENDED: dedicated mainnet RPC for the cost-plus
-                                         # fee recompute's rent read (see "Cost-plus fee pricing") —
-                                         # the public fallback is known to block some cloud egress IPs
+wrangler secret put SOLANA_RPC_URL_MAINNET  # optional: use a DIFFERENT mainnet RPC than
+                                         # SOLANA_RPC_URL just for the cost-plus fee recompute's
+                                         # rent read (see "Cost-plus fee pricing") — falls back to
+                                         # SOLANA_RPC_URL itself if unset
 
 # Quick-mint infrastructure (Workers PAID plan — Queues is not on Free)
 wrangler queues create momints-quick-finalize
@@ -372,8 +372,8 @@ constants even though both start at 1.7× so they can diverge later.
 - **Rent** — a read-only mainnet rent-sysvar read (`src/fees/rent.ts`, the
   same approach as `scripts/mainnet-rent-quote.mjs`), sized against a real
   Core-asset byte model (`src/fees/coreSize.ts`, ported from that same
-  script). Deliberately MAINNET, not the Worker's own devnet
-  `SOLANA_RPC_URL` — SIMD-0437 is a mainnet rollout.
+  script). Uses `SOLANA_RPC_URL_MAINNET` if set, else the Worker's own
+  `SOLANA_RPC_URL` (both mainnet) — see "Setup" above.
 - **Storage** — Turbo's live quote for one `ESTIMATED_FRAME_BYTES` (3 MiB)
   ceiling image, converted from winc to lamports using Turbo's own live
   SOL→credit exchange rate (`GET /v1/price/solana/<lamports>`, net of Turbo's
@@ -425,15 +425,13 @@ curl -H "Authorization: Bearer $OPS_AUTH_TOKEN" "$WORKER_URL/ops/recompute-fees"
 
 `/ops/recompute-fees` returns `{ ok, note, fees?, alertNotes }` — `note`
 explains exactly what happened (inputs read, any clamp, any large move), even
-on failure. **KNOWN RISK, live-tested 2026-09-02 and not yet resolved:** the
-public `api.mainnet-beta.solana.com` fallback for the rent read 403s ("Your IP
-or provider is blocked") from at least one cloud egress IP; whether Workers'
-production egress is also blocked is unconfirmed. Guard 3 means this can never
-break minting even if it fails every cycle — fees just stay frozen at the last
-successful compute (or the migration's bootstrap seed, before the first one) —
-but set `SOLANA_RPC_URL_MAINNET` to a dedicated provider (e.g. Helius mainnet,
-same vendor as `SOLANA_RPC_URL`) before relying on the recompute actually
-running in production.
+on failure. The rent read now falls back to `SOLANA_RPC_URL` (a dedicated
+mainnet provider, per the mainnet cutover) before ever touching the public
+`api.mainnet-beta.solana.com` endpoint — live-tested 2026-09-02, that public
+endpoint alone 403s ("Your IP or provider is blocked") from at least one cloud
+egress IP, so it stays a last resort, not something to rely on directly. Guard
+3 means a blocked read can never break minting regardless — fees just stay
+frozen at the last successful compute.
 
 ### Treasury monitor — Discord alerts
 
