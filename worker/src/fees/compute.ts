@@ -145,7 +145,9 @@ export async function runFeeRecompute(deps: FeeRecomputeDeps): Promise<FeeRecomp
   let solUsd: number
   try {
     const [rent, price, rate, usd] = await Promise.all([
-      readMainnetRent(env.SOLANA_RPC_URL_MAINNET),
+      // SOLANA_RPC_URL is itself mainnet now — a strictly-better fallback
+      // than the public endpoint rent.ts falls back to as a last resort.
+      readMainnetRent(env.SOLANA_RPC_URL_MAINNET ?? env.SOLANA_RPC_URL),
       turbo.priceForBytes(ESTIMATED_FRAME_BYTES),
       turbo.quoteWincForLamports(RATE_REFERENCE_LAMPORTS),
       fetchSolUsd(),

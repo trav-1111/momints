@@ -14,34 +14,35 @@ export interface Env {
    */
   QUICK_FINALIZE: Queue<QuickFinalizeMessage>
   /**
-   * Base58 secret key of the DEVNET funding wallet (Worker Secret). Triple
-   * duty: the Worker's on-chain payer/authority for collection creation and
-   * frame mints, AND the `SolanaSigner` key that signs every ANS-104 data
-   * item uploaded to Turbo (see providers/turboClient.ts) — one wallet funds
-   * and signs, same as it did for Irys. Name kept for continuity with the
-   * secret already set in the deployed Worker; never generated, printed, or
-   * logged by this codebase.
+   * Base58 secret key of the funding wallet (Worker Secret) — MAINNET, real
+   * funds. Triple duty: the Worker's on-chain payer/authority for collection
+   * creation and frame mints, AND the `SolanaSigner` key that signs every
+   * ANS-104 data item uploaded to Turbo (see providers/turboClient.ts) — one
+   * wallet funds and signs, same as it did for Irys. Name kept for
+   * continuity with the secret already set in the deployed Worker; never
+   * generated, printed, or logged by this codebase.
    */
   IRYS_FUNDING_KEY?: string
   /**
-   * Helius devnet RPC endpoint (Worker Secret). REQUIRED — the public
-   * `api.devnet.solana.com` returns 403 to Workers' egress IPs when SENDING
-   * transactions (read-only calls succeed, which masks the problem). There is
-   * deliberately no public-endpoint fallback anywhere in this Worker.
+   * Mainnet RPC endpoint (Worker Secret). REQUIRED — public RPC hosts return
+   * 403 to Workers' egress IPs when SENDING transactions (read-only calls
+   * succeed, which masks the problem). There is deliberately no
+   * public-endpoint fallback anywhere in this Worker. Use a dedicated
+   * provider (e.g. Helius mainnet).
    */
   SOLANA_RPC_URL?: string
   /**
-   * MAINNET RPC endpoint for the cost-plus fee recompute's read-only rent
-   * sysvar read (fees/rent.ts) — deliberately separate from SOLANA_RPC_URL
-   * above, which is devnet. Optional: falls back to the public
-   * api.mainnet-beta.solana.com (same default scripts/mainnet-rent-quote.mjs
-   * uses). RECOMMENDED, not just an optimization: live-tested 2026-09-02,
-   * that public endpoint 403s ("Your IP or provider is blocked") from at
-   * least one cloud egress IP — whether Workers' production egress is also
-   * blocked is unconfirmed. Guard 3 means a blocked read never breaks
-   * minting (fees just stay frozen at the last successful compute), but set
-   * this to a dedicated provider (e.g. Helius mainnet) rather than rely on
-   * the public fallback actually working.
+   * Optional override for the cost-plus fee recompute's read-only mainnet
+   * rent-sysvar read (fees/rent.ts). Falls back to SOLANA_RPC_URL above (both
+   * are mainnet now, so that already-configured private RPC is a
+   * strictly-better fallback than the public endpoint below it) and, last
+   * resort, the public api.mainnet-beta.solana.com — live-tested
+   * 2026-09-02, that public endpoint 403s ("Your IP or provider is blocked")
+   * from at least one cloud egress IP, so it is genuinely last-resort, not a
+   * default to rely on. Guard 3 means a blocked read never breaks minting
+   * (fees just stay frozen at the last successful compute) regardless. Set
+   * this only if you want the rent read on a DIFFERENT provider than
+   * SOLANA_RPC_URL (e.g. to keep it off the same rate limit).
    */
   SOLANA_RPC_URL_MAINNET?: string
   /** Optional: 'turbo' (default, genuine Arweave, permanent) or 'pinata' (TEST-ONLY). */
@@ -106,16 +107,16 @@ const PUBLIC_RPC_HOSTS = ['api.devnet.solana.com', 'api.mainnet-beta.solana.com'
 export function validateEnv(env: Env): ValidatedEnv {
   if (!env.SOLANA_RPC_URL) {
     throw new ConfigError(
-      'SOLANA_RPC_URL secret is not set. Set it to a Helius devnet endpoint with ' +
+      'SOLANA_RPC_URL secret is not set. Set it to a dedicated mainnet RPC endpoint with ' +
         '`wrangler secret put SOLANA_RPC_URL`. There is no public-endpoint fallback: ' +
-        'api.devnet.solana.com blocks Workers from sending transactions.',
+        'public Solana RPC hosts block Workers from sending transactions.',
     )
   }
   const lower = env.SOLANA_RPC_URL.toLowerCase()
   if (PUBLIC_RPC_HOSTS.some((h) => lower.includes(h))) {
     throw new ConfigError(
       `SOLANA_RPC_URL points at a public Solana endpoint (${env.SOLANA_RPC_URL}). Public endpoints ` +
-        'block Cloudflare Workers from sending transactions (403). Use a dedicated provider (Helius devnet).',
+        'block Cloudflare Workers from sending transactions (403). Use a dedicated provider (e.g. Helius mainnet).',
     )
   }
   if (!env.IRYS_FUNDING_KEY) {
