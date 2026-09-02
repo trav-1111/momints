@@ -260,3 +260,25 @@ export interface WorkerRollDetail extends OpenRollSummary {
 export function getWorkerRoll(collectionAddress: string): Promise<WorkerRollDetail> {
   return request<WorkerRollDetail>(`/rolls/${collectionAddress}`, { method: 'GET' }, READ_TIMEOUT_MS)
 }
+
+// ─── Fees ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Cost-plus mint fees (worker/src/fees/compute.ts), recomputed every 3h from
+ * live rent + storage cost. This is the SAME cache the Worker's own
+ * verify.ts checks payment against for a roll — so a roll fee must be
+ * fetched here right before paying (see rollCollection.ts's payRollFee),
+ * never hardcoded or read from a value captured when a screen opened.
+ */
+export interface WorkerFeesResponse {
+  quickFeeLamports: number
+  rollFee12Lamports: number
+  rollFee24Lamports: number
+  computedAt: string
+  lastGood: boolean
+  skrTargetUsd: { quick: number | null; roll12: number | null; roll24: number | null }
+}
+
+export function getWorkerFees(): Promise<WorkerFeesResponse> {
+  return request<WorkerFeesResponse>('/fees', { method: 'GET' }, READ_TIMEOUT_MS)
+}

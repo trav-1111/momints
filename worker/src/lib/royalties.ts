@@ -2,9 +2,9 @@ import { ruleSet } from '@metaplex-foundation/mpl-core'
 import type { PublicKey } from '@metaplex-foundation/umi'
 
 // Momints earns on the mint fee, not on secondary sales. 100% of the royalty
-// goes to the shooter; there is no platform cut. This is a DECIDED value, not
-// a placeholder — unlike QUICK_MINT_FEE_LAMPORTS and ROLL_FEE_LAMPORTS_* in
-// rolls/config.ts, do not fold this into a future pricing pass without a
+// goes to the shooter; there is no platform cut. This is a DECIDED, FIXED
+// value — unlike the mint fees themselves (fees/compute.ts, cost-plus and
+// recomputed every 3h), do not fold this into a future pricing pass without a
 // deliberate discussion first.
 export const ROYALTY_BASIS_POINTS = 500 // 5%
 

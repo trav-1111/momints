@@ -116,6 +116,31 @@ export class TurboClient {
   }
 
   /**
+   * Live SOL -> winc exchange rate, net of Turbo's own fee: winc a real
+   * top-up of `lamports` SOL would actually credit. Verified against the live
+   * API (2026-09-02): `/v1/price/solana/<lamports>` returns `{winc, fees,
+   * actualPaymentAmount}`, where `winc` is already net of the "Turbo
+   * Infrastructure Fee" multiply-adjustment — the same number a real top-up
+   * receives, not the raw pre-fee conversion. Used by fees/compute.ts to
+   * convert a storage quote (winc) into lamports without needing any external
+   * AR/USD or SOL/USD price feed: this IS the operator's real cost basis for
+   * acquiring that winc.
+   */
+  async quoteWincForLamports(lamports: bigint): Promise<bigint> {
+    const res = await fetch(`${TURBO_PAYMENT}/price/solana/${lamports}`, {
+      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
+    })
+    if (!res.ok) {
+      throw new Error(`Turbo SOL exchange-rate lookup failed: ${res.status} ${(await safeText(res)).slice(0, 300)}`)
+    }
+    const body = (await res.json()) as { winc?: string }
+    if (!body.winc) {
+      throw new Error('Turbo SOL exchange-rate response had no winc field')
+    }
+    return BigInt(body.winc)
+  }
+
+  /**
    * Current spendable Turbo credit balance (winc) for the signing wallet.
    *
    * A wallet that has never funded Turbo credits returns 404 "User Not Found"

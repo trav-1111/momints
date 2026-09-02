@@ -30,6 +30,20 @@ export interface Env {
    * deliberately no public-endpoint fallback anywhere in this Worker.
    */
   SOLANA_RPC_URL?: string
+  /**
+   * MAINNET RPC endpoint for the cost-plus fee recompute's read-only rent
+   * sysvar read (fees/rent.ts) — deliberately separate from SOLANA_RPC_URL
+   * above, which is devnet. Optional: falls back to the public
+   * api.mainnet-beta.solana.com (same default scripts/mainnet-rent-quote.mjs
+   * uses). RECOMMENDED, not just an optimization: live-tested 2026-09-02,
+   * that public endpoint 403s ("Your IP or provider is blocked") from at
+   * least one cloud egress IP — whether Workers' production egress is also
+   * blocked is unconfirmed. Guard 3 means a blocked read never breaks
+   * minting (fees just stay frozen at the last successful compute), but set
+   * this to a dedicated provider (e.g. Helius mainnet) rather than rely on
+   * the public fallback actually working.
+   */
+  SOLANA_RPC_URL_MAINNET?: string
   /** Optional: 'turbo' (default, genuine Arweave, permanent) or 'pinata' (TEST-ONLY). */
   STORAGE_PROVIDER?: string
   /** Optional: Pinata JWT — only needed for the TEST-ONLY Pinata fallback. */

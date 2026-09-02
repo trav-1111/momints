@@ -1,5 +1,5 @@
 import { getTransaction, type ParsedTransaction } from '../solana/confirm'
-import { getRollFeeLamports, type RollSize } from './config'
+import type { RollSize } from './config'
 
 /**
  * Proof that a roll was paid for.
@@ -19,6 +19,17 @@ export interface RollVerifyRequest {
   wallet: string
   treasury: string
   size: RollSize
+  /**
+   * The CURRENT cost-plus roll fee for `size` (fee_cache, read once by the
+   * caller and reused for both this check and the treasury record). Unlike a
+   * quick mint, a roll has no stage step to snapshot a fee at — the app fetches
+   * GET /fees and pays immediately before calling this, so the live-at-verify
+   * value is what the app's payment is checked against. The race this leaves
+   * (a recompute landing in the seconds between the app's fetch and this
+   * request) is the same one the app's "read fees at confirmation" display
+   * rule already minimizes — see README "Cost-plus fee pricing".
+   */
+  requiredLamports: number
 }
 
 /**
@@ -73,7 +84,7 @@ export async function verifyRollFeePayment(rpcUrl: string, req: RollVerifyReques
     return reject(`Transaction ${req.signature} was paid by ${feePayer ?? 'nobody'}, not by ${req.wallet}`)
   }
 
-  const required = getRollFeeLamports(req.size)
+  const required = req.requiredLamports
   const received = lamportsReceived(tx, req.treasury)
   if (received === null) {
     return reject(`Transaction ${req.signature} does not touch the treasury account ${req.treasury}`)
