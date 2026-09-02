@@ -4,8 +4,16 @@ import type { QuickFinalizeMessage } from '../env'
 import { isBase58Address } from '../lib/address'
 import { HttpError } from '../lib/http'
 import type { TreasurySink } from '../providers/types'
-import { QUICK_MINT_FEE_LAMPORTS } from './config'
 import { verifyQuickMintPayment } from './verify'
+
+/**
+ * Fallback for quick_mints rows STAGED before migrations/0007_fee_cache.sql
+ * added fee_lamports_required — those rows have NULL there. Such a row can
+ * only exist in the narrow window right after this feature deploys, and is
+ * expected to finalize (or die) within minutes; this is not a live fee, just
+ * what the flat fee was immediately before the cost-plus swap.
+ */
+const LEGACY_QUICK_FEE_LAMPORTS_FALLBACK = 6_500_000
 
 export interface FinalizeQuickMintRequest {
   stagingKey: string
@@ -94,6 +102,7 @@ export async function finalizeQuickMint(
   }
 
   // ---- Verify the LANDED transaction. Nothing below trusts the request body. ----
+  const requiredLamports = row.fee_lamports_required ?? LEGACY_QUICK_FEE_LAMPORTS_FALLBACK
   const umi = await getUmi()
   const verdict = await verifyQuickMintPayment(umi, rpcUrl, {
     signature: req.signature,
@@ -101,6 +110,7 @@ export async function finalizeQuickMint(
     wallet: row.wallet,
     treasury: treasuryAddress,
     placeholderUri,
+    requiredLamports,
   })
 
   if (!verdict.ok) {
@@ -137,7 +147,7 @@ export async function finalizeQuickMint(
     throw new HttpError(503, `Staged quick mint ${row.id} changed underneath this request — retry.`)
   }
 
-  await treasury.record(QUICK_MINT_FEE_LAMPORTS, {
+  await treasury.record(requiredLamports, {
     kind: 'quick_mint_fee',
     asset: req.assetAddress,
     wallet: row.wallet,

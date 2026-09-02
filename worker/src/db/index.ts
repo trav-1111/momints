@@ -59,6 +59,8 @@ export interface QuickMintRow {
   status: QuickMintStatus
   created_at: string
   finalized_at: string | null
+  /** Fee quoted from fee_cache at STAGE time — see migrations/0007_fee_cache.sql. Null for rows staged before that migration. */
+  fee_lamports_required: number | null
 }
 
 /** A finalize lost the race to claim a signature another row already holds. */
@@ -288,13 +290,15 @@ export class RollDb {
     metadataJson: string
     stagingKey: string
     mime: string
+    /** Fee quoted from fee_cache at stage time — see quick/stage.ts. */
+    feeLamportsRequired: number
   }): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO quick_mints (id, wallet, metadata_json, staging_key, mime, status)
-         VALUES (?, ?, ?, ?, ?, 'STAGED')`,
+        `INSERT INTO quick_mints (id, wallet, metadata_json, staging_key, mime, status, fee_lamports_required)
+         VALUES (?, ?, ?, ?, ?, 'STAGED', ?)`,
       )
-      .bind(quick.id, quick.wallet, quick.metadataJson, quick.stagingKey, quick.mime)
+      .bind(quick.id, quick.wallet, quick.metadataJson, quick.stagingKey, quick.mime, quick.feeLamportsRequired)
       .run()
   }
 

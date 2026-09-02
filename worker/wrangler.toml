@@ -30,11 +30,26 @@ compatibility_flags = ["nodejs_compat"]
 #   OPERATOR_DISCORD_ID  Operator's Discord user ID, @-mentioned on CRITICAL
 #                      alerts only. Low sensitivity, but kept a secret for
 #                      consistency; critical alerts still post without it.
-#   OPS_AUTH_TOKEN     Bearer token gating GET /ops/status and GET
-#                      /ops/test-alert (funding-wallet internals + a Discord
-#                      post trigger — not for a public URL). Both routes 401
-#                      if this is unset. Any random string works, e.g.
-#                      `openssl rand -hex 32`.
+#   OPS_AUTH_TOKEN     Bearer token gating GET /ops/status, GET
+#                      /ops/test-alert, and GET /ops/recompute-fees
+#                      (funding-wallet internals + a Discord post trigger +
+#                      a manual fee recompute — not for a public URL). All
+#                      three routes 401 if this is unset. Any random string
+#                      works, e.g. `openssl rand -hex 32`.
+#   SOLANA_RPC_URL_MAINNET  Optional but RECOMMENDED. MAINNET RPC for the
+#                      cost-plus fee recompute's read-only rent-sysvar read
+#                      (src/fees/rent.ts) — separate from SOLANA_RPC_URL
+#                      above, which is devnet. Falls back to the public
+#                      api.mainnet-beta.solana.com, but that endpoint was
+#                      live-tested 2026-09-02 to 403 ("Your IP or provider is
+#                      blocked") from at least one cloud egress IP — whether
+#                      Workers' production egress is also blocked is
+#                      UNCONFIRMED. Guard 3 means a blocked read never breaks
+#                      minting (fees just stay frozen at the last successful
+#                      compute), but set this to a dedicated provider (e.g.
+#                      Helius mainnet) before trusting the recompute to
+#                      actually run. See worker/README.md "Cost-plus fee
+#                      pricing".
 
 # Treasury monitor (src/ops/monitor.ts): reads the Turbo credit balance and
 # posts a Discord alert when the funding severity level CHANGES. READ-ONLY —
@@ -42,8 +57,18 @@ compatibility_flags = ["nodejs_compat"]
 # alert can be: at 6h the operator hears about a crossing within 6 hours of it
 # happening, which the generous roll-headroom thresholds are sized around.
 # TODO tune cadence alongside ALERT_THRESHOLD_* in src/ops/monitor.ts.
+#
+# Cost-plus fee recompute (src/fees/compute.ts): reads live mainnet rent +
+# Turbo storage cost and re-prices quick/roll12/roll24, cached in D1
+# (fee_cache) so the mint flow never computes live. A SEPARATE cron from the
+# treasury monitor above on purpose (see src/index.ts's scheduled() dispatch,
+# keyed on the exact cron string below) — fee logic and funding-alert logic
+# stay independent; one being slow or stuck never delays the other. 3h is
+# fast enough that a SIMD-0437 rent-reduction step (see src/fees/config.ts)
+# reaches live fees same-day without being so frequent that Guard 4's
+# large-move alert fires on noise.
 [triggers]
-crons = ["0 */6 * * *"]
+crons = ["0 */6 * * *", "0 */3 * * *"]
 
 [vars]
 # Static "developing" metadata every quick mint is minted against before its

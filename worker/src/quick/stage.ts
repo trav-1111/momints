@@ -1,14 +1,11 @@
 import type { RollDb } from '../db'
+import { ConfigError } from '../env'
+import type { FeeCache } from '../fees/cache'
 import { isBase58Address } from '../lib/address'
 import { HttpError } from '../lib/http'
 import { sanitizeAttributes, sanitizeText, type MetadataAttribute } from '../lib/sanitize'
 import { ALLOWED_MIME } from '../rolls/config'
-import {
-  MAX_QUICK_IMAGE_BYTES,
-  MAX_STAGES_PER_WALLET_PER_DAY,
-  QUICK_MINT_FEE_LAMPORTS,
-  stagingKeyFor,
-} from './config'
+import { MAX_QUICK_IMAGE_BYTES, MAX_STAGES_PER_WALLET_PER_DAY, stagingKeyFor } from './config'
 
 /**
  * Metadata as it is stored between stage and finalize.
@@ -41,6 +38,8 @@ export interface StageQuickMintDeps {
   placeholderUri: string
   treasury: string
   workerPubkey: string
+  /** Cost-plus fee cache (fees/cache.ts) — quoted here and PERSISTED, so finalize verifies against this exact quote, never a live re-read. */
+  feeCache: FeeCache
 }
 
 export interface ReleaseQuickStageResult {
@@ -158,7 +157,7 @@ export async function stageQuickMint(
   deps: StageQuickMintDeps,
   req: StageQuickMintRequest,
 ): Promise<StageQuickMintResult> {
-  const { db, bucket, placeholderUri, treasury, workerPubkey } = deps
+  const { db, bucket, placeholderUri, treasury, workerPubkey, feeCache } = deps
 
   if (!isBase58Address(req.wallet)) {
     throw new HttpError(400, 'wallet must be a base58 Solana address')
@@ -181,6 +180,17 @@ export async function stageQuickMint(
 
   const metadata = whitelistMetadata(req.metadata, req.wallet)
 
+  // Quote and PERSIST the fee now — finalize verifies payment against exactly
+  // this number (quick_mints.fee_lamports_required), never a live re-read of
+  // fee_cache. Cost-plus fees recompute every 3h; without pinning the quote at
+  // stage time, a recompute landing between staging and the user's wallet
+  // signing could reject a payment for a price that already moved.
+  const feeCacheRow = await feeCache.get()
+  if (!feeCacheRow) {
+    throw new ConfigError('fee_cache has no row — re-run migrations (0007_fee_cache.sql seeds it).')
+  }
+  const feeLamports = feeCacheRow.quickFeeLamports
+
   const since = new Date(Date.now() - DAY_MS).toISOString()
   const staged = await db.countQuickStagesSince(req.wallet, since)
   if (staged >= MAX_STAGES_PER_WALLET_PER_DAY) {
@@ -202,6 +212,7 @@ export async function stageQuickMint(
       metadataJson: JSON.stringify(metadata),
       stagingKey: key,
       mime: req.mime,
+      feeLamportsRequired: feeLamports,
     })
   } catch (err) {
     // No row means nothing will ever finalize or sweep this object — delete it
@@ -213,7 +224,7 @@ export async function stageQuickMint(
   return {
     stagingKey: id,
     placeholderUri,
-    feeLamports: QUICK_MINT_FEE_LAMPORTS,
+    feeLamports,
     treasury,
     updateAuthority: workerPubkey,
     maxImageBytes: MAX_QUICK_IMAGE_BYTES,

@@ -38,7 +38,9 @@ headroom) — smaller than the old Irys-based bundle, not bigger.
    wallet-signed transfer to `QUICK_TREASURY_ADDRESS` *before* calling this
    endpoint (`payRollFee` in the app) and sends back the landed `feeSignature`.
    `feeSignature` is REQUIRED; the Worker fetches that transaction and checks
-   it paid at least `getRollFeeLamports(size)` from `wallet` to the treasury
+   it paid at least the current cost-plus fee for `size` — read once from
+   `fee_cache` (see [Cost-plus fee pricing](#cost-plus-fee-pricing)) and reused
+   for both this check and the treasury record — from `wallet` to the treasury
    before doing anything else (`rolls/verify.ts`) — nothing the client claims
    is trusted. A signature can only pay for one roll: `rolls.fee_signature` is
    UNIQUE (`migrations/0005_roll_fee_signature.sql`), checked with a friendly
@@ -117,8 +119,10 @@ Roll/mint/cover logic calls only these interfaces (`src/providers/types.ts`):
 GET  /health                       config + D1 reachability
 GET  /funding/status               Turbo credit balance vs one typical frame + roll headroom (operator)
 GET  /treasury/status              accrued fees pending manual conversion (operator)
+GET  /fees                         current cost-plus mint fees (quick, roll 12/24) — app fetches this at confirm time
 GET  /ops/status                   monitor's current level, roll headroom, last-alerted state (needs OPS_AUTH_TOKEN)
 GET  /ops/test-alert?severity=…    post a dummy Discord alert: low | critical | healthy (needs OPS_AUTH_TOKEN)
+GET  /ops/recompute-fees           manually run the cost-plus fee recompute (needs OPS_AUTH_TOKEN)
 POST /rolls                        JSON { wallet, size, feeSignature, artist?, skrIdentity?, localDate? }
 GET  /rolls/open?wallet=<address>  the wallet's open roll, if any
 GET  /rolls/<collection>           roll + per-frame checkpoint status
@@ -187,9 +191,14 @@ dead-lettering, and only exhausting `max_retries` moves a job to the DLQ,
 where it becomes a critical Discord ping. The scheduled sweep is the backstop
 for a queue message that was never sent at all.
 
-Pricing lives in `src/quick/config.ts`. `QUICK_MINT_FEE_LAMPORTS` is anchored to
-the `MAX_QUICK_IMAGE_BYTES` ceiling so a large photo can never lose money —
-**keep those two coupled** when tuning either.
+Pricing is cost-plus now (`src/fees/compute.ts` — see [Cost-plus fee
+pricing](#cost-plus-fee-pricing)): the fee quoted at stage time is a live
+Turbo storage quote for `MAX_QUICK_IMAGE_BYTES` (the same byte ceiling that
+bounds what can be staged) times a margin — **keep those two coupled** if the
+ceiling ever changes. The quote is PERSISTED on the `quick_mints` row at stage
+time and finalize verifies against that exact number, never a live re-read —
+fees recompute every 3h, and a payment must never be rejected for a price that
+moved after it was quoted.
 
 ## Roll collection ownership
 
@@ -239,8 +248,12 @@ wrangler secret put IRYS_FUNDING_KEY    # devnet funding wallet, base58 secret k
                                          # for continuity; no longer Irys-specific)
 wrangler secret put SOLANA_RPC_URL      # Helius devnet endpoint
 
-wrangler secret put DISCORD_WEBHOOK_URL # optional: treasury-monitor alert channel
+wrangler secret put DISCORD_WEBHOOK_URL # optional: treasury-monitor + fee-recompute alert channel
 wrangler secret put OPERATOR_DISCORD_ID # optional: your Discord user ID (@-mention on critical)
+wrangler secret put OPS_AUTH_TOKEN      # gates /ops/status, /ops/test-alert, /ops/recompute-fees
+wrangler secret put SOLANA_RPC_URL_MAINNET  # RECOMMENDED: dedicated mainnet RPC for the cost-plus
+                                         # fee recompute's rent read (see "Cost-plus fee pricing") —
+                                         # the public fallback is known to block some cloud egress IPs
 
 # Quick-mint infrastructure (Workers PAID plan — Queues is not on Free)
 wrangler queues create momints-quick-finalize
@@ -271,9 +284,11 @@ on-chain payer/authority for collection creation and frame mints, and as the
 `SolanaSigner` key that signs every Turbo/Arweave upload; no code generates,
 prints, or logs key material.
 
-Pending TODOs in code: `ROLL_FEE_LAMPORTS_12/24` and `QUICK_MINT_FEE_LAMPORTS`
-(candidate re-derived numbers noted in comments — see
-[Fee re-confirmation](#fee-re-confirmation-todo) below, not yet applied),
+Pending TODOs in code: mint fees are now cost-plus (see [Cost-plus fee
+pricing](#cost-plus-fee-pricing)) rather than a TODO, but
+`SOLANA_RPC_URL_MAINNET` should point at a dedicated mainnet RPC (Helius or
+similar) before trusting the recompute in production — the public fallback is
+known to block at least some cloud egress IPs. Also still pending:
 `QUICK_TREASURY_ADDRESS`, the D1 `database_id`, the final base cover artwork
 (`assets/base-cover.jpg` is a placeholder), `AutomatedSink`,
 `AutomatedFunding`, and the
@@ -329,35 +344,108 @@ to SOL; whether Turbo credits are is not confirmed as of this writing (see
 treasury consideration — don't pre-fund far beyond near-term anticipated
 usage. **Confirm with ArDrive/Turbo support before any large top-up.**
 
-#### Fee re-confirmation (TODO)
+### Cost-plus fee pricing
 
-The Turbo/Arweave swap changed the real storage cost basis underneath
-`ROLL_FEE_LAMPORTS_12/24` and `QUICK_MINT_FEE_LAMPORTS` (their code comments
-in `src/rolls/config.ts` / `src/quick/config.ts` still cite an old devnet Irys
-L1 price, not genuine Arweave cost). Recomputed against real Turbo pricing
-(`ARWEAVE_PATH_OPTIONS.md` "C. Real cost", investigated 2026-08-31 at SOL/USD
-$103.76, AR/USD $2.09) margins come out **healthier**, not thinner:
+Mint fees are no longer flat constants — they are computed from LIVE costs and
+recomputed every 3h, so they track real cost as it moves without a manual
+re-derivation and redeploy. This exists specifically because **SIMD-0437**
+(a Solana rent reduction) is rolling out on mainnet in five gated steps, each
+on an unpredictable date, cutting the rent-exempt-minimum rate
+(`lamports_per_byte`) 90% over the full rollout: `6960 → 6333 → 5080 → 2575 →
+1322 → 696`. A flat fee would need five manual redeploys to track that; cost-
+plus reads live rent and adjusts automatically at each step.
 
-| | Operator cost | Current fee | Margin |
-|---|---|---|---|
-| Roll 12 | $4.7534 | $8.8196 (85,000,000 lamports) | 1.86× |
-| Roll 24 | $9.2276 | $17.1204 (165,000,000 lamports) | 1.86× |
-| Quick mint | $0.1165 | $0.6744 (6,500,000 lamports) | 5.79× |
+**The model** (`src/fees/compute.ts`):
 
-These are candidate numbers only — prices float with AR/SOL, so **re-confirm
-against live rates before treating them as a floor**, and no fee constant was
-changed by this swap.
+```
+quick_fee = storage_cost × 1.7                                   (QUICK_MARGIN)
+roll_fee  = frames × (rent_per_frame + storage_cost) × 1.7        (ROLL_MARGIN)
+```
+
+Two different cost structures because rent is paid by different parties: a
+quick mint is minted by the USER's own wallet, so the operator's cost is
+storage only; a roll frame is minted (and rent-paid) by the WORKER, so its
+cost is rent + storage. Both margins live in `src/fees/config.ts`, separate
+constants even though both start at 1.7× so they can diverge later.
+
+**Live inputs, read once per recompute (never per-mint):**
+- **Rent** — a read-only mainnet rent-sysvar read (`src/fees/rent.ts`, the
+  same approach as `scripts/mainnet-rent-quote.mjs`), sized against a real
+  Core-asset byte model (`src/fees/coreSize.ts`, ported from that same
+  script). Deliberately MAINNET, not the Worker's own devnet
+  `SOLANA_RPC_URL` — SIMD-0437 is a mainnet rollout.
+- **Storage** — Turbo's live quote for one `ESTIMATED_FRAME_BYTES` (3 MiB)
+  ceiling image, converted from winc to lamports using Turbo's own live
+  SOL→credit exchange rate (`GET /v1/price/solana/<lamports>`, net of Turbo's
+  infrastructure fee) — no external AR/USD or SOL/USD feed needed for this
+  conversion; it IS the operator's real cost to acquire that winc.
+
+Computed fees are cached in D1 (`fee_cache`, one row) by a **separate 3-hourly
+Cron Trigger** from the treasury monitor's 6-hourly one (`wrangler.toml
+[triggers]`, dispatched by cron string in `scheduled()`) — fee logic and
+funding-alert logic stay independent on purpose. The mint flow (`rolls/create.ts`,
+`rolls/verify.ts`, `quick/stage.ts`, `quick/verify.ts`) reads that cached row —
+a plain D1 SELECT — and never computes live, so a mint is never blocked on an
+RPC/Turbo/Jupiter read.
+
+**Quick mints snapshot their fee.** `quick/stage.ts` quotes the current fee and
+persists it on the `quick_mints` row; finalize verifies payment against that
+persisted number, never a live re-read — the fee can move between staging an
+image and the wallet landing the payment. **Rolls read the live cache at
+verify time** instead (no stage step to snapshot at) — the app fetches
+`GET /fees` and pays immediately before calling `POST /rolls`, so the race
+this leaves is the same few-second window the app's "read at confirmation"
+display rule already minimizes.
+
+**Guards** (all in `src/fees/compute.ts`):
+
+| Guard | What | On failure |
+|---|---|---|
+| 1. Absolute bounds | Each fee clamped to a USD-intent floor/ceiling (`src/fees/config.ts`: quick $0.05–$1.50, roll 12 $0.50–$25, roll 24 $1–$40), converted to lamports via that cycle's SOL/USD | Clamped to the bound + Discord alert |
+| 2. Input validation | Rent must equal a KNOWN SIMD-0437 value (the baseline or one of the five steps) — a value outside that set is a bad read, not a real step. Storage quote must be in a sane range for the byte size | Whole recompute rejected, last-good kept + Discord alert |
+| 3. Last-good on failure | Any read failure (RPC, Turbo, Jupiter) or a Guard-2 rejection | fee_cache's SERVED columns are never touched — only `last_attempt_*` — so a mint always has a valid cached fee |
+| 4. Large valid move | A fee that passes Guards 1–2 but differs from the last served value by >50% | APPLIED (it's valid) + Discord alert — informational, e.g. "roll fee dropped 47% — SIMD-0437 step likely activated" |
+
+The floor/ceiling bounds are deliberately WIDE: roll fees will fall
+substantially as rent drops (a 24-roll fee could go from ~$15 today toward ~$6
+once rent fully reduces) — a floor above that post-reduction price would keep
+prices artificially high, exactly the failure this feature exists to avoid.
+
+**$SKR discount:** the $SKR payment path is not built yet. `GET /fees` exposes
+`skrTargetUsd` — the cost-plus fee's USD-equivalent at a 25% discount — so a
+future $SKR quote step has a target to Jupiter-quote against; `null` until the
+first live recompute has run.
+
+**Verify it yourself:**
+
+```sh
+curl "$WORKER_URL/fees"                                                    # what's currently served
+curl -H "Authorization: Bearer $OPS_AUTH_TOKEN" "$WORKER_URL/ops/recompute-fees"  # run it now, see the result
+```
+
+`/ops/recompute-fees` returns `{ ok, note, fees?, alertNotes }` — `note`
+explains exactly what happened (inputs read, any clamp, any large move), even
+on failure. **KNOWN RISK, live-tested 2026-09-02 and not yet resolved:** the
+public `api.mainnet-beta.solana.com` fallback for the rent read 403s ("Your IP
+or provider is blocked") from at least one cloud egress IP; whether Workers'
+production egress is also blocked is unconfirmed. Guard 3 means this can never
+break minting even if it fails every cycle — fees just stay frozen at the last
+successful compute (or the migration's bootstrap seed, before the first one) —
+but set `SOLANA_RPC_URL_MAINNET` to a dedicated provider (e.g. Helius mainnet,
+same vendor as `SOLANA_RPC_URL`) before relying on the recompute actually
+running in production.
 
 ### Treasury monitor — Discord alerts
 
 So you find out the Turbo credit balance is running down **on Discord, days
 ahead**, instead of finding out when a user's frame upload 503s.
 
-A Cron Trigger (`[triggers] crons` in `wrangler.toml`, currently **every 6
-hours**) runs `scheduled()` → `src/ops/monitor.ts`. Each run reads the Turbo
-credit balance through the same `FundingProvider` that backs `/funding/status`,
-converts it to **rolls of headroom**, and posts to Discord **only when the
-severity level changes**.
+A Cron Trigger (`[triggers] crons` in `wrangler.toml` — the **6-hourly** one;
+the **3-hourly** entry alongside it is the [cost-plus fee
+recompute](#cost-plus-fee-pricing), a separate job) runs `scheduled()` →
+`src/ops/monitor.ts`. Each run reads the Turbo credit balance through the same
+`FundingProvider` that backs `/funding/status`, converts it to **rolls of
+headroom**, and posts to Discord **only when the severity level changes**.
 
 **It is read-and-notify only.** It never calls `.fund()`, signs, or moves
 anything — that would be `AutomatedFunding`, which deliberately does not exist.

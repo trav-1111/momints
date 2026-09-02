@@ -9,7 +9,7 @@ import { useCreateRoll, type CreateRollPhase } from '../hooks/useCreateRoll'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { PREPAID_ROLL_SIZES, getRollFeeLamports, formatSol, type PrepaidRollSize } from '../config/roll'
 import { isWorkerRollEnabled } from '../config/rollApi'
-import { completeWorkerRoll, getOpenWorkerRoll, type OpenRollSummary } from '../services/rollApi'
+import { completeWorkerRoll, getOpenWorkerRoll, getWorkerFees, type OpenRollSummary } from '../services/rollApi'
 import { ARTIST_NAME_MAX_LENGTH } from '../services/rollIdentity'
 import { colors, fonts, tracking } from '../theme'
 import { IconCamera, IconFilm } from '../components/icons'
@@ -147,6 +147,34 @@ export default function ModeSelectScreen() {
   useEffect(() => {
     refreshStrandedRoll()
   }, [refreshStrandedRoll])
+
+  // Roll fees are cost-plus and recompute every 3h (worker/src/fees/compute.ts)
+  // — fetched here so what's shown before paying tracks the same number
+  // payRollFee will actually pay (it re-fetches at that moment too). Falls
+  // back to the static constants below while this is in flight or if the
+  // Worker is unreachable; never blocks the screen on it.
+  const [liveRollFees, setLiveRollFees] = useState<{ rollFee12Lamports: number; rollFee24Lamports: number } | null>(
+    null,
+  )
+  useEffect(() => {
+    if (!isWorkerRollEnabled()) return
+    let cancelled = false
+    getWorkerFees()
+      .then((fees) => {
+        if (!cancelled) setLiveRollFees(fees)
+      })
+      .catch(() => {
+        // Offline or backend down — the static fallback below still renders a fee.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  const rollFeeLamports = liveRollFees
+    ? rollSize === 12
+      ? liveRollFees.rollFee12Lamports
+      : liveRollFees.rollFee24Lamports
+    : getRollFeeLamports(rollSize)
 
   const handleFinishStranded = useCallback(async () => {
     if (!strandedRoll || isClosingStranded) return
@@ -490,7 +518,7 @@ export default function ModeSelectScreen() {
               </Text>
             </View>
             <Text style={{ fontFamily: fonts.monoBold, fontSize: 13, color: colors.accentSoft }}>
-              {formatSol(getRollFeeLamports(rollSize))}
+              {formatSol(rollFeeLamports)}
             </Text>
           </View>
 
@@ -539,7 +567,7 @@ export default function ModeSelectScreen() {
               }}
             >
               {selectedMode === 'roll' && !hasRoll
-                ? `Pay ${formatSol(getRollFeeLamports(rollSize))} & Load Roll`
+                ? `Pay ${formatSol(rollFeeLamports)} & Load Roll`
                 : 'Load Camera'}
             </Text>
           </>

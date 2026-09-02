@@ -75,7 +75,7 @@ This starts the Expo dev server with cache clearing. The app on your device will
 4. **Confirm** — quick shots ask for one wallet signature (mint + fee together); roll frames mint server-side with no per-frame approval
 5. **Verify** — the app shows a Solscan link after minting; your NFT also appears in your wallet's collectibles
 
-Quick-mint and roll fees are priced from measured on-chain/storage cost, not placeholders — see the cost-basis comments in `src/config/roll.ts` and `worker/src/quick/config.ts`.
+Quick-mint and roll fees are cost-plus: computed from live rent + storage cost and recomputed every 3 hours, so pricing tracks real cost (including Solana's SIMD-0437 rent reduction as it rolls out) without a manual redeploy — see [worker/README.md "Cost-plus fee pricing"](worker/README.md#cost-plus-fee-pricing).
 
 ## Project Structure
 

@@ -11,10 +11,15 @@ export type PrepaidRollSize = 12 | 24
 
 export const PREPAID_ROLL_SIZES: PrepaidRollSize[] = [12, 24]
 
-// DECIDED — not a placeholder. Mirrors worker/src/rolls/config.ts, which has
-// the full cost-basis derivation (measured Core asset + collection rent,
-// measured Arweave storage cost, ~1.4× margin). No shared module between the
-// two projects, so keep this in sync by hand if those numbers ever change.
+// DISPLAY FALLBACK ONLY — not what a roll actually gets charged. Roll fees
+// are cost-plus now (worker/src/fees/compute.ts): the Worker recomputes them
+// every 3h from live rent + storage cost and serves the current numbers from
+// GET /fees. rollCollection.ts's payRollFee() always fetches that live value
+// at payment time; mode-select.tsx does too, for what it displays, falling
+// back to these two constants only while that fetch is in flight or if the
+// device is offline. These are the flat fees that were live immediately
+// before the cost-plus swap — not kept in sync with anything going forward,
+// they just need to be a plausible number for that brief fallback window.
 export const ROLL_FEE_LAMPORTS_12 = 85_000_000 // 0.085 SOL
 export const ROLL_FEE_LAMPORTS_24 = 165_000_000 // 0.165 SOL
 

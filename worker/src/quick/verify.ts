@@ -1,6 +1,5 @@
 import type { Umi } from '@metaplex-foundation/umi'
 import { getTransaction, type ParsedTransaction } from '../solana/confirm'
-import { QUICK_MINT_FEE_LAMPORTS } from './config'
 
 /**
  * Proof that a quick mint was paid for.
@@ -18,6 +17,14 @@ export interface QuickVerifyRequest {
   wallet: string
   treasury: string
   placeholderUri: string
+  /**
+   * The fee QUOTED AT STAGE TIME (quick_mints.fee_lamports_required), never a
+   * live re-read of the fee cache: cost-plus fees recompute every 3h
+   * (fees/compute.ts), and the user paid whatever stage told them — checking
+   * against a value that may have moved since would reject a legitimate
+   * payment for a price that changed out from under it.
+   */
+  requiredLamports: number
 }
 
 /**
@@ -99,8 +106,8 @@ export async function verifyQuickMintPayment(
   if (received === null) {
     return reject(`Transaction ${req.signature} does not touch the treasury account ${req.treasury}`)
   }
-  if (received < QUICK_MINT_FEE_LAMPORTS) {
-    return reject(`Transaction ${req.signature} paid the treasury ${received} lamports, below the ${QUICK_MINT_FEE_LAMPORTS} required`)
+  if (received < req.requiredLamports) {
+    return reject(`Transaction ${req.signature} paid the treasury ${received} lamports, below the ${req.requiredLamports} required`)
   }
 
   // The asset account must be NEW in this transaction. Without this, a wallet

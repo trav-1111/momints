@@ -13,6 +13,9 @@ import {
   type QuickFinalizeMessage,
   type ValidatedEnv,
 } from './env'
+import { FeeCache } from './fees/cache'
+import { runFeeRecompute } from './fees/compute'
+import { SKR_DISCOUNT } from './fees/config'
 import { HttpError, json } from './lib/http'
 import { sanitizeAttributes } from './lib/sanitize'
 import { postDiscordAlert, type AlertSeverity } from './ops/discord'
@@ -39,13 +42,22 @@ import { mintFrame, summarizeFrames } from './rolls/frames'
 import { revokeRollDelegate, revokeRollDelegateSafely } from './rolls/handoff'
 import { createWorkerUmi, getWorkerPublicKey } from './solana/client'
 
+// Must equal one of the strings in wrangler.toml [triggers] crons exactly —
+// scheduled() below uses it to tell the two registered cron schedules apart.
+// The OTHER schedule (treasury monitor + sweeps, every 6h) has no constant of
+// its own: it is simply "not this one" in scheduled()'s dispatch.
+const FEE_RECOMPUTE_CRON = '0 */3 * * *'
+
 const USAGE = `Momints roll backend (devnet).
   GET  /health                          config + D1 reachability
   GET  /funding/status                  Turbo credit balance sufficiency (operator)
   GET  /treasury/status                 accrued fees pending manual conversion (operator)
+  GET  /fees                            current cost-plus mint fees (quick, roll 12/24)
   GET  /ops/status                      treasury monitor: current level, roll headroom, last alert
                                          requires: Authorization: Bearer <OPS_AUTH_TOKEN>
   GET  /ops/test-alert?severity=low     post a dummy Discord alert (low|critical|healthy)
+                                         requires: Authorization: Bearer <OPS_AUTH_TOKEN>
+  GET  /ops/recompute-fees              manually run the cost-plus fee recompute (operator)
                                          requires: Authorization: Bearer <OPS_AUTH_TOKEN>
   POST /rolls                           create a prepaid roll (JSON body)
   GET  /rolls/open?wallet=<address>     the wallet's open roll, if any
@@ -71,12 +83,15 @@ class WorkerContext {
   readonly db: RollDb
   readonly treasury: ManualSink
   readonly opsAlerts: OpsAlertStore
+  /** Cost-plus fee cache (fees/cache.ts) — a plain D1 read, always cheap; never triggers a live recompute. */
+  readonly feeCache: FeeCache
   private uploaderSeams: Promise<{ storage: StorageProvider; funding: FundingProvider }> | null = null
 
   constructor(readonly env: ValidatedEnv) {
     this.db = new RollDb(env.DB)
     this.treasury = new ManualSink(env.DB)
     this.opsAlerts = new OpsAlertStore(env.DB)
+    this.feeCache = new FeeCache(env.DB)
   }
 
   storageSeams(): Promise<{ storage: StorageProvider; funding: FundingProvider }> {
@@ -121,6 +136,7 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
       rpcUrl: ctx.env.SOLANA_RPC_URL,
       treasury: ctx.treasury,
       treasuryAddress: ctx.env.QUICK_TREASURY_ADDRESS,
+      feeCache: ctx.feeCache,
       getUmi: () => createWorkerUmi(ctx.env),
       getSeams: () => ctx.storageSeams(),
     },
@@ -259,6 +275,7 @@ async function handleStageQuickMint(ctx: WorkerContext, request: Request): Promi
       placeholderUri: env.QUICK_PLACEHOLDER_URI,
       treasury: env.QUICK_TREASURY_ADDRESS,
       workerPubkey: getWorkerPublicKey(ctx.env),
+      feeCache: ctx.feeCache,
     },
     {
       wallet,
@@ -427,11 +444,62 @@ async function handleOpsTestAlert(ctx: WorkerContext, url: URL): Promise<Respons
   return json({ severity, delivered: delivery.ok, error: delivery.error ?? null }, delivery.ok ? 200 : 502)
 }
 
+/**
+ * Current cost-plus mint fees, straight off fee_cache — a plain D1 read, never
+ * a live recompute (that only ever happens on the 3-hourly cron or via
+ * GET /ops/recompute-fees). This is what the app calls at mint confirmation
+ * time (README "Cost-plus fee pricing") so the price shown always matches
+ * what verify.ts will actually check.
+ */
+async function handleGetFees(ctx: WorkerContext): Promise<Response> {
+  const row = await ctx.feeCache.get()
+  if (!row) {
+    throw new ConfigError('fee_cache has no row — re-run migrations (0007_fee_cache.sql seeds it).')
+  }
+
+  // $SKR payment path is not built yet (see README) — this exposes the
+  // discounted USD-equivalent TARGET a future $SKR quote step can use, per
+  // the feature spec. Null until the first live recompute has run (needs a
+  // sol_usd_price reading; the bootstrap seed row has none).
+  const skrTargetUsd = (feeLamports: number): number | null => {
+    if (row.solUsdPrice === null) return null
+    const usd = (feeLamports / 1_000_000_000) * row.solUsdPrice
+    return Number((usd * (1 - SKR_DISCOUNT)).toFixed(4))
+  }
+
+  return json({
+    quickFeeLamports: row.quickFeeLamports,
+    rollFee12Lamports: row.rollFee12Lamports,
+    rollFee24Lamports: row.rollFee24Lamports,
+    computedAt: row.computedAt,
+    lastGood: row.lastGood,
+    skrTargetUsd: {
+      quick: skrTargetUsd(row.quickFeeLamports),
+      roll12: skrTargetUsd(row.rollFee12Lamports),
+      roll24: skrTargetUsd(row.rollFee24Lamports),
+    },
+  })
+}
+
+/**
+ * Manually run the cost-plus fee recompute — the GET /ops/test-alert of the
+ * fee system: lets the operator exercise the guards and see a real result
+ * without waiting for the 3-hourly cron. Gated by requireOpsAuth() at the
+ * call site, same as every other /ops route.
+ */
+async function handleOpsRecomputeFees(ctx: WorkerContext): Promise<Response> {
+  const turbo = buildTurboClient(ctx.env)
+  const result = await runFeeRecompute({ env: ctx.env, cache: ctx.feeCache, turbo })
+  return json(result, result.ok ? 200 : 503)
+}
+
 type Route =
   | { kind: 'funding-status' }
   | { kind: 'treasury-status' }
+  | { kind: 'fees' }
   | { kind: 'ops-status' }
   | { kind: 'ops-test-alert' }
+  | { kind: 'ops-recompute-fees' }
   | { kind: 'create-roll' }
   | { kind: 'open-roll' }
   | { kind: 'get-roll'; collection: string }
@@ -446,8 +514,10 @@ type Route =
 function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/funding/status') return { kind: 'funding-status' }
   if (method === 'GET' && path === '/treasury/status') return { kind: 'treasury-status' }
+  if (method === 'GET' && path === '/fees') return { kind: 'fees' }
   if (method === 'GET' && path === '/ops/status') return { kind: 'ops-status' }
   if (method === 'GET' && path === '/ops/test-alert') return { kind: 'ops-test-alert' }
+  if (method === 'GET' && path === '/ops/recompute-fees') return { kind: 'ops-recompute-fees' }
   if (method === 'POST' && path === '/rolls') return { kind: 'create-roll' }
   if (method === 'GET' && path === '/rolls/open') return { kind: 'open-roll' }
   if (method === 'POST' && path === '/quick/stage') return { kind: 'stage-quick' }
@@ -507,12 +577,17 @@ export default {
         }
         case 'treasury-status':
           return json(await ctx.treasury.status())
+        case 'fees':
+          return await handleGetFees(ctx)
         case 'ops-status':
           requireOpsAuth(ctx, request)
           return await handleOpsStatus(ctx)
         case 'ops-test-alert':
           requireOpsAuth(ctx, request)
           return await handleOpsTestAlert(ctx, url)
+        case 'ops-recompute-fees':
+          requireOpsAuth(ctx, request)
+          return await handleOpsRecomputeFees(ctx)
         case 'create-roll':
           return await handleCreateRoll(ctx, request)
         case 'open-roll':
@@ -598,10 +673,12 @@ export default {
   },
 
   /**
-   * Cron entry — schedule lives in wrangler.toml [triggers]. A thin dispatcher
-   * for two independent jobs: the read-only treasury monitor (ops/monitor.ts),
-   * where all the severity/hysteresis logic lives, and the quick-mint sweep
-   * (quick/sweep.ts).
+   * Cron entry — TWO independent schedules live in wrangler.toml [triggers],
+   * dispatched here by `controller.cron`: the fee recompute (fees/compute.ts,
+   * every 3h) and everything below it (treasury monitor + sweeps, every 6h).
+   * They are deliberately separate cron STRINGS, not just separate try/catch
+   * blocks within one run, per the feature spec — a stuck or slow fee
+   * recompute must never delay the funding-alert/sweep cadence or vice versa.
    *
    * READ-AND-NOTIFY ONLY on the funding side. It reads the Turbo credit
    * balance and posts to Discord. It never funds, signs, or moves anything —
@@ -613,10 +690,10 @@ export default {
    * are logged (visible in `wrangler tail` / Workers logs) and the next run
    * retries.
    *
-   * The jobs are isolated from each other on purpose: a monitor failure must
-   * not skip the sweeps, because the quick-mint sweep re-drives paid mints
-   * whose finalize job was never enqueued, and the roll-handoff sweep retries
-   * revokes that failed at completion time.
+   * The jobs below the fee-recompute branch are isolated from EACH OTHER too:
+   * a monitor failure must not skip the sweeps, because the quick-mint sweep
+   * re-drives paid mints whose finalize job was never enqueued, and the
+   * roll-handoff sweep retries revokes that failed at completion time.
    */
   async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
     let ctx: WorkerContext
@@ -627,6 +704,26 @@ export default {
         `[ops] scheduled run (${controller.cron}) could not start:`,
         err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err),
       )
+      return
+    }
+
+    // Must match wrangler.toml [triggers] crons exactly — that array is the
+    // source of truth; this string only decides which job an already-fired
+    // cron runs.
+    if (controller.cron === FEE_RECOMPUTE_CRON) {
+      try {
+        const turbo = buildTurboClient(ctx.env)
+        const result = await runFeeRecompute({ env: ctx.env, cache: ctx.feeCache, turbo })
+        console.log(`[fees] cron ${controller.cron} · recompute ${result.ok ? 'ok' : 'FAILED'} — ${result.note}`)
+        for (const note of result.alertNotes) {
+          console.log(`[fees] cron ${controller.cron} · ${note}`)
+        }
+      } catch (err) {
+        console.error(
+          `[fees] recompute (${controller.cron}) failed:`,
+          err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err),
+        )
+      }
       return
     }
 

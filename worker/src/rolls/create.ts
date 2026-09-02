@@ -1,6 +1,8 @@
 import { generateSigner, publicKey } from '@metaplex-foundation/umi'
 import type { Umi } from '@metaplex-foundation/umi'
 import type { RollDb } from '../db'
+import { ConfigError } from '../env'
+import type { FeeCache } from '../fees/cache'
 import { HttpError } from '../lib/http'
 import { buildNftMetadata } from '../lib/metadata'
 import { royaltiesPlugin } from '../lib/royalties'
@@ -9,7 +11,7 @@ import { withBackoff } from '../lib/retry'
 import type { FundingProvider, StorageProvider, TreasurySink } from '../providers/types'
 import { sendAndConfirm } from '../solana/confirm'
 import { generateCover } from './cover'
-import { estimatedRollBytes, getRollFeeLamports, isRollSize, type RollSize } from './config'
+import { estimatedRollBytes, isRollSize, type RollSize } from './config'
 import { verifyRollFeePayment } from './verify'
 
 export interface CreateRollRequest {
@@ -31,6 +33,8 @@ export interface CreateRollDeps {
   treasury: TreasurySink
   /** Base58 address roll fees must land in. Verified against the landed transaction. */
   treasuryAddress: string
+  /** Cost-plus fee cache (fees/cache.ts) — the current roll_fee_12/24 lamports. */
+  feeCache: FeeCache
   /**
    * Lazy on purpose: umi and the storage/funding seams are only constructed
    * after validation, the single-open-roll check, and fee verification pass,
@@ -71,7 +75,7 @@ function resolveDateLabel(localDate: string | undefined): string {
  * the TreasurySink.
  */
 export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
-  const { db, rpcUrl, treasury, treasuryAddress, getUmi, getSeams } = deps
+  const { db, rpcUrl, treasury, treasuryAddress, feeCache, getUmi, getSeams } = deps
 
   // ---- Validation ----
   if (typeof req.wallet !== 'string' || !BASE58_ADDRESS.test(req.wallet)) {
@@ -116,11 +120,21 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
       `feeSignature ${req.feeSignature} already paid for roll ${alreadyUsed.collection_address} — it cannot pay for a second roll`,
     )
   }
+  // Cost-plus fee (fees/compute.ts), read ONCE and reused below for the
+  // treasury record too, so verification and bookkeeping never disagree
+  // within this one request even if a recompute lands mid-request.
+  const feeCacheRow = await feeCache.get()
+  if (!feeCacheRow) {
+    throw new ConfigError('fee_cache has no row — re-run migrations (0007_fee_cache.sql seeds it).')
+  }
+  const requiredFeeLamports = size === 12 ? feeCacheRow.rollFee12Lamports : feeCacheRow.rollFee24Lamports
+
   const verdict = await verifyRollFeePayment(rpcUrl, {
     signature: req.feeSignature,
     wallet: req.wallet,
     treasury: treasuryAddress,
     size,
+    requiredLamports: requiredFeeLamports,
   })
   if (!verdict.ok) {
     if (verdict.retryable) {
@@ -224,7 +238,7 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
     feeSignature: req.feeSignature,
   })
 
-  const feeLamports = getRollFeeLamports(size)
+  const feeLamports = requiredFeeLamports
   await treasury.record(feeLamports, {
     kind: 'roll_fee',
     collection: collectionAddress,
