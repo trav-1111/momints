@@ -422,18 +422,78 @@ export class RollDb {
   }
 
   /**
-   * Drop a stage that will never be finalized (definitively invalid finalize,
-   * or the orphan sweep). Restricted to STAGED so it can never delete a row
-   * that represents money already taken.
+   * Drop a stage that will never be finalized — the orphan sweep only.
+   * Restricted to STAGED **and signature IS NULL** so it can never delete a
+   * row that represents a finalize attempt: a NULL signature is the only safe
+   * proof nothing was ever submitted for this row. (A row with a recorded
+   * signature but still STAGED is a DEFERRED finalize, not an orphan — see
+   * recordFinalizeAttempt / listDeferredFinalizes — and must never be
+   * silently deleted; that gap was a real incident.)
    */
   async deleteStagedQuickMint(id: string): Promise<void> {
-    await this.db.prepare("DELETE FROM quick_mints WHERE id = ? AND status = 'STAGED'").bind(id).run()
+    await this.db
+      .prepare("DELETE FROM quick_mints WHERE id = ? AND status = 'STAGED' AND signature IS NULL")
+      .bind(id)
+      .run()
   }
 
-  /** Abandoned stages, for the sweep. Nothing here was ever paid for. */
+  /** Abandoned stages, for the sweep. Nothing here was ever paid for — signature IS NULL is what proves that. */
   async listStaleStagedQuickMints(beforeIso: string, limit: number): Promise<QuickMintRow[]> {
     const result = await this.db
-      .prepare("SELECT * FROM quick_mints WHERE status = 'STAGED' AND created_at < ? LIMIT ?")
+      .prepare("SELECT * FROM quick_mints WHERE status = 'STAGED' AND signature IS NULL AND created_at < ? LIMIT ?")
+      .bind(beforeIso, limit)
+      .all<QuickMintRow>()
+    return result.results
+  }
+
+  /**
+   * Record which signature/asset a finalize attempt is FOR, independent of
+   * whether verify ends up succeeding this call. Called unconditionally near
+   * the top of finalizeQuickMint, before verify runs — so even a DEFERRED
+   * finalize (verify says "not visible to the RPC yet", a normal and frequent
+   * event, not a failure) leaves the row discoverable server-side. Before
+   * this existed, a deferral's signature lived only in the calling client's
+   * memory/persisted queue; if that client never successfully called back —
+   * app closed, backgrounded and never reopened, uninstalled — nothing
+   * server-side ever learned what transaction the row was even waiting on,
+   * and a paid, minted asset was permanently stranded on the placeholder with
+   * no alert. That was a real incident, not a hypothetical.
+   *
+   * Idempotent: a row only ever has ONE real attempt in its lifetime (a retry
+   * that might reuse a stale signature goes through checkPriorAttempt
+   * app-side first, which starts a fresh row rather than resubmitting a
+   * different signature against this one) — so the `asset_address IS NULL`
+   * guard makes every call after the first a harmless no-op, and
+   * claimQuickMintForFinalize later just re-writes the same values while
+   * flipping status. Swallows a UNIQUE conflict as DuplicateSignatureError,
+   * same as the claim path — that specific signature already belongs to a
+   * different row.
+   */
+  async recordFinalizeAttempt(id: string, assetAddress: string, signature: string): Promise<void> {
+    try {
+      await this.db
+        .prepare(`UPDATE quick_mints SET asset_address = ?, signature = ? WHERE id = ? AND asset_address IS NULL`)
+        .bind(assetAddress, signature, id)
+        .run()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (message.includes('UNIQUE constraint failed')) {
+        throw new DuplicateSignatureError(message)
+      }
+      throw err
+    }
+  }
+
+  /**
+   * STAGED rows WITH a recorded signature: a finalize was attempted (most
+   * often verify's "not visible to the RPC yet" deferral) but never
+   * completed. Distinct from listStalledFinalizingQuickMints, which only
+   * covers rows that got PAST verify (status FINALIZING) — this covers rows
+   * that never got that far, which used to be invisible to any sweep at all.
+   */
+  async listDeferredFinalizeQuickMints(beforeIso: string, limit: number): Promise<QuickMintRow[]> {
+    const result = await this.db
+      .prepare("SELECT * FROM quick_mints WHERE status = 'STAGED' AND signature IS NOT NULL AND created_at < ? LIMIT ?")
       .bind(beforeIso, limit)
       .all<QuickMintRow>()
     return result.results

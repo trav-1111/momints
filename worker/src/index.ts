@@ -36,7 +36,7 @@ import type { FundingProvider, StorageProvider } from './providers/types'
 import { finalizeQuickMintJob, type AlertFn } from './quick/consumer'
 import { finalizeQuickMint, type FinalizeQuickMintRequest } from './quick/finalize'
 import { releaseQuickStage, stageQuickMint } from './quick/stage'
-import { sweepQuickMints } from './quick/sweep'
+import { redriveDeferredFinalizes, sweepQuickMints } from './quick/sweep'
 import { createRoll, type CreateRollRequest } from './rolls/create'
 import { mintFrame, summarizeFrames } from './rolls/frames'
 import { revokeRollDelegate, revokeRollDelegateSafely } from './rolls/handoff'
@@ -58,6 +58,8 @@ const USAGE = `Momints roll backend.
   GET  /ops/test-alert?severity=low     post a dummy Discord alert (low|critical|healthy)
                                          requires: Authorization: Bearer <OPS_AUTH_TOKEN>
   GET  /ops/recompute-fees              manually run the cost-plus fee recompute (operator)
+                                         requires: Authorization: Bearer <OPS_AUTH_TOKEN>
+  GET  /ops/sweep-quick-mints           manually re-drive deferred quick-mint finalizes (operator)
                                          requires: Authorization: Bearer <OPS_AUTH_TOKEN>
   POST /rolls                           create a prepaid roll (JSON body)
   GET  /rolls/open?wallet=<address>     the wallet's open roll, if any
@@ -493,6 +495,28 @@ async function handleOpsRecomputeFees(ctx: WorkerContext): Promise<Response> {
   return json(result, result.ok ? 200 : 503)
 }
 
+/**
+ * Manually run the deferred-finalize redrive sweep without waiting for the
+ * cron. Same purpose as GET /ops/recompute-fees for the fee system: lets the
+ * operator (or this session, verifying a fix) see a real result on demand.
+ * Requires the quick-mint env — a half-configured quick flow reports that
+ * clearly instead of a confusing failure deeper in.
+ */
+async function handleOpsSweepQuickMints(ctx: WorkerContext): Promise<Response> {
+  const env = validateQuickEnv(ctx.env)
+  const result = await redriveDeferredFinalizes({
+    db: ctx.db,
+    queue: ctx.env.QUICK_FINALIZE,
+    treasury: ctx.treasury,
+    rpcUrl: ctx.env.SOLANA_RPC_URL,
+    placeholderUri: env.QUICK_PLACEHOLDER_URI,
+    treasuryAddress: env.QUICK_TREASURY_ADDRESS,
+    getUmi: () => createWorkerUmi(ctx.env),
+    alert: discordAlerts(ctx.env),
+  })
+  return json(result)
+}
+
 type Route =
   | { kind: 'funding-status' }
   | { kind: 'treasury-status' }
@@ -500,6 +524,7 @@ type Route =
   | { kind: 'ops-status' }
   | { kind: 'ops-test-alert' }
   | { kind: 'ops-recompute-fees' }
+  | { kind: 'ops-sweep-quick-mints' }
   | { kind: 'create-roll' }
   | { kind: 'open-roll' }
   | { kind: 'get-roll'; collection: string }
@@ -518,6 +543,7 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/ops/status') return { kind: 'ops-status' }
   if (method === 'GET' && path === '/ops/test-alert') return { kind: 'ops-test-alert' }
   if (method === 'GET' && path === '/ops/recompute-fees') return { kind: 'ops-recompute-fees' }
+  if (method === 'GET' && path === '/ops/sweep-quick-mints') return { kind: 'ops-sweep-quick-mints' }
   if (method === 'POST' && path === '/rolls') return { kind: 'create-roll' }
   if (method === 'GET' && path === '/rolls/open') return { kind: 'open-roll' }
   if (method === 'POST' && path === '/quick/stage') return { kind: 'stage-quick' }
@@ -588,6 +614,9 @@ export default {
         case 'ops-recompute-fees':
           requireOpsAuth(ctx, request)
           return await handleOpsRecomputeFees(ctx)
+        case 'ops-sweep-quick-mints':
+          requireOpsAuth(ctx, request)
+          return await handleOpsSweepQuickMints(ctx)
         case 'create-roll':
           return await handleCreateRoll(ctx, request)
         case 'open-roll':
@@ -751,6 +780,36 @@ export default {
     } catch (err) {
       console.error(
         `[quick:sweep] scheduled run (${controller.cron}) failed:`,
+        err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err),
+      )
+    }
+
+    // Deferred finalizes (verify said "not visible to the RPC yet") — a
+    // SEPARATE try/catch from the sweep above, deliberately: this is the
+    // recovery path for the real incident that motivated it, so a failure
+    // here must never silently suppress the orphan/stalled sweep or vice
+    // versa. Needs the quick-mint env (placeholder URI, treasury address) —
+    // caught and logged rather than thrown, so a half-configured quick flow
+    // never takes the rest of this cron run down with it.
+    try {
+      const quickEnv = validateQuickEnv(ctx.env)
+      const result = await redriveDeferredFinalizes({
+        db: ctx.db,
+        queue: env.QUICK_FINALIZE,
+        treasury: ctx.treasury,
+        rpcUrl: ctx.env.SOLANA_RPC_URL,
+        placeholderUri: quickEnv.QUICK_PLACEHOLDER_URI,
+        treasuryAddress: quickEnv.QUICK_TREASURY_ADDRESS,
+        getUmi: () => createWorkerUmi(ctx.env),
+        alert: discordAlerts(env),
+      })
+      console.log(
+        `[quick:sweep] deferred finalizes — attempted ${result.attempted}, completed ${result.completed}, ` +
+          `still deferred ${result.stillDeferred}, gave up ${result.gaveUp}`,
+      )
+    } catch (err) {
+      console.error(
+        `[quick:sweep] deferred-finalize redrive (${controller.cron}) failed:`,
         err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err),
       )
     }
