@@ -425,8 +425,13 @@ export interface BatchMintDeps {
 export async function mintNFTBatch(
   items: BatchMintItemParams[],
   params: Pick<MintNFTParams, 'walletAddress' | 'rpc' | 'onPhase'> & {
-    /** Per item, the moment its signature exists — before anything is sent. */
-    onItemSigned?: (id: string, info: { signature: string; mintAddress: string }) => void
+    /**
+     * Per item, the moment its signature exists — before anything is sent.
+     * Awaited before the batch proceeds to send, so a caller that persists a
+     * crash-safety record here (see useMint.ts) is guaranteed that write has
+     * actually happened before any transaction goes out.
+     */
+    onItemSigned?: (id: string, info: { signature: string; mintAddress: string }) => void | Promise<void>
   },
   deps: BatchMintDeps,
   onItemResult?: (result: BatchMintItemResult) => void,
@@ -493,12 +498,18 @@ export async function mintNFTBatch(
   }
 
   if (onItemSigned) {
-    signedTxs.forEach((signedTx, i) => {
-      onItemSigned(items[i].id, {
-        signature: getSignatureFromTransaction(signedTx),
+    // Awaited, deliberately, before anything is sent: a quick mint's
+    // crash-safety record (recordPendingFinalize) is written from here, and
+    // firing this without awaiting it left a real gap — the send could start
+    // (and land, spending the fee) before the persisted record even finished
+    // writing, so an app kill in that window lost the only durable trace that
+    // this mint still needed a finalize call.
+    for (let i = 0; i < signedTxs.length; i++) {
+      await onItemSigned(items[i].id, {
+        signature: getSignatureFromTransaction(signedTxs[i]),
         mintAddress: built[i].mintAddress,
       })
-    })
+    }
   }
 
   onPhase?.('confirming')
