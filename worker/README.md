@@ -122,6 +122,7 @@ GET  /fees                         current cost-plus mint fees (quick, roll 12/2
 GET  /ops/status                   monitor's current level, roll headroom, last-alerted state (needs OPS_AUTH_TOKEN)
 GET  /ops/test-alert?severity=…    post a dummy Discord alert: low | critical | healthy (needs OPS_AUTH_TOKEN)
 GET  /ops/recompute-fees           manually run the cost-plus fee recompute (needs OPS_AUTH_TOKEN)
+GET  /ops/sweep-quick-mints        manually re-drive deferred quick-mint finalizes (needs OPS_AUTH_TOKEN)
 POST /rolls                        JSON { wallet, size, feeSignature, artist?, skrIdentity?, localDate? }
 GET  /rolls/open?wallet=<address>  the wallet's open roll, if any
 GET  /rolls/<collection>           roll + per-frame checkpoint status
@@ -249,7 +250,8 @@ wrangler secret put SOLANA_RPC_URL      # dedicated mainnet RPC (e.g. Helius mai
 
 wrangler secret put DISCORD_WEBHOOK_URL # optional: treasury-monitor + fee-recompute alert channel
 wrangler secret put OPERATOR_DISCORD_ID # optional: your Discord user ID (@-mention on critical)
-wrangler secret put OPS_AUTH_TOKEN      # gates /ops/status, /ops/test-alert, /ops/recompute-fees
+wrangler secret put OPS_AUTH_TOKEN      # gates /ops/status, /ops/test-alert, /ops/recompute-fees,
+                                         # /ops/sweep-quick-mints
 wrangler secret put SOLANA_RPC_URL_MAINNET  # optional: use a DIFFERENT mainnet RPC than
                                          # SOLANA_RPC_URL just for the cost-plus fee recompute's
                                          # rent read (see "Cost-plus fee pricing") — falls back to
@@ -609,16 +611,35 @@ landed). `store/quickFinalize.ts` is the crash-safety backstop underneath
 that: it persists the same signature before the transaction is even sent, and
 retries any entry that never got cleared on every app foreground. The sweep
 and the bucket lifecycle rule reap genuinely-abandoned `STAGED` rows within a
-day. **Known residual risk:** if the app is killed before that persisted entry
-is ever written, or is uninstalled before it's ever drained, a genuinely
-paid-and-minted asset can look identical to an abandoned one from D1's
-perspective, and the orphan sweep will reap the row silently — no alert,
-because nothing was ever claimed to
-alert about. This is now a narrower window than it was (the client awaits the
-crash-safety write before sending, closing the crash-between-sign-and-persist
-race), but it isn't fully closed; if a user reports a mint that never shows up
-anywhere, check `GET /quick/<asset>` first — a 404 there with a real on-chain
-asset is this scenario.
+day — but only rows that never got as far as attempting a finalize, which the
+orphan sweep proves with `signature IS NULL` before it ever deletes anything.
+
+**Deferred finalizes are now recovered server-side, not just client-side**
+(real incident, 2026-09-03: a finalize that DEFERRED — verify said "not
+visible to the RPC yet," a normal, frequent event, never a failure — used to
+leave `asset_address`/`signature` `NULL` forever if the calling client never
+came back, e.g. the app was closed or killed mid-flow. The mint had landed and
+was paid for; nothing server-side knew what transaction to even look for). As
+of this fix, `finalizeQuickMint` calls `recordFinalizeAttempt` and persists
+the signature/asset *before* verify runs, so a deferred row is discoverable
+immediately via `GET /quick/<asset>` even while still `STAGED`. A separate
+scheduled sweep, `redriveDeferredFinalizes`, re-attempts every such row every
+6h independent of the client — 2 minutes after the attempt (so it never races
+a request still in flight) up to 24h, after which it gives up, marks the row
+`DEAD`, and alerts ("Quick mint finalize stuck deferred for 24h+") rather than
+retrying forever. Trigger it on demand:
+
+```sh
+curl -H "Authorization: Bearer $OPS_AUTH_TOKEN" "$WORKER_URL/ops/sweep-quick-mints"
+# { attempted, completed, stillDeferred, gaveUp }
+```
+
+If a user reports a mint that never shows up anywhere, check
+`GET /quick/<asset>` first — a `STAGED` row with a non-null `signature` is
+this scenario, and it will now resolve on its own within a day; a `404` with
+a real on-chain asset means the client never even reached this Worker (there
+is genuinely nothing server-side to recover from, since `recordFinalizeAttempt`
+never ran).
 
 ### Re-driving a stuck roll handoff
 

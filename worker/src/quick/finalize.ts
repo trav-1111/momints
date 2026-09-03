@@ -105,6 +105,24 @@ export async function finalizeQuickMint(
     return describe(row, true)
   }
 
+  // ---- Record the attempt BEFORE verify, so even a DEFERRED finalize (verify
+  // says "not visible yet" below — a normal, frequent event) leaves this row
+  // discoverable server-side. See recordFinalizeAttempt's doc: this is what a
+  // real incident was missing — a deferral used to leave signature/asset_address
+  // NULL forever, recoverable only if the calling client itself came back. ----
+  try {
+    await db.recordFinalizeAttempt(row.id, req.assetAddress, req.signature)
+  } catch (err) {
+    if (err instanceof DuplicateSignatureError) {
+      throw new HttpError(
+        409,
+        `Transaction ${req.signature} has already paid for a different quick mint. ` +
+          'One payment buys one upload.',
+      )
+    }
+    throw err
+  }
+
   // ---- Verify the LANDED transaction. Nothing below trusts the request body. ----
   const requiredLamports = row.fee_lamports_required ?? LEGACY_QUICK_FEE_LAMPORTS_FALLBACK
   const umi = await getUmi()

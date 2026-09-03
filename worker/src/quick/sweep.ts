@@ -1,5 +1,9 @@
+import type { Umi } from '@metaplex-foundation/umi'
 import type { RollDb } from '../db'
 import type { QuickFinalizeMessage } from '../env'
+import type { TreasurySink } from '../providers/types'
+import type { AlertFn } from './consumer'
+import { finalizeQuickMint } from './finalize'
 
 export interface QuickSweepDeps {
   db: RollDb
@@ -63,4 +67,116 @@ export async function sweepQuickMints(deps: QuickSweepDeps): Promise<QuickSweepR
   }
 
   return { orphansReaped: orphans.length, stalledRedriven: stalled.length }
+}
+
+export interface DeferredFinalizeSweepDeps {
+  db: RollDb
+  queue: Queue<QuickFinalizeMessage>
+  treasury: TreasurySink
+  rpcUrl: string
+  placeholderUri: string
+  treasuryAddress: string
+  getUmi: () => Promise<Umi>
+  alert: AlertFn
+}
+
+export interface DeferredFinalizeSweepResult {
+  attempted: number
+  completed: number
+  stillDeferred: number
+  gaveUp: number
+}
+
+/**
+ * A row can only be found here once recordFinalizeAttempt has run — before
+ * that (an app that never even reached this Worker) there is genuinely
+ * nothing server-side to recover from; see listStaleStagedQuickMints for that
+ * case instead. A candidate must be at least this old before this sweep
+ * touches it, so it never races a finalize call still in flight from the
+ * request that just wrote the signature.
+ */
+const DEFERRED_RETRY_AFTER_MS = 2 * 60 * 1000
+
+/**
+ * Past this, automatic retry stops and the row is handed to the operator
+ * instead. A day is the same "something is genuinely wrong, not just slow"
+ * bar the rest of this file already uses for orphaned stages — ordinary RPC
+ * propagation lag (the normal reason a finalize defers) resolves in seconds,
+ * not hours, so a row still stuck here this long warrants a look rather than
+ * an indefinite retry loop.
+ */
+const DEFERRED_GIVE_UP_AFTER_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Re-attempt finalizes that DEFERRED (verify said "transaction not visible to
+ * the RPC yet" — a normal, frequent event, never a failure) and never got a
+ * chance to complete, independent of whether the client that signed them ever
+ * calls back. This is what makes recordFinalizeAttempt's persisted signature
+ * actually useful rather than just informational — without this sweep, a
+ * deferred finalize would still be recoverable in principle but nothing would
+ * ever actually retry it if the client didn't.
+ *
+ * Each candidate just gets a normal finalizeQuickMint call — the exact same
+ * path a client retry or the background drain would take, fully idempotent
+ * and safe to race against either. A row past the give-up window is handed to
+ * the operator instead of retried forever.
+ */
+export async function redriveDeferredFinalizes(deps: DeferredFinalizeSweepDeps): Promise<DeferredFinalizeSweepResult> {
+  const { db, queue, treasury, rpcUrl, placeholderUri, treasuryAddress, getUmi, alert } = deps
+  const now = Date.now()
+
+  const candidates = await db.listDeferredFinalizeQuickMints(
+    new Date(now - DEFERRED_RETRY_AFTER_MS).toISOString(),
+    BATCH_LIMIT,
+  )
+
+  let completed = 0
+  let stillDeferred = 0
+  let gaveUp = 0
+
+  for (const row of candidates) {
+    if (!row.signature || !row.asset_address) continue // listDeferredFinalizeQuickMints guarantees this; guard for the type only.
+
+    const ageMs = now - new Date(row.created_at).getTime()
+    if (ageMs >= DEFERRED_GIVE_UP_AFTER_MS) {
+      await db.markQuickMintDead(row.id)
+      await alert({
+        severity: 'critical',
+        title: 'Quick mint finalize stuck deferred for 24h+ — needs operator review',
+        description:
+          "A quick mint's finalize kept deferring (the RPC could not see the transaction) for over 24 hours and " +
+          'has been marked DEAD rather than retried forever. This could mean the transaction never actually ' +
+          'landed (a genuine failure) or a persistent RPC issue — check the signature on Solscan before assuming ' +
+          'either.',
+        fields: [
+          { name: 'Quick mint', value: row.id },
+          { name: 'Asset', value: row.asset_address },
+          { name: 'Signature', value: row.signature },
+          { name: 'Wallet', value: row.wallet },
+        ],
+        mention: true,
+      })
+      gaveUp++
+      continue
+    }
+
+    try {
+      await finalizeQuickMint(
+        { db, queue, treasury, rpcUrl, placeholderUri, treasuryAddress, getUmi, alert },
+        { stagingKey: row.id, signature: row.signature, assetAddress: row.asset_address },
+      )
+      completed++
+    } catch (err) {
+      // Still deferred (retryable — most common), or just became DEAD via
+      // finalizeQuickMint's own 402 path (which already alerted). Either way,
+      // nothing more to do for this row this cycle.
+      stillDeferred++
+      console.warn(
+        `[quick:sweep] deferred finalize ${row.id} still unresolved:`,
+        err instanceof Error ? err.message : err,
+      )
+    }
+  }
+
+  return { attempted: candidates.length, completed, stillDeferred, gaveUp }
 }
