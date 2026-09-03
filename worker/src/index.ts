@@ -300,13 +300,13 @@ async function handleFinalizeQuickMint(ctx: WorkerContext, request: Request): Pr
   const result = await finalizeQuickMint(
     {
       db: ctx.db,
-      bucket: ctx.env.QUICK_STAGING,
       queue: ctx.env.QUICK_FINALIZE,
       treasury: ctx.treasury,
       rpcUrl: ctx.env.SOLANA_RPC_URL,
       placeholderUri: env.QUICK_PLACEHOLDER_URI,
       treasuryAddress: env.QUICK_TREASURY_ADDRESS,
       getUmi: () => createWorkerUmi(ctx.env),
+      alert: discordAlerts(ctx.env),
     },
     body,
   )

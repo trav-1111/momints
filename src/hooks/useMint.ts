@@ -267,12 +267,15 @@ export function useMint() {
               walletAddress,
               rpc: getClusterRpc(),
               // Persist before anything is sent: past this point the fee is
-              // committed, so the record has to outlive a crash.
-              onItemSigned: (photoId, { signature, mintAddress }) => {
+              // committed, so the record has to outlive a crash. Awaited by
+              // mintNFTBatch before it sends anything — see its onItemSigned
+              // doc — so the write has actually happened, not just started,
+              // before the transaction that spends the fee goes out.
+              onItemSigned: async (photoId, { signature, mintAddress }) => {
                 const quick = quickByPhotoId.get(photoId)
                 if (quick) {
                   signedPhotoIds.add(photoId)
-                  void recordPendingFinalize({ stagingKey: quick.stagingKey, signature, assetAddress: mintAddress })
+                  await recordPendingFinalize({ stagingKey: quick.stagingKey, signature, assetAddress: mintAddress })
                 }
               },
               onPhase: (phase) => {

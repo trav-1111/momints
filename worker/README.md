@@ -550,10 +550,13 @@ still fails the checkpoint holds for the next attempt.
 
 ### Re-driving a stuck quick mint (the DLQ alert)
 
-A **critical** "Quick mint stuck on placeholder" alert means a finalize job
-exhausted its retries. Read it as recoverable, not lost: the alert only fires
-for rows that were verified as paid, so the fee is banked and the asset exists
-on-chain — it is just still showing the "Developing…" placeholder.
+`DEAD` rows come from two different alerts — check which one fired, because
+the correct next step differs:
+
+**"Quick mint stuck on placeholder"** — a finalize *job* (already claimed,
+already past verify) exhausted its consumer retries. Read it as recoverable,
+not lost: the fee is banked and the asset exists on-chain, just still showing
+the "Developing…" placeholder.
 
 ```sh
 # What state did it stop in? (image_uri / arweave_uri are the checkpoints)
@@ -576,8 +579,37 @@ safe: uploads resume from their checkpoints rather than repeating, and the URI
 swap reads the asset before touching it, so a job that actually completed just
 marks itself `FINALIZED`.
 
-Rows in `STAGED` are the opposite case — nothing was ever paid or uploaded.
-Leave them; the sweep and the bucket lifecycle rule reap them within a day.
+**"Quick mint finalize REJECTED — needs operator review"** — a different
+situation: `verify.ts` read a transaction that had already landed on-chain and
+definitively rejected it (wrong fee, wrong owner, wrong update authority,
+placeholder URI mismatch — the alert's "Rejection reason" field says exactly
+which). `image_uri`/`arweave_uri` are both `NULL` on these — nothing was ever
+uploaded. **Do not blindly re-drive this one** the way you would the case
+above: the rejection reason is a fact about the landed transaction, not a
+transient fault, so resuming without understanding *why* it was rejected can
+mean spending Arweave to finalize a mint that was never actually paid for
+correctly. Read the reason, confirm on Solscan what actually happened, and
+only then decide: fix and finalize manually — `scripts/recover-quick-mint.mjs`
+does this (uploads the real image + metadata, then `update()`s the asset,
+provided `asset.updateAuthority` still resolves to the Worker's key; defaults
+to dry-run, needs `--confirm` to actually act) — or leave it dead. The staged
+image in R2 is preserved but subject to the bucket's 24h lifecycle rule — pull
+it out promptly if you'll
+need it.
+
+Rows in `STAGED` are the opposite case — nothing was ever paid or uploaded, by
+design (the app's own crash-safety queue, `store/quickFinalize.ts`, calls
+finalize the instant a signature exists and retries on every app foreground).
+The sweep and the bucket lifecycle rule reap them within a day. **Known
+residual risk:** if the app is killed or uninstalled before that local queue
+entry ever reaches the Worker even once, a genuinely paid-and-minted asset can
+look identical to an abandoned one from D1's perspective, and the orphan sweep
+will reap the row silently — no alert, because nothing was ever claimed to
+alert about. This is now a narrower window than it was (the client awaits the
+crash-safety write before sending, closing the crash-between-sign-and-persist
+race), but it isn't fully closed; if a user reports a mint that never shows up
+anywhere, check `GET /quick/<asset>` first — a 404 there with a real on-chain
+asset is this scenario.
 
 ### Re-driving a stuck roll handoff
 

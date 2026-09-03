@@ -3,6 +3,7 @@ import { DuplicateSignatureError, type QuickMintRow, type RollDb } from '../db'
 import type { QuickFinalizeMessage } from '../env'
 import { isBase58Address } from '../lib/address'
 import { HttpError } from '../lib/http'
+import type { AlertFn } from './consumer'
 import type { TreasurySink } from '../providers/types'
 import { verifyQuickMintPayment } from './verify'
 
@@ -23,7 +24,6 @@ export interface FinalizeQuickMintRequest {
 
 export interface FinalizeQuickMintDeps {
   db: RollDb
-  bucket: R2Bucket
   queue: Queue<QuickFinalizeMessage>
   treasury: TreasurySink
   rpcUrl: string
@@ -31,6 +31,8 @@ export interface FinalizeQuickMintDeps {
   treasuryAddress: string
   /** Lazy: the idempotent replay path and all validation are pure-D1. */
   getUmi: () => Promise<Umi>
+  /** Fires when verify definitively rejects an already-landed transaction — see the 402 branch below. */
+  alert: AlertFn
 }
 
 export interface FinalizeQuickMintResult {
@@ -67,15 +69,17 @@ function describe(row: QuickMintRow, alreadyFinalizing: boolean): FinalizeQuickM
  * replayed signature cannot enqueue twice), THEN record the fee, THEN enqueue.
  *
  * The user has already signed and paid by the time this runs, which is why
- * failures are split so carefully. A definitive rejection tears the stage down;
- * a transient one leaves it completely untouched so the app can retry into the
- * same idempotent path.
+ * failures are split so carefully. A definitive rejection marks the row DEAD
+ * and alerts — never deletes it (see the 402 branch below: by that point a
+ * REAL landed transaction has been read off the chain, so "verify rejected
+ * it" is not the same fact as "nothing was paid"); a transient one leaves it
+ * completely untouched so the app can retry into the same idempotent path.
  */
 export async function finalizeQuickMint(
   deps: FinalizeQuickMintDeps,
   req: FinalizeQuickMintRequest,
 ): Promise<FinalizeQuickMintResult> {
-  const { db, bucket, queue, treasury, rpcUrl, placeholderUri, treasuryAddress, getUmi } = deps
+  const { db, queue, treasury, rpcUrl, placeholderUri, treasuryAddress, getUmi, alert } = deps
 
   if (!isBase58Address(req.assetAddress)) {
     throw new HttpError(400, 'assetAddress must be a base58 Solana address')
@@ -119,8 +123,34 @@ export async function finalizeQuickMint(
       // simply not visible yet, and tearing it down would strand a paid mint.
       throw new HttpError(503, `${verdict.reason}. Retry this finalize — nothing has been changed.`)
     }
-    await bucket.delete(row.staging_key ?? '').catch(() => {})
-    await db.deleteStagedQuickMint(row.id)
+    // NOT a delete. verifyQuickMintPayment only reaches a definitive verdict
+    // after reading a transaction that actually LANDED — the rejection is
+    // about one specific check (fee amount, URI, owner, authority...), not
+    // proof nothing happened. Deleting here was the bug behind a real
+    // incident: a rejected-but-landed mint left no trace anywhere, no alert,
+    // nothing to investigate. Mark DEAD and alert instead — same shape as the
+    // consumer's dead-letter path (handleDeadLetter in index.ts) — so this is
+    // always operator-visible. The staged image in R2 is deliberately left in
+    // place too (recoverable until the bucket's 24h lifecycle rule reaps it —
+    // see the alert's own note on that window).
+    await db.markQuickMintDead(row.id, { assetAddress: req.assetAddress, signature: req.signature })
+    await alert({
+      severity: 'critical',
+      title: 'Quick mint finalize REJECTED — needs operator review',
+      description:
+        'A quick-mint finalize was definitively rejected, but verify only reaches that verdict after reading a ' +
+        'transaction that already landed on-chain — this may be a real paid mint, not a bogus attempt. Marked ' +
+        'DEAD rather than deleted so it can be investigated. The staged image in R2 is preserved but expires ' +
+        'under the bucket\'s 24h lifecycle rule — recover it soon if the image is needed.',
+      fields: [
+        { name: 'Quick mint', value: row.id },
+        { name: 'Asset', value: req.assetAddress },
+        { name: 'Wallet', value: row.wallet },
+        { name: 'Signature', value: req.signature },
+        { name: 'Rejection reason', value: verdict.reason.slice(0, 1000) },
+      ],
+      mention: true,
+    })
     throw new HttpError(402, `Quick mint refused: ${verdict.reason}`)
   }
 

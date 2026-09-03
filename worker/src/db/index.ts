@@ -387,8 +387,37 @@ export class RollDb {
       .run()
   }
 
-  /** Dead-lettered: a PAID mint stuck on the placeholder. Never deleted. */
-  async markQuickMintDead(id: string): Promise<void> {
+  /**
+   * Dead-lettered: a mint the Worker will not finish, for one of two reasons —
+   * a paid mint stuck on the placeholder (consumer exhausted its retries), or
+   * a finalize whose verify step definitively REJECTED a transaction that had
+   * nonetheless already landed on-chain (see quick/finalize.ts). Never
+   * deleted: a rejection this late already read a real transaction off the
+   * chain, so treating it as "nothing happened" and discarding the row would
+   * destroy the only evidence an operator has to investigate or recover it.
+   *
+   * `link`, when given, records the asset/signature the row didn't get to
+   * record via the normal claim path (a 402 rejection happens BEFORE
+   * claimQuickMintForFinalize runs) — without it the row is orphaned from
+   * `GET /quick/<asset>` even though it now exists. Swallows a UNIQUE
+   * constraint violation (another row already claims that signature/asset)
+   * rather than losing the DEAD marking over it — the row still needs to be
+   * marked dead and alerted on either way.
+   */
+  async markQuickMintDead(id: string, link?: { assetAddress: string; signature: string }): Promise<void> {
+    if (link) {
+      try {
+        await this.db
+          .prepare(`UPDATE quick_mints SET status = 'DEAD', asset_address = ?, signature = ? WHERE id = ?`)
+          .bind(link.assetAddress, link.signature, id)
+          .run()
+        return
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        if (!message.includes('UNIQUE constraint failed')) throw err
+        console.warn(`[quick] markQuickMintDead(${id}): could not link ${link.assetAddress} (UNIQUE conflict) — marking dead unlinked`)
+      }
+    }
     await this.db.prepare("UPDATE quick_mints SET status = 'DEAD' WHERE id = ?").bind(id).run()
   }
 

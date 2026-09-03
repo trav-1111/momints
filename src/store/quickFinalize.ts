@@ -85,11 +85,12 @@ function persist(next: PendingFinalize[]): Promise<void> {
  * transaction that never landed is harmless: finalize refuses it and it is
  * dropped.
  *
- * NEVER REJECTS. Both call sites are synchronous `onSigned` callbacks that
- * cannot await, so a rejection here would surface as an unhandled promise
- * rejection in the middle of a mint. Failing to persist is bad — it costs the
- * crash-safety net for this one mint — but it must not also break the mint that
- * is currently succeeding.
+ * NEVER REJECTS, even though the call site (useMint.ts's onItemSigned) now
+ * awaits this — awaiting is there to guarantee the write has actually
+ * happened before the transaction that spends the fee is sent, not to let a
+ * failure here propagate. Failing to persist is bad — it costs the
+ * crash-safety net for this one mint — but it must not also break the mint
+ * that is currently succeeding.
  */
 export async function recordPendingFinalize(
   entry: Omit<PendingFinalize, 'createdAt' | 'attempts'>,
