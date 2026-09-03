@@ -598,13 +598,22 @@ it out promptly if you'll
 need it.
 
 Rows in `STAGED` are the opposite case — nothing was ever paid or uploaded, by
-design (the app's own crash-safety queue, `store/quickFinalize.ts`, calls
-finalize the instant a signature exists and retries on every app foreground).
-The sweep and the bucket lifecycle rule reap them within a day. **Known
-residual risk:** if the app is killed or uninstalled before that local queue
-entry ever reaches the Worker even once, a genuinely paid-and-minted asset can
-look identical to an abandoned one from D1's perspective, and the orphan sweep
-will reap the row silently — no alert, because nothing was ever claimed to
+design. The app calls finalize right after a quick mint's transaction sends
+(`useMint.ts`), driven by the signature captured AT SIGNING TIME rather than by
+its own confirmation polling — a confirm timeout there does not mean the
+transaction failed to land, only that the app gave up watching for it, so
+finalize is called regardless and the Worker's own chain read is what actually
+decides (real incident, 2026-09-02: this gate used to be `result.success`,
+which skipped the call entirely on a timeout even for a mint that had already
+landed). `store/quickFinalize.ts` is the crash-safety backstop underneath
+that: it persists the same signature before the transaction is even sent, and
+retries any entry that never got cleared on every app foreground. The sweep
+and the bucket lifecycle rule reap genuinely-abandoned `STAGED` rows within a
+day. **Known residual risk:** if the app is killed before that persisted entry
+is ever written, or is uninstalled before it's ever drained, a genuinely
+paid-and-minted asset can look identical to an abandoned one from D1's
+perspective, and the orphan sweep will reap the row silently — no alert,
+because nothing was ever claimed to
 alert about. This is now a narrower window than it was (the client awaits the
 crash-safety write before sending, closing the crash-between-sign-and-persist
 race), but it isn't fully closed; if a user reports a mint that never shows up
