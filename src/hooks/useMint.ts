@@ -5,7 +5,7 @@ import { formatCapturedAt, resolveLocation } from '../services/captureMetadata'
 import { mintNFTBatch, type QuickMintTerms } from '../services/mint'
 import { finalizeQuickMint, releaseQuickStage, stageQuickMint } from '../services/quickMintApi'
 import { mintWorkerFrame, RollApiError } from '../services/rollApi'
-import { clearPendingFinalize, recordPendingFinalize } from '../store/quickFinalize'
+import { checkPriorAttempt, clearPendingFinalize, recordPendingFinalize } from '../store/quickFinalize'
 import { getClusterRpc } from '../store/network'
 import type { RollContext } from '../store/mintQueue'
 import type { CaptureMeta } from '../store/photos'
@@ -223,8 +223,37 @@ export function useMint() {
         }
       }
 
-      for (let start = 0; start < clientItems.length; start += MINT_CHUNK_SIZE) {
-        const chunk = clientItems.slice(start, start + MINT_CHUNK_SIZE)
+      // Recovery pass: BEFORE staging anything new, check whether each quick
+      // item already has a signed-but-unresolved attempt from earlier — a
+      // previous mintBatch call whose confirmation timed out, or a user
+      // tapping RETRY on exactly that. A "failed" item in the UI is not proof
+      // nothing happened (see checkPriorAttempt's doc): the transaction may
+      // already be paid for and minted. Only items cleared here ever reach
+      // staging, so a retry can never mint a second paid asset for a photo
+      // whose first attempt may still land.
+      const freshMintItems: BatchItemInput[] = []
+      for (const item of clientItems) {
+        const check = await checkPriorAttempt(item.photoId)
+        if (check.action === 'resolved') {
+          summary.succeeded++
+          onItem(item.photoId, { status: 'success', signature: check.signature, mintAddress: check.assetAddress })
+        } else if (check.action === 'wait') {
+          // A prior attempt may still land. Do not mint again yet — the
+          // background drain, or the next retry (which re-checks), resolves it.
+          summary.failed++
+          onItem(item.photoId, {
+            status: 'failed',
+            error: 'Still confirming a previous attempt — wait a moment before retrying',
+          })
+        } else {
+          // 'none' (no prior attempt) or 'clear' (a prior attempt is
+          // confirmed dead) — a fresh mint is safe.
+          freshMintItems.push(item)
+        }
+      }
+
+      for (let start = 0; start < freshMintItems.length; start += MINT_CHUNK_SIZE) {
+        const chunk = freshMintItems.slice(start, start + MINT_CHUNK_SIZE)
 
         chunk.forEach((item) => onItem(item.photoId, { status: 'uploading' }))
         const uploads = await Promise.all(
@@ -283,7 +312,12 @@ export function useMint() {
                 if (quick) {
                   signedPhotoIds.add(photoId)
                   signedInfo.set(photoId, { signature, mintAddress })
-                  await recordPendingFinalize({ stagingKey: quick.stagingKey, signature, assetAddress: mintAddress })
+                  await recordPendingFinalize({
+                    stagingKey: quick.stagingKey,
+                    signature,
+                    assetAddress: mintAddress,
+                    photoId,
+                  })
                 }
               },
               onPhase: (phase) => {

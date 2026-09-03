@@ -23,6 +23,16 @@ export interface PendingFinalize {
   stagingKey: string
   signature: string
   assetAddress: string
+  /**
+   * The mint queue photoId this entry is for — the correlator checkPriorAttempt
+   * uses to find "did THIS photo already get signed" across a retry, which
+   * always starts a brand-new stagingKey and has no other way to know.
+   * Optional: entries written by an app build before this field existed won't
+   * have it. They stay in the queue and drainPendingFinalizes() still retries
+   * them by stagingKey exactly as before — they just can't be found by
+   * checkPriorAttempt, which only helps for mints signed after this update.
+   */
+  photoId?: string
   createdAt: number
   attempts: number
 }
@@ -48,7 +58,10 @@ function parse(raw: unknown): PendingFinalize[] {
       typeof e === 'object' &&
       typeof e.stagingKey === 'string' &&
       typeof e.signature === 'string' &&
-      typeof e.assetAddress === 'string',
+      typeof e.assetAddress === 'string' &&
+      // photoId is optional (see the interface doc) — entries from before it
+      // existed are kept, just unreachable by checkPriorAttempt.
+      (e.photoId === undefined || typeof e.photoId === 'string'),
   )
 }
 
@@ -169,4 +182,59 @@ export async function drainPendingFinalizes(): Promise<DrainResult> {
 
   await persist(survivors)
   return { finalized, stillPending: survivors.length }
+}
+
+/**
+ * Solana blockhash validity is ~150 slots (~60-90s at typical slot times).
+ * Comfortably past that, a still-unresolved signature can never land — its
+ * blockhash has expired, so a NEW mint attempt is safe again. Short of that,
+ * it may yet land, so checkPriorAttempt refuses to let a fresh mint proceed.
+ */
+const RECOVERY_WINDOW_MS = 3 * 60 * 1000
+
+export type PriorAttemptCheck =
+  | { action: 'none' }
+  | { action: 'resolved'; signature: string; assetAddress: string }
+  | { action: 'wait' }
+  | { action: 'clear' }
+
+/**
+ * Before minting a quick shot — first attempt OR a retry — check whether a
+ * PRIOR attempt for this exact photo already got as far as a signature. A
+ * "failed" item in the UI is not proof nothing happened: a client-side
+ * confirmation timeout looks identical to a genuine failure, but the
+ * transaction may have already landed and been paid for. Minting again
+ * without checking would be a second, real, paid asset for the same photo.
+ *
+ * Resolves against the chain — the same authoritative read finalize itself
+ * uses — rather than trusting the client's own "it failed" view:
+ *   - no prior entry: `none`, a fresh mint is exactly as safe as it always was.
+ *   - finalize succeeds: `resolved` — the prior attempt landed and is now
+ *     finalizing; report it as the successful mint it always was, don't mint again.
+ *   - finalize definitively rejects it, or the recovery window has passed
+ *     with no resolution: `clear` — the prior attempt is confirmed dead (or
+ *     someone else already resolved it), a fresh mint is safe.
+ *   - finalize says "not visible yet" and we're still inside the recovery
+ *     window: `wait` — it may still land; do not mint again yet.
+ */
+export async function checkPriorAttempt(photoId: string): Promise<PriorAttemptCheck> {
+  const pending = await load()
+  const entry = pending.find((e) => e.photoId === photoId)
+  if (!entry) return { action: 'none' }
+
+  try {
+    await finalizeQuickMint({
+      stagingKey: entry.stagingKey,
+      signature: entry.signature,
+      assetAddress: entry.assetAddress,
+    })
+    await clearPendingFinalize(entry.stagingKey)
+    return { action: 'resolved', signature: entry.signature, assetAddress: entry.assetAddress }
+  } catch (err) {
+    if (isDefinitive(err) || Date.now() - entry.createdAt >= RECOVERY_WINDOW_MS) {
+      await clearPendingFinalize(entry.stagingKey)
+      return { action: 'clear' }
+    }
+    return { action: 'wait' }
+  }
 }
