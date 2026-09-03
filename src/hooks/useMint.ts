@@ -252,10 +252,17 @@ export function useMint() {
         // Which quick items got as far as a signature. Anything NOT in here on
         // failure was never paid for, so its stage can safely be given back.
         const signedPhotoIds = new Set<string>()
+        // The signature/mintAddress captured AT SIGNING TIME, independent of
+        // whether mintNFTBatch's own confirmation polling later succeeds. See
+        // the finalize loop below for why this — not `result` — is what drives it.
+        const signedInfo = new Map<string, { signature: string; mintAddress: string }>()
 
         ready.forEach(({ item }) => onItem(item.photoId, { status: 'signing' }))
         try {
-          const results = await mintNFTBatch(
+          // Return value intentionally unused: per-item UI reporting happens
+          // inline via the onItemResult callback below, and the finalize loop
+          // after this call is driven by signedInfo, not by these results.
+          await mintNFTBatch(
             ready.map(({ item, metadataUri, quick }) => ({
               id: item.photoId,
               metadataUri,
@@ -275,6 +282,7 @@ export function useMint() {
                 const quick = quickByPhotoId.get(photoId)
                 if (quick) {
                   signedPhotoIds.add(photoId)
+                  signedInfo.set(photoId, { signature, mintAddress })
                   await recordPendingFinalize({ stagingKey: quick.stagingKey, signature, assetAddress: mintAddress })
                 }
               },
@@ -305,13 +313,24 @@ export function useMint() {
           // Finalize after the chunk, not per item: the mints are already
           // reported as successful, and a finalize failure must not turn a paid
           // mint into a failed one — the persisted queue retries it instead.
-          for (const result of results) {
-            const quick = quickByPhotoId.get(result.id)
-            if (quick && result.success && result.signature && result.mintAddress) {
+          //
+          // Driven by signedInfo (captured at signing time), NOT by
+          // result.success/result.signature — a confirmation TIMEOUT in
+          // sendAndConfirm throws before ever setting those fields on `result`,
+          // even when the transaction actually landed. That used to skip this
+          // call entirely for a landed-but-client-unconfirmed mint, silently
+          // stranding it on nothing but the persisted queue's own retry (next
+          // app launch/foreground) to ever notice. finalizeQuickMint reads the
+          // chain itself and is authoritative either way: it succeeds if the
+          // transaction landed, or returns a retryable 503 if it is not visible
+          // yet — never a hard failure just because OUR polling gave up early.
+          for (const [photoId, quick] of quickByPhotoId) {
+            const info = signedInfo.get(photoId)
+            if (info) {
               await finalizeAndClear({
                 stagingKey: quick.stagingKey,
-                signature: result.signature,
-                assetAddress: result.mintAddress,
+                signature: info.signature,
+                assetAddress: info.mintAddress,
               })
             }
           }
