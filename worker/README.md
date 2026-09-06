@@ -123,7 +123,7 @@ GET  /ops/status                   monitor's current level, roll headroom, last-
 GET  /ops/test-alert?severity=…    post a dummy Discord alert: low | critical | healthy (needs OPS_AUTH_TOKEN)
 GET  /ops/recompute-fees           manually run the cost-plus fee recompute (needs OPS_AUTH_TOKEN)
 GET  /ops/sweep-quick-mints        manually re-drive deferred quick-mint finalizes (needs OPS_AUTH_TOKEN)
-POST /rolls                        JSON { wallet, size, feeSignature, artist?, skrIdentity?, localDate? }
+POST /rolls                        JSON { wallet, size, feeSignature, artist?, skrIdentity?, localDate?, payment? }
 GET  /rolls/open?wallet=<address>  the wallet's open roll, if any
 GET  /rolls/<collection>           roll + per-frame checkpoint status
 POST /rolls/<collection>/frames    multipart: image (file), frameIndex, description?, attributes? (JSON array)
@@ -132,6 +132,7 @@ POST /quick/stage                  multipart: image (file), metadata (JSON), wal
 POST /quick/finalize               JSON { stagingKey, signature, assetAddress }
 DEL  /quick/stage/<stagingKey>     give back an unminted stage (user declined the prompt)
 GET  /quick/<asset>                quick-mint finalize status
+POST /skr/quote                    JSON { context:'quick', stagingKey } or { context:'roll', wallet, size } — see "Pay with $SKR"
 ```
 
 `/complete` exists because a roll only auto-completes at `mintedCount >= size`.
@@ -413,10 +414,8 @@ substantially as rent drops (a 24-roll fee could go from ~$15 today toward ~$6
 once rent fully reduces) — a floor above that post-reduction price would keep
 prices artificially high, exactly the failure this feature exists to avoid.
 
-**$SKR discount:** the $SKR payment path is not built yet. `GET /fees` exposes
-`skrTargetUsd` — the cost-plus fee's USD-equivalent at a 25% discount — so a
-future $SKR quote step has a target to Jupiter-quote against; `null` until the
-first live recompute has run.
+**$SKR discount:** users can pay the fee in $SKR instead of SOL, at a 15%
+discount — see "Pay with $SKR" below for the full flow.
 
 **Verify it yourself:**
 
@@ -434,6 +433,72 @@ endpoint alone 403s ("Your IP or provider is blocked") from at least one cloud
 egress IP, so it stays a last resort, not something to rely on directly. Guard
 3 means a blocked read can never break minting regardless — fees just stay
 frozen at the last successful compute.
+
+### Pay with $SKR
+
+Both quick mints and rolls can pay their FEE in $SKR instead of SOL, at a 15%
+discount (`SKR_DISCOUNT`, `src/fees/config.ts`). Rent is unaffected — it is
+always paid in SOL, by whoever already pays it today (the user for a quick
+mint, the Worker for a roll frame).
+
+| Path | Rent | Fee |
+|---|---|---|
+| Quick + SOL | user SOL | user SOL |
+| Quick + $SKR | user SOL | user $SKR (one signature) |
+| Roll + SOL | Worker SOL | user SOL |
+| Roll + $SKR | Worker SOL | user $SKR (fee transaction only) |
+
+**The Worker issues and stores the quote — never the client.** The same
+"never trust the client" invariant the SOL fee check already enforces applies
+to the exchange rate too, since $SKR's USD value moves independently of
+SOL's:
+
+1. The app calls `POST /skr/quote` — `{context:'quick', stagingKey}` (the fee
+   already pinned at stage time) or `{context:'roll', wallet, size}` (the live
+   `fee_cache` roll fee, same source the SOL path already reads at payment
+   time). The Worker computes `sol_fee × 0.85`, gets the SOL→$SKR equivalent
+   from Jupiter (`lite-api.jup.ag/swap/v1/quote`, no key needed), and
+   **persists** the result — on the `quick_mints` row's `skr_quote_atomic`/
+   `skr_quote_expires_at` columns for a quick mint, or in the one-row-per-
+   wallet `skr_quotes` table for a roll (no roll exists yet at quote time to
+   attach it to). Returns `{ skrAmount, expiresAt, treasurySkrAta }` — a
+   120s-valid quote (`QUOTE_VALIDITY_MS`) and the treasury's $SKR Associated
+   Token Account, derived by the Worker so the app never has to compute (or
+   trust its own computation of) the destination address.
+2. The app builds ONE transaction transferring exactly `skrAmount` of $SKR
+   (`TransferChecked`, validating mint+decimals on-chain) from the user's own
+   $SKR ATA to `treasurySkrAta` — bundled with the mint instruction for a
+   quick mint, standalone for a roll (same shape as the existing SOL fee
+   transfer).
+3. `POST /quick/finalize` / `POST /rolls` verify the landed transaction
+   against the STORED quote, never a re-quote: the $SKR token balance delta
+   on `treasurySkrAta` must be of the exact configured mint
+   (`SKR_MINT_ADDRESS`, `src/skr/config.ts`) and at least
+   `storedQuote × (1 − SKR_VERIFY_TOLERANCE)` (2%, absorbs ordinary
+   issue→land drift) — a missing or expired stored quote is a hard reject.
+   Everything else (asset creation, owner, update authority for a quick mint;
+   the single-open-roll check for a roll) is exactly the SOL-path logic,
+   completely untouched.
+
+**Quote failure degrades to SOL, never a hang.** If Jupiter is unreachable,
+times out, or returns a garbled/absurd amount, `POST /skr/quote` returns
+`{ unavailable: true, reason }` — a clean 200, not a 5xx. The app shows
+"$SKR payment isn't available right now — pay with SOL instead" and falls
+back to the ordinary SOL path, which always works.
+
+**$SKR fees are held directly, not converted.** Unlike SOL fees (accrued in
+`treasury_entries`, later swapped by hand — see "Run the SOL → $SKR
+conversion by hand" below), a $SKR payment needs no conversion: the treasury
+already holds the target currency the instant it lands, so nothing is written
+to `treasury_entries` for it. Check the treasury's $SKR ATA balance on
+Solscan directly, or query the audit trail instead:
+
+```sh
+wrangler d1 execute momints-rolls --remote --command \
+  "SELECT id, wallet, skr_quote_atomic FROM quick_mints WHERE fee_currency='SKR'"
+wrangler d1 execute momints-rolls --remote --command \
+  "SELECT collection_address, wallet, skr_fee_atomic FROM rolls WHERE fee_currency='SKR'"
+```
 
 ### Treasury monitor — Discord alerts
 

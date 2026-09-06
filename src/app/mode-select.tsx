@@ -5,11 +5,13 @@ import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useSessionStore } from '../store/session'
 import type { AppMode, FilmMode, AspectRatio } from '../store/session'
 import { useWalletDomain } from '../hooks/useWalletDomain'
-import { useCreateRoll, type CreateRollPhase } from '../hooks/useCreateRoll'
+import { useCreateRoll, SKR_UNAVAILABLE_MESSAGE, type CreateRollPhase } from '../hooks/useCreateRoll'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { PREPAID_ROLL_SIZES, getRollFeeLamports, formatSol, type PrepaidRollSize } from '../config/roll'
+import { formatSkr } from '../config/skr'
 import { isWorkerRollEnabled } from '../config/rollApi'
 import { completeWorkerRoll, getOpenWorkerRoll, getWorkerFees, type OpenRollSummary } from '../services/rollApi'
+import { isSkrQuoteUnavailable, quoteSkrFee } from '../services/skrApi'
 import { ARTIST_NAME_MAX_LENGTH } from '../services/rollIdentity'
 import { colors, fonts, tracking } from '../theme'
 import { IconCamera, IconFilm } from '../components/icons'
@@ -176,6 +178,41 @@ export default function ModeSelectScreen() {
       : liveRollFees.rollFee24Lamports
     : getRollFeeLamports(rollSize)
 
+  // "Pay with $SKR" — this quote is DISPLAY ONLY. paySkrRollFee re-quotes
+  // fresh at the moment of actual payment (see its own doc comment), so an
+  // expired display quote here is never a correctness problem, only a stale
+  // number on screen until the next fetch below lands.
+  const [payWithSkr, setPayWithSkr] = useState(false)
+  const [skrQuoteAmount, setSkrQuoteAmount] = useState<number | null>(null)
+  const [skrUnavailableMessage, setSkrUnavailableMessage] = useState<string | null>(null)
+  useEffect(() => {
+    if (!payWithSkr || !walletAddress) {
+      setSkrQuoteAmount(null)
+      return
+    }
+    let cancelled = false
+    setSkrQuoteAmount(null)
+    quoteSkrFee({ context: 'roll', wallet: walletAddress, size: rollSize })
+      .then((result) => {
+        if (cancelled) return
+        if (isSkrQuoteUnavailable(result)) {
+          setSkrUnavailableMessage(SKR_UNAVAILABLE_MESSAGE)
+          setPayWithSkr(false)
+          return
+        }
+        setSkrQuoteAmount(result.skrAmount)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSkrUnavailableMessage(SKR_UNAVAILABLE_MESSAGE)
+          setPayWithSkr(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [payWithSkr, walletAddress, rollSize])
+
   const handleFinishStranded = useCallback(async () => {
     if (!strandedRoll || isClosingStranded) return
     setIsClosingStranded(true)
@@ -211,9 +248,25 @@ export default function ModeSelectScreen() {
       skrHandle: domain,
       film: { mode: filmMode },
       aspect,
+      payment: payWithSkr && skrQuoteAmount !== null ? 'SKR' : 'SOL',
     })
     if (created) router.replace('/camera')
-  }, [selectedMode, isCreating, account, connect, createRoll, rollSize, artist, domain, filmMode, aspect, selectQuickMode, router])
+  }, [
+    selectedMode,
+    isCreating,
+    account,
+    connect,
+    createRoll,
+    rollSize,
+    artist,
+    domain,
+    filmMode,
+    aspect,
+    payWithSkr,
+    skrQuoteAmount,
+    selectQuickMode,
+    router,
+  ])
 
   return (
     <ScrollView
@@ -518,9 +571,51 @@ export default function ModeSelectScreen() {
               </Text>
             </View>
             <Text style={{ fontFamily: fonts.monoBold, fontSize: 13, color: colors.accentSoft }}>
-              {formatSol(rollFeeLamports)}
+              {payWithSkr && skrQuoteAmount !== null ? formatSkr(skrQuoteAmount) : formatSol(rollFeeLamports)}
             </Text>
           </View>
+
+          {/* Pay with $SKR — a 15% discount off the SOL fee, worker-quoted. */}
+          <Pressable
+            onPress={() => {
+              setSkrUnavailableMessage(null)
+              setPayWithSkr((v) => !v)
+            }}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              paddingVertical: 11,
+              paddingHorizontal: 15,
+              borderRadius: 12,
+              backgroundColor: colors.surface,
+              borderWidth: 1,
+              borderColor: payWithSkr ? colors.accent : colors.border,
+              marginTop: 10,
+            }}
+          >
+            <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 12.5, color: colors.text }}>Pay with $SKR</Text>
+            {payWithSkr && skrQuoteAmount === null ? (
+              <ActivityIndicator color={colors.accentSoft} size="small" />
+            ) : (
+              <View
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 9,
+                  backgroundColor: payWithSkr ? colors.accent : 'transparent',
+                  borderWidth: 1,
+                  borderColor: payWithSkr ? colors.accent : colors.border,
+                }}
+              />
+            )}
+          </Pressable>
+
+          {skrUnavailableMessage && (
+            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textSecondary, marginTop: 10 }}>
+              {skrUnavailableMessage}
+            </Text>
+          )}
 
           {createError && (
             <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.redSoft, marginTop: 10 }}>
@@ -533,46 +628,54 @@ export default function ModeSelectScreen() {
       <View style={{ height: 26 }} />
 
       {/* Load Camera / Pay & Load Roll */}
-      <Pressable
-        onPress={handleLoadCamera}
-        disabled={isCreating}
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: 9,
-          paddingVertical: 15,
-          borderRadius: 14,
-          backgroundColor: isCreating ? colors.surface : colors.accent,
-          borderWidth: 1,
-          borderColor: isCreating ? colors.border : colors.accent,
-        }}
-      >
-        {isCreating && phase ? (
-          <>
-            <ActivityIndicator color={colors.accentSoft} size="small" />
-            <Text style={{ fontFamily: fonts.sansBold, fontSize: 14, color: colors.accentSoft }}>
-              {CREATE_PHASE_LABEL[phase]}
-            </Text>
-          </>
-        ) : (
-          <>
-            <IconCamera size={18} color={colors.white} strokeWidth={1.7} />
-            <Text
-              style={{
-                fontFamily: fonts.sansBold,
-                fontSize: 14,
-                letterSpacing: tracking(0.04, 14),
-                color: colors.white,
-              }}
-            >
-              {selectedMode === 'roll' && !hasRoll
-                ? `Pay ${formatSol(rollFeeLamports)} & Load Roll`
-                : 'Load Camera'}
-            </Text>
-          </>
-        )}
-      </Pressable>
+      {(() => {
+        const awaitingSkrQuote = selectedMode === 'roll' && payWithSkr && skrQuoteAmount === null
+        const buttonDisabled = isCreating || awaitingSkrQuote
+        return (
+          <Pressable
+            onPress={handleLoadCamera}
+            disabled={buttonDisabled}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 9,
+              paddingVertical: 15,
+              borderRadius: 14,
+              backgroundColor: buttonDisabled ? colors.surface : colors.accent,
+              borderWidth: 1,
+              borderColor: buttonDisabled ? colors.border : colors.accent,
+            }}
+          >
+            {isCreating && phase ? (
+              <>
+                <ActivityIndicator color={colors.accentSoft} size="small" />
+                <Text style={{ fontFamily: fonts.sansBold, fontSize: 14, color: colors.accentSoft }}>
+                  {CREATE_PHASE_LABEL[phase]}
+                </Text>
+              </>
+            ) : (
+              <>
+                <IconCamera size={18} color={colors.white} strokeWidth={1.7} />
+                <Text
+                  style={{
+                    fontFamily: fonts.sansBold,
+                    fontSize: 14,
+                    letterSpacing: tracking(0.04, 14),
+                    color: colors.white,
+                  }}
+                >
+                  {selectedMode === 'roll' && !hasRoll
+                    ? `Pay ${
+                        payWithSkr && skrQuoteAmount !== null ? formatSkr(skrQuoteAmount) : formatSol(rollFeeLamports)
+                      } & Load Roll`
+                    : 'Load Camera'}
+                </Text>
+              </>
+            )}
+          </Pressable>
+        )
+      })()}
     </ScrollView>
   )
 }

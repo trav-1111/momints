@@ -1,4 +1,5 @@
 import { getTransaction, type ParsedTransaction } from '../solana/confirm'
+import { checkSkrTransfer } from '../skr/verify'
 import type { RollSize } from './config'
 
 /**
@@ -28,8 +29,16 @@ export interface RollVerifyRequest {
    * (a recompute landing in the seconds between the app's fetch and this
    * request) is the same one the app's "read fees at confirmation" display
    * rule already minimizes — see README "Cost-plus fee pricing".
+   *
+   * Ignored when `skr` is set — the fee moved in $SKR, not SOL, in that case.
    */
   requiredLamports: number
+  /** Present only when this roll's fee is being paid in $SKR — see quick/verify.ts's identical field for the shape rationale. */
+  skr?: {
+    treasurySkrAta: string
+    requiredAtomic: number
+    quoteExpiresAt: string | null
+  }
 }
 
 /**
@@ -82,6 +91,20 @@ export async function verifyRollFeePayment(rpcUrl: string, req: RollVerifyReques
   const feePayer = tx.transaction.message.accountKeys[0]?.pubkey
   if (feePayer !== req.wallet) {
     return reject(`Transaction ${req.signature} was paid by ${feePayer ?? 'nobody'}, not by ${req.wallet}`)
+  }
+
+  if (req.skr) {
+    if (!req.skr.quoteExpiresAt) {
+      return reject(`No $SKR quote was ever issued for wallet ${req.wallet} — call POST /skr/quote before creating the roll`)
+    }
+    if (Date.parse(req.skr.quoteExpiresAt) < Date.now()) {
+      return reject(`The $SKR quote for wallet ${req.wallet} expired at ${req.skr.quoteExpiresAt} — re-quote and retry`)
+    }
+    const skrVerdict = checkSkrTransfer(tx, { treasurySkrAta: req.skr.treasurySkrAta, requiredAtomic: req.skr.requiredAtomic })
+    if (!skrVerdict.ok) {
+      return reject(`Transaction ${req.signature}: ${skrVerdict.reason}`)
+    }
+    return { ok: true, feeLamports: 0 }
   }
 
   const required = req.requiredLamports

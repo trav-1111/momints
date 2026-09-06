@@ -1,5 +1,6 @@
 import type { Umi } from '@metaplex-foundation/umi'
 import { getTransaction, type ParsedTransaction } from '../solana/confirm'
+import { checkSkrTransfer } from '../skr/verify'
 
 /**
  * Proof that a quick mint was paid for.
@@ -23,8 +24,22 @@ export interface QuickVerifyRequest {
    * (fees/compute.ts), and the user paid whatever stage told them — checking
    * against a value that may have moved since would reject a legitimate
    * payment for a price that changed out from under it.
+   *
+   * Ignored when `skr` is set — the fee moved in $SKR, not SOL, in that case.
    */
   requiredLamports: number
+  /**
+   * Present only when this row's fee is being paid in $SKR (quick_mints.
+   * fee_currency = 'SKR'). `quoteExpiresAt` is `null` when no quote was ever
+   * issued for this row — always a definitive reject, never a race, since a
+   * quote is written synchronously by POST /skr/quote before the client can
+   * even build the transaction.
+   */
+  skr?: {
+    treasurySkrAta: string
+    requiredAtomic: number
+    quoteExpiresAt: string | null
+  }
 }
 
 /**
@@ -102,12 +117,30 @@ export async function verifyQuickMintPayment(
     return reject(`Transaction ${req.signature} was paid by ${feePayer ?? 'nobody'}, not by the staging wallet ${req.wallet}`)
   }
 
-  const received = lamportsReceived(tx, req.treasury)
-  if (received === null) {
-    return reject(`Transaction ${req.signature} does not touch the treasury account ${req.treasury}`)
-  }
-  if (received < req.requiredLamports) {
-    return reject(`Transaction ${req.signature} paid the treasury ${received} lamports, below the ${req.requiredLamports} required`)
+  // Only meaningful for the SOL branch — see the success return below, where
+  // it is 0 for a $SKR payment (the real amount lives on the row's
+  // fee_currency/skr_quote_atomic columns, not in this result).
+  let feeLamports = 0
+  if (req.skr) {
+    if (!req.skr.quoteExpiresAt) {
+      return reject(`No $SKR quote was ever issued for ${req.assetAddress} — call POST /skr/quote before finalizing`)
+    }
+    if (Date.parse(req.skr.quoteExpiresAt) < Date.now()) {
+      return reject(`The $SKR quote for ${req.assetAddress} expired at ${req.skr.quoteExpiresAt} — re-quote and retry`)
+    }
+    const skrVerdict = checkSkrTransfer(tx, { treasurySkrAta: req.skr.treasurySkrAta, requiredAtomic: req.skr.requiredAtomic })
+    if (!skrVerdict.ok) {
+      return reject(`Transaction ${req.signature}: ${skrVerdict.reason}`)
+    }
+  } else {
+    const received = lamportsReceived(tx, req.treasury)
+    if (received === null) {
+      return reject(`Transaction ${req.signature} does not touch the treasury account ${req.treasury}`)
+    }
+    if (received < req.requiredLamports) {
+      return reject(`Transaction ${req.signature} paid the treasury ${received} lamports, below the ${req.requiredLamports} required`)
+    }
+    feeLamports = received
   }
 
   // The asset account must be NEW in this transaction. Without this, a wallet
@@ -153,5 +186,5 @@ export async function verifyQuickMintPayment(
     )
   }
 
-  return { ok: true, feeLamports: received, owner: asset.owner.toString() }
+  return { ok: true, feeLamports, owner: asset.owner.toString() }
 }

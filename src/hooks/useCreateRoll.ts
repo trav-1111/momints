@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
-import { payRollFee } from '../services/rollCollection'
+import { payRollFee, paySkrRollFee, SkrQuoteUnavailableError } from '../services/rollCollection'
 import { sanitizeArtistName } from '../services/rollIdentity'
 import { createWorkerRoll, getOpenWorkerRoll, RollApiError } from '../services/rollApi'
 import { categorizeError } from './useMint'
@@ -12,6 +12,8 @@ import type { PrepaidRollSize } from '../config/roll'
 
 export type CreateRollPhase = 'cover' | 'uploading' | 'signing' | 'confirming' | 'creating'
 
+export const SKR_UNAVAILABLE_MESSAGE = "$SKR payment isn't available right now — pay with SOL instead."
+
 export interface CreateRollOptions {
   size: PrepaidRollSize
   /** Raw artist display name from the form — sanitized here. */
@@ -20,6 +22,8 @@ export interface CreateRollOptions {
   skrHandle: string | null
   film: FilmSettings
   aspect: AspectRatio
+  /** Which currency pays the fee. Defaults 'SOL'. A Worker quote failure falls back to SOL — see SKR_UNAVAILABLE_MESSAGE. */
+  payment?: 'SOL' | 'SKR'
 }
 
 /** What both creation paths must produce before the roll is registered locally. */
@@ -75,10 +79,27 @@ export function useCreateRoll() {
           return false
         }
 
-        const { signature: feeSignature } = await payRollFee(
-          { walletAddress, size: opts.size, rpc, onPhase: (p) => setPhase(p) },
-          { client, signTransaction },
-        )
+        const payment = opts.payment ?? 'SOL'
+        let feeSignature: string
+        if (payment === 'SKR') {
+          try {
+            ;({ signature: feeSignature } = await paySkrRollFee(
+              { walletAddress, size: opts.size, rpc, onPhase: (p) => setPhase(p) },
+              { client, signTransaction },
+            ))
+          } catch (err) {
+            if (err instanceof SkrQuoteUnavailableError) {
+              setError(SKR_UNAVAILABLE_MESSAGE)
+              return false
+            }
+            throw err
+          }
+        } else {
+          ;({ signature: feeSignature } = await payRollFee(
+            { walletAddress, size: opts.size, rpc, onPhase: (p) => setPhase(p) },
+            { client, signTransaction },
+          ))
+        }
 
         setPhase('creating')
         try {
@@ -89,6 +110,7 @@ export function useCreateRoll() {
             skrIdentity,
             localDate: localDateLabel(now),
             feeSignature,
+            payment,
           })
           created = { collectionAddress: roll.collectionAddress, name: roll.name }
         } catch (err) {

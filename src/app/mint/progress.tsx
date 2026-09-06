@@ -24,6 +24,8 @@ interface MintProgress {
   status: MintStatus
   txSignature?: string
   error?: string
+  /** The quoted $SKR amount ("Paying 12.50 $SKR") or a fallback notice, when this item requested $SKR payment. See useMint.ts's stageAndRecord. */
+  note?: string
 }
 
 function StatTile({ value, label, color }: { value: number; label: string; color: string }) {
@@ -128,7 +130,7 @@ export default function MintProgressScreen() {
       } else if (update.status === 'failed') {
         updateProgress(photoId, { status: 'failed', error: update.error })
       } else {
-        updateProgress(photoId, { status: update.status })
+        updateProgress(photoId, { status: update.status, note: update.note })
       }
     },
     [updateProgress, addToHistory, setAction, removeFromQueue],
@@ -386,7 +388,9 @@ export default function MintProgressScreen() {
               ? 'Tap to add details'
               : canEdit
                 ? `${getStatusText(item.status)} · tap to edit`
-                : getStatusText(item.status)
+                : item.note
+                  ? `${getStatusText(item.status)} · ${item.note}`
+                  : getStatusText(item.status)
 
           return (
             <Pressable

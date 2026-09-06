@@ -26,6 +26,10 @@ export interface RollRow {
   /** The verified on-chain transfer that paid this roll's fee. See rolls/verify.ts. */
   fee_signature: string | null
   created_at: string
+  /** 'SOL' (default) or 'SKR' — which currency actually paid this roll's fee. See skr/quote.ts. */
+  fee_currency: 'SOL' | 'SKR'
+  /** Atomic $SKR units verified, when fee_currency = 'SKR' — audit trail only (see providers/treasury/manual.ts's doc comment on why $SKR has no treasury_entries row). */
+  skr_fee_atomic: number | null
 }
 
 export interface OpsAlertStateRow {
@@ -61,6 +65,21 @@ export interface QuickMintRow {
   finalized_at: string | null
   /** Fee quoted from fee_cache at STAGE time — see migrations/0007_fee_cache.sql. Null for rows staged before that migration. */
   fee_lamports_required: number | null
+  /** 'SOL' (default) or 'SKR' — set by POST /skr/quote the moment a quote is issued for this row. See skr/quote.ts. */
+  fee_currency: 'SOL' | 'SKR'
+  /** Set together with fee_currency='SKR' — the exact amount finalize verifies against. Null until a quote is issued. */
+  skr_quote_atomic: number | null
+  skr_quote_expires_at: string | null
+}
+
+export interface SkrQuoteRow {
+  wallet: string
+  size: number
+  skr_amount_atomic: number
+  sol_fee_lamports: number
+  treasury_ata: string
+  expires_at: string
+  created_at: string
 }
 
 /** A finalize lost the race to claim a signature another row already holds. */
@@ -159,12 +178,15 @@ export class RollDb {
     metadataUri: string
     createSignature: string
     feeSignature: string
+    /** Defaults 'SOL' — pass 'SKR' only from the $SKR branch of rolls/create.ts. */
+    feeCurrency?: 'SOL' | 'SKR'
+    skrFeeAtomic?: number
   }): Promise<void> {
     await this.db
       .prepare(
         `INSERT INTO rolls
-           (collection_address, wallet, name, size, artist, skr_identity, cover_uri, metadata_uri, create_signature, fee_signature)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (collection_address, wallet, name, size, artist, skr_identity, cover_uri, metadata_uri, create_signature, fee_signature, fee_currency, skr_fee_atomic)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         roll.collectionAddress,
@@ -177,7 +199,61 @@ export class RollDb {
         roll.metadataUri,
         roll.createSignature,
         roll.feeSignature,
+        roll.feeCurrency ?? 'SOL',
+        roll.skrFeeAtomic ?? null,
       )
+      .run()
+  }
+
+  // ─── $SKR quotes ────────────────────────────────────────────────────────────
+
+  /**
+   * A roll doesn't exist yet at quote time, so its quote lives here instead of
+   * on a row — one slot per wallet (upsert), consumed by deleteRollSkrQuote
+   * once rolls/create.ts has verified against it. See migrations/0008.
+   */
+  async upsertRollSkrQuote(
+    wallet: string,
+    quote: { size: number; atomic: number; solFeeLamports: number; treasuryAta: string; expiresAt: string },
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO skr_quotes (wallet, size, skr_amount_atomic, sol_fee_lamports, treasury_ata, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT (wallet) DO UPDATE SET
+           size = excluded.size,
+           skr_amount_atomic = excluded.skr_amount_atomic,
+           sol_fee_lamports = excluded.sol_fee_lamports,
+           treasury_ata = excluded.treasury_ata,
+           expires_at = excluded.expires_at,
+           created_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`,
+      )
+      .bind(wallet, quote.size, quote.atomic, quote.solFeeLamports, quote.treasuryAta, quote.expiresAt)
+      .run()
+  }
+
+  async getRollSkrQuote(wallet: string): Promise<SkrQuoteRow | null> {
+    return await this.db.prepare('SELECT * FROM skr_quotes WHERE wallet = ?').bind(wallet).first<SkrQuoteRow>()
+  }
+
+  /** Consumed on successful verification — a quote can never be replayed against a second roll. */
+  async deleteRollSkrQuote(wallet: string): Promise<void> {
+    await this.db.prepare('DELETE FROM skr_quotes WHERE wallet = ?').bind(wallet).run()
+  }
+
+  /**
+   * Sets fee_currency='SKR' the moment a quote is issued for a staged row —
+   * issuing a quote IS the row committing to pay in $SKR. Guarded to STAGED so
+   * a quote can never be attached to a row already past the point where its
+   * currency could matter.
+   */
+  async recordQuickSkrQuote(id: string, quote: { atomic: number; expiresAt: string }): Promise<void> {
+    await this.db
+      .prepare(
+        `UPDATE quick_mints SET fee_currency = 'SKR', skr_quote_atomic = ?, skr_quote_expires_at = ?
+         WHERE id = ? AND status = 'STAGED'`,
+      )
+      .bind(quote.atomic, quote.expiresAt, id)
       .run()
   }
 

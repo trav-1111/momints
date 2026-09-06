@@ -5,10 +5,14 @@ import { formatCapturedAt, resolveLocation } from '../services/captureMetadata'
 import { mintNFTBatch, type QuickMintTerms } from '../services/mint'
 import { finalizeQuickMint, releaseQuickStage, stageQuickMint } from '../services/quickMintApi'
 import { mintWorkerFrame, RollApiError } from '../services/rollApi'
+import { isSkrQuoteUnavailable, quoteSkrFee } from '../services/skrApi'
+import { formatSkr } from '../config/skr'
 import { checkPriorAttempt, clearPendingFinalize, recordPendingFinalize } from '../store/quickFinalize'
 import { getClusterRpc } from '../store/network'
 import type { RollContext } from '../store/mintQueue'
 import type { CaptureMeta } from '../store/photos'
+
+const SKR_UNAVAILABLE_NOTE = "$SKR unavailable — paying with SOL instead"
 
 /** Frames per wallet approval. MWA signs a whole chunk in one prompt; kept
  * small so the shared blockhash never expires before send, and so parallel
@@ -23,10 +27,12 @@ export interface BatchItemInput {
   capturedAt: number
   rollContext?: RollContext
   captureMeta?: CaptureMeta
+  /** Quick mint only. Defaults 'SOL'. A Worker quote failure falls back to SOL automatically. */
+  paymentCurrency?: 'SOL' | 'SKR'
 }
 
 export type BatchItemUpdate =
-  | { status: 'uploading' | 'signing' | 'confirming' }
+  | { status: 'uploading' | 'signing' | 'confirming'; note?: string }
   | { status: 'success'; signature: string; mintAddress?: string }
   | { status: 'failed'; error: string }
 
@@ -98,26 +104,45 @@ function isWorkerFrame(item: BatchItemInput): boolean {
  * The pending-finalize entry is written from `onSigned` — before the send —
  * so the fee can never be paid without a persisted record of who owes the
  * upload. See store/quickFinalize.ts.
+ *
+ * If `paymentCurrency` is 'SKR', quotes the Worker HERE — at mint-start,
+ * right after staging returns a stagingKey — never earlier. A quote failure
+ * (Jupiter unreachable, etc.) falls back to the SOL terms staging already
+ * returned; it never blocks the mint or forces a re-pick of currency.
  */
 async function stageAndRecord(params: {
   wallet: string
   photoUri: string
   metadata: ReturnType<typeof buildMintMetadata>
-}): Promise<{ stagingKey: string; placeholderUri: string; terms: QuickMintTerms }> {
+  paymentCurrency?: 'SOL' | 'SKR'
+}): Promise<{ stagingKey: string; placeholderUri: string; terms: QuickMintTerms; note?: string }> {
   const staged = await stageQuickMint({
     wallet: params.wallet,
     photoUri: params.photoUri,
     metadata: params.metadata,
   })
-  return {
-    stagingKey: staged.stagingKey,
-    placeholderUri: staged.placeholderUri,
-    terms: {
-      treasury: staged.treasury,
-      feeLamports: staged.feeLamports,
-      updateAuthority: staged.updateAuthority,
-    },
+  const terms: QuickMintTerms = {
+    treasury: staged.treasury,
+    feeLamports: staged.feeLamports,
+    updateAuthority: staged.updateAuthority,
   }
+
+  let note: string | undefined
+  if (params.paymentCurrency === 'SKR') {
+    try {
+      const quote = await quoteSkrFee({ context: 'quick', stagingKey: staged.stagingKey })
+      if (isSkrQuoteUnavailable(quote)) {
+        note = SKR_UNAVAILABLE_NOTE
+      } else {
+        terms.skr = { atomicAmount: quote.skrAmount, treasurySkrAta: quote.treasurySkrAta }
+        note = `Paying ${formatSkr(quote.skrAmount)}`
+      }
+    } catch {
+      note = SKR_UNAVAILABLE_NOTE
+    }
+  }
+
+  return { stagingKey: staged.stagingKey, placeholderUri: staged.placeholderUri, terms, note }
 }
 
 /**
@@ -265,6 +290,7 @@ export function useMint() {
                 wallet: walletAddress,
                 photoUri: item.photoUri,
                 metadata: buildMintMetadata(item),
+                paymentCurrency: item.paymentCurrency,
               })
               return { item, metadataUri: quick.placeholderUri, quick }
             } catch (err) {
@@ -286,7 +312,12 @@ export function useMint() {
         // the finalize loop below for why this — not `result` — is what drives it.
         const signedInfo = new Map<string, { signature: string; mintAddress: string }>()
 
-        ready.forEach(({ item }) => onItem(item.photoId, { status: 'signing' }))
+        // note carries the quoted $SKR amount ("Paying 12.50 $SKR") or a
+        // fallback notice ($SKR unavailable this attempt) — see
+        // stageAndRecord's doc comment. Shown right before the wallet prompt,
+        // matching the requirement that the exact amount is visible before
+        // signing.
+        ready.forEach(({ item, quick }) => onItem(item.photoId, { status: 'signing', note: quick.note }))
         try {
           // Return value intentionally unused: per-item UI reporting happens
           // inline via the onItemResult callback below, and the finalize loop

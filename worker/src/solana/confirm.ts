@@ -39,10 +39,20 @@ export interface ParsedTransactionAccount {
   writable: boolean
 }
 
+/** One entry of `meta.preTokenBalances`/`postTokenBalances` — indexed by `accountIndex`, NOT positionally aligned like preBalances/postBalances (SPL balances only exist for the subset of accounts that hold a token account). */
+export interface ParsedTokenBalance {
+  accountIndex: number
+  mint: string
+  owner?: string
+  uiTokenAmount: { amount: string; decimals: number }
+}
+
 /**
  * A landed transaction, as much of it as verification needs. `preBalances` and
  * `postBalances` are positionally aligned with `accountKeys`, which is what
  * lets a fee be read as a balance delta rather than by decoding instructions.
+ * `preTokenBalances`/`postTokenBalances` are the SPL-token equivalent, used
+ * for the $SKR fee check (skr/verify helpers) the same way.
  */
 export interface ParsedTransaction {
   slot: number
@@ -53,6 +63,8 @@ export interface ParsedTransaction {
     fee: number
     preBalances: number[]
     postBalances: number[]
+    preTokenBalances?: ParsedTokenBalance[]
+    postTokenBalances?: ParsedTokenBalance[]
   } | null
 }
 

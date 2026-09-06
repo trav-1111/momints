@@ -15,7 +15,7 @@ import {
 } from './env'
 import { FeeCache } from './fees/cache'
 import { runFeeRecompute } from './fees/compute'
-import { SKR_DISCOUNT } from './fees/config'
+import { isBase58Address } from './lib/address'
 import { HttpError, json } from './lib/http'
 import { sanitizeAttributes } from './lib/sanitize'
 import { postDiscordAlert, type AlertSeverity } from './ops/discord'
@@ -38,8 +38,10 @@ import { finalizeQuickMint, type FinalizeQuickMintRequest } from './quick/finali
 import { releaseQuickStage, stageQuickMint } from './quick/stage'
 import { redriveDeferredFinalizes, sweepQuickMints } from './quick/sweep'
 import { createRoll, type CreateRollRequest } from './rolls/create'
+import { isRollSize } from './rolls/config'
 import { mintFrame, summarizeFrames } from './rolls/frames'
 import { revokeRollDelegate, revokeRollDelegateSafely } from './rolls/handoff'
+import { issueSkrQuote, type SkrQuoteRequest } from './skr/quote'
 import { createWorkerUmi, getWorkerPublicKey } from './solana/client'
 
 // Must equal one of the strings in wrangler.toml [triggers] crons exactly —
@@ -70,6 +72,7 @@ const USAGE = `Momints roll backend.
   POST /quick/finalize                  prove the fee landed on-chain, queue the Arweave upload (JSON body)
   DEL  /quick/stage/<stagingKey>        give back an unminted stage (user declined the wallet prompt)
   GET  /quick/<asset>                   quick-mint finalize status
+  POST /skr/quote                       Worker-issued $SKR fee quote (JSON: {context:'quick',stagingKey} or {context:'roll',wallet,size})
 See README.md for request shapes and the operator runbook.
 `
 
@@ -122,7 +125,7 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
   try {
     body = (await request.json()) as CreateRollRequest
   } catch {
-    throw new HttpError(400, 'Body must be JSON: { wallet, size, feeSignature, artist?, skrIdentity?, localDate? }')
+    throw new HttpError(400, 'Body must be JSON: { wallet, size, feeSignature, artist?, skrIdentity?, localDate?, payment? }')
   }
   // Not folded into validateEnv: a half-configured quick flow (missing
   // QUICK_PLACEHOLDER_URI) must never take roll creation down with it, so this
@@ -459,28 +462,67 @@ async function handleGetFees(ctx: WorkerContext): Promise<Response> {
     throw new ConfigError('fee_cache has no row — re-run migrations (0007_fee_cache.sql seeds it).')
   }
 
-  // $SKR payment path is not built yet (see README) — this exposes the
-  // discounted USD-equivalent TARGET a future $SKR quote step can use, per
-  // the feature spec. Null until the first live recompute has run (needs a
-  // sol_usd_price reading; the bootstrap seed row has none).
-  const skrTargetUsd = (feeLamports: number): number | null => {
-    if (row.solUsdPrice === null) return null
-    const usd = (feeLamports / 1_000_000_000) * row.solUsdPrice
-    return Number((usd * (1 - SKR_DISCOUNT)).toFixed(4))
-  }
-
   return json({
     quickFeeLamports: row.quickFeeLamports,
     rollFee12Lamports: row.rollFee12Lamports,
     rollFee24Lamports: row.rollFee24Lamports,
     computedAt: row.computedAt,
     lastGood: row.lastGood,
-    skrTargetUsd: {
-      quick: skrTargetUsd(row.quickFeeLamports),
-      roll12: skrTargetUsd(row.rollFee12Lamports),
-      roll24: skrTargetUsd(row.rollFee24Lamports),
-    },
   })
+}
+
+/**
+ * The real $SKR amount for a mint/roll fee, right now — a live Jupiter quote
+ * of (cost-plus SOL fee x SKR_DISCOUNT), PERSISTED so a later finalize/create
+ * call verifies against exactly this number and never a client-declared
+ * amount. Supersedes the old GET /fees `skrTargetUsd` field, which was a
+ * speculative USD-only estimate with no real Jupiter quote behind it.
+ */
+function parseSkrQuoteRequest(body: unknown): SkrQuoteRequest {
+  const b = (body ?? {}) as Record<string, unknown>
+  if (b.context === 'quick') {
+    if (typeof b.stagingKey !== 'string' || b.stagingKey.length === 0) {
+      throw new HttpError(400, "$SKR quote for context 'quick' requires a non-empty stagingKey")
+    }
+    return { context: 'quick', stagingKey: b.stagingKey }
+  }
+  if (b.context === 'roll') {
+    if (typeof b.wallet !== 'string' || !isBase58Address(b.wallet)) {
+      throw new HttpError(400, "$SKR quote for context 'roll' requires wallet to be a base58 Solana address")
+    }
+    if (typeof b.size !== 'number' || !isRollSize(b.size)) {
+      throw new HttpError(400, `$SKR quote for context 'roll' requires size to be 12 or 24, got ${JSON.stringify(b.size)}`)
+    }
+    return { context: 'roll', wallet: b.wallet, size: b.size }
+  }
+  throw new HttpError(400, "Body must be JSON: { context: 'quick', stagingKey } or { context: 'roll', wallet, size }")
+}
+
+async function handleSkrQuote(ctx: WorkerContext, request: Request): Promise<Response> {
+  if (!ctx.env.QUICK_TREASURY_ADDRESS) {
+    throw new ConfigError(
+      'QUICK_TREASURY_ADDRESS is not set. Put the treasury address in wrangler.toml [vars] — ' +
+        '$SKR quotes cannot derive the treasury ATA without it.',
+    )
+  }
+  let body: unknown
+  try {
+    body = await request.json()
+  } catch {
+    throw new HttpError(400, "Body must be JSON: { context: 'quick', stagingKey } or { context: 'roll', wallet, size }")
+  }
+  const req = parseSkrQuoteRequest(body)
+
+  const result = await issueSkrQuote(
+    {
+      db: ctx.db,
+      feeCache: ctx.feeCache,
+      getUmi: () => createWorkerUmi(ctx.env),
+      treasuryAddress: ctx.env.QUICK_TREASURY_ADDRESS,
+    },
+    req,
+  )
+  return json(result)
 }
 
 /**
@@ -534,6 +576,7 @@ type Route =
   | { kind: 'finalize-quick' }
   | { kind: 'release-quick'; stagingKey: string }
   | { kind: 'get-quick'; asset: string }
+  | { kind: 'skr-quote' }
 
 /** Match secret-requiring routes. Unknown paths 404 before env validation. */
 function matchRoute(method: string, path: string): Route | null {
@@ -548,6 +591,7 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/rolls/open') return { kind: 'open-roll' }
   if (method === 'POST' && path === '/quick/stage') return { kind: 'stage-quick' }
   if (method === 'POST' && path === '/quick/finalize') return { kind: 'finalize-quick' }
+  if (method === 'POST' && path === '/skr/quote') return { kind: 'skr-quote' }
   // stagingKey is a uuid, not an address — matched before the base58 rule below.
   const releaseMatch = path.match(/^\/quick\/stage\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)
   if (releaseMatch && method === 'DELETE') return { kind: 'release-quick', stagingKey: releaseMatch[1] }
@@ -635,6 +679,8 @@ export default {
           return await handleReleaseQuickStage(ctx, route.stagingKey)
         case 'get-quick':
           return await handleGetQuickMint(ctx, route.asset)
+        case 'skr-quote':
+          return await handleSkrQuote(ctx, request)
       }
     } catch (err) {
       if (err instanceof HttpError) {

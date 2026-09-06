@@ -10,6 +10,8 @@ import { sanitizeDisplayName } from '../lib/sanitize'
 import { withBackoff } from '../lib/retry'
 import type { FundingProvider, StorageProvider, TreasurySink } from '../providers/types'
 import { sendAndConfirm } from '../solana/confirm'
+import { deriveAta } from '../skr/ata'
+import { SKR_MINT_ADDRESS } from '../skr/config'
 import { generateCover } from './cover'
 import { estimatedRollBytes, isRollSize, type RollSize } from './config'
 import { verifyRollFeePayment } from './verify'
@@ -23,8 +25,10 @@ export interface CreateRollRequest {
   skrIdentity?: string
   /** Client-local calendar date (yyyy-mm-dd) so the roll name matches the shooter's day. */
   localDate?: string
-  /** Signature of the wallet's SOL transfer paying the roll fee. Verified on-chain — see verify.ts. */
+  /** Signature of the fee-paying transaction — SOL transfer or, when `payment` is 'SKR', the $SKR TransferChecked. Verified on-chain — see verify.ts. */
   feeSignature: string
+  /** Which currency paid the fee. Defaults 'SOL'. Not to be confused with `skrIdentity` (the SKR handle display name) — this is the $SKR token payment option. */
+  payment?: 'SOL' | 'SKR'
 }
 
 export interface CreateRollDeps {
@@ -36,9 +40,13 @@ export interface CreateRollDeps {
   /** Cost-plus fee cache (fees/cache.ts) — the current roll_fee_12/24 lamports. */
   feeCache: FeeCache
   /**
-   * Lazy on purpose: umi and the storage/funding seams are only constructed
-   * after validation, the single-open-roll check, and fee verification pass,
-   * so invalid or unpaid requests never touch Turbo or the RPC.
+   * Lazy on purpose: the storage/funding seams are only constructed after
+   * validation, the single-open-roll check, and fee verification pass, so
+   * invalid or unpaid requests never touch Turbo or the RPC. `getUmi` itself
+   * may be called slightly earlier, for a $SKR payment only, to derive the
+   * treasury's SKR ATA — pure local PDA math, no RPC call, so this costs
+   * nothing and doesn't weaken the "unpaid requests never touch the network"
+   * guarantee.
    */
   getUmi: () => Promise<Umi>
   getSeams: () => Promise<{ storage: StorageProvider; funding: FundingProvider }>
@@ -107,9 +115,10 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
   //
   // The client pays the fee in its own wallet-signed transfer to the treasury
   // BEFORE calling this endpoint (see src/services/rollCollection.ts:payRollFee
-  // in the app), then hands us the landed signature. Nothing below this point
-  // may run until that transfer is confirmed on-chain, at the required amount,
-  // paid by this exact wallet.
+  // in the app — payRollFee or paySkrRollFee, depending on `payment`), then
+  // hands us the landed signature. Nothing below this point may run until
+  // that transfer is confirmed on-chain, at the required amount, paid by
+  // this exact wallet.
   if (typeof req.feeSignature !== 'string' || req.feeSignature.length === 0) {
     throw new HttpError(402, 'feeSignature is required — pay the roll fee to the treasury before creating the roll')
   }
@@ -120,14 +129,39 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
       `feeSignature ${req.feeSignature} already paid for roll ${alreadyUsed.collection_address} — it cannot pay for a second roll`,
     )
   }
-  // Cost-plus fee (fees/compute.ts), read ONCE and reused below for the
-  // treasury record too, so verification and bookkeeping never disagree
-  // within this one request even if a recompute lands mid-request.
-  const feeCacheRow = await feeCache.get()
-  if (!feeCacheRow) {
-    throw new ConfigError('fee_cache has no row — re-run migrations (0007_fee_cache.sql seeds it).')
+
+  const paidWithSkr = req.payment === 'SKR'
+  let requiredFeeLamports = 0
+  let skrCheck: { treasurySkrAta: string; requiredAtomic: number; quoteExpiresAt: string | null } | undefined
+  let skrQuoteAtomic: number | undefined
+
+  if (paidWithSkr) {
+    // The quote was issued (and persisted) by POST /skr/quote, which is also
+    // what derived and returned the treasury's SKR ATA to the app — re-derive
+    // it here rather than trust a client-supplied address. Pure PDA math, no
+    // RPC call, so constructing umi this early costs nothing (see getUmi's
+    // own doc comment on why it is otherwise deferred).
+    const quote = await db.getRollSkrQuote(req.wallet)
+    if (!quote) {
+      throw new HttpError(402, `No $SKR quote was ever issued for wallet ${req.wallet} — call POST /skr/quote before paying`)
+    }
+    const umi = await getUmi()
+    skrCheck = {
+      treasurySkrAta: deriveAta(umi, publicKey(treasuryAddress), publicKey(SKR_MINT_ADDRESS)).toString(),
+      requiredAtomic: quote.skr_amount_atomic,
+      quoteExpiresAt: quote.expires_at,
+    }
+    skrQuoteAtomic = quote.skr_amount_atomic
+  } else {
+    // Cost-plus fee (fees/compute.ts), read ONCE and reused below for the
+    // treasury record too, so verification and bookkeeping never disagree
+    // within this one request even if a recompute lands mid-request.
+    const feeCacheRow = await feeCache.get()
+    if (!feeCacheRow) {
+      throw new ConfigError('fee_cache has no row — re-run migrations (0007_fee_cache.sql seeds it).')
+    }
+    requiredFeeLamports = size === 12 ? feeCacheRow.rollFee12Lamports : feeCacheRow.rollFee24Lamports
   }
-  const requiredFeeLamports = size === 12 ? feeCacheRow.rollFee12Lamports : feeCacheRow.rollFee24Lamports
 
   const verdict = await verifyRollFeePayment(rpcUrl, {
     signature: req.feeSignature,
@@ -135,12 +169,17 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
     treasury: treasuryAddress,
     size,
     requiredLamports: requiredFeeLamports,
+    skr: skrCheck,
   })
   if (!verdict.ok) {
     if (verdict.retryable) {
       throw new HttpError(503, `${verdict.reason}. Retry roll creation with the same feeSignature — nothing has been spent yet.`)
     }
     throw new HttpError(402, `Roll fee refused: ${verdict.reason}`)
+  }
+  // Verified — this quote can never be replayed against a second roll.
+  if (paidWithSkr) {
+    await db.deleteRollSkrQuote(req.wallet)
   }
 
   // ---- Funding PRE-CHECK — fail fast, never fund inline ----
@@ -236,16 +275,24 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
     metadataUri,
     createSignature: signature,
     feeSignature: req.feeSignature,
+    feeCurrency: paidWithSkr ? 'SKR' : 'SOL',
+    skrFeeAtomic: skrQuoteAtomic,
   })
 
   const feeLamports = requiredFeeLamports
-  await treasury.record(feeLamports, {
-    kind: 'roll_fee',
-    collection: collectionAddress,
-    wallet: req.wallet,
-    size,
-    feeSignature: req.feeSignature,
-  })
+  // Skipped for $SKR — treasury_entries only tracks SOL awaiting manual ->
+  // $SKR conversion (ManualSink's doc comment); a direct $SKR payment needs
+  // none. rolls.fee_currency/skr_fee_atomic (just written above) are the
+  // audit trail instead — see README "Pay with $SKR".
+  if (!paidWithSkr) {
+    await treasury.record(feeLamports, {
+      kind: 'roll_fee',
+      collection: collectionAddress,
+      wallet: req.wallet,
+      size,
+      feeSignature: req.feeSignature,
+    })
+  }
 
   return {
     collectionAddress,
