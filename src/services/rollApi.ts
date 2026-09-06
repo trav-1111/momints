@@ -93,6 +93,8 @@ export interface CreateRollBody {
   localDate?: string
   /** Signature of the wallet's fee transfer to the treasury — verified on-chain by the Worker before it spends anything. */
   feeSignature: string
+  /** Which currency paid the fee. Defaults 'SOL'. See services/skrApi.ts. */
+  payment?: 'SOL' | 'SKR'
 }
 
 export interface CreateRollResponse {
@@ -276,7 +278,6 @@ export interface WorkerFeesResponse {
   rollFee24Lamports: number
   computedAt: string
   lastGood: boolean
-  skrTargetUsd: { quick: number | null; roll12: number | null; roll24: number | null }
 }
 
 export function getWorkerFees(): Promise<WorkerFeesResponse> {

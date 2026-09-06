@@ -26,6 +26,8 @@ export interface MintQueueItem {
   createdAt: number
   rollContext?: RollContext
   captureMeta?: CaptureMeta
+  /** Quick mint only — which currency should pay the fee. Defaults 'SOL'. A Worker quote failure falls back to SOL. */
+  paymentCurrency?: 'SOL' | 'SKR'
 }
 
 export interface MintHistoryItem {

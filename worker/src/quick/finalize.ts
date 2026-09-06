@@ -1,10 +1,12 @@
-import type { Umi } from '@metaplex-foundation/umi'
+import { publicKey, type Umi } from '@metaplex-foundation/umi'
 import { DuplicateSignatureError, type QuickMintRow, type RollDb } from '../db'
 import type { QuickFinalizeMessage } from '../env'
 import { isBase58Address } from '../lib/address'
 import { HttpError } from '../lib/http'
 import type { AlertFn } from './consumer'
 import type { TreasurySink } from '../providers/types'
+import { deriveAta } from '../skr/ata'
+import { SKR_MINT_ADDRESS } from '../skr/config'
 import { verifyQuickMintPayment } from './verify'
 
 /**
@@ -14,7 +16,7 @@ import { verifyQuickMintPayment } from './verify'
  * expected to finalize (or die) within minutes; this is not a live fee, just
  * what the flat fee was immediately before the cost-plus swap.
  */
-const LEGACY_QUICK_FEE_LAMPORTS_FALLBACK = 6_500_000
+export const LEGACY_QUICK_FEE_LAMPORTS_FALLBACK = 6_500_000
 
 export interface FinalizeQuickMintRequest {
   stagingKey: string
@@ -133,6 +135,18 @@ export async function finalizeQuickMint(
     treasury: treasuryAddress,
     placeholderUri,
     requiredLamports,
+    // Set by POST /skr/quote (recordQuickSkrQuote) the moment a quote is
+    // issued — a row's OWN fee_currency, not the request body, decides which
+    // branch verify takes, so a client can never claim a different currency
+    // than what was actually quoted for this exact row.
+    skr:
+      row.fee_currency === 'SKR'
+        ? {
+            treasurySkrAta: deriveAta(umi, publicKey(treasuryAddress), publicKey(SKR_MINT_ADDRESS)).toString(),
+            requiredAtomic: row.skr_quote_atomic ?? 0,
+            quoteExpiresAt: row.skr_quote_expires_at,
+          }
+        : undefined,
   })
 
   if (!verdict.ok) {
@@ -195,12 +209,20 @@ export async function finalizeQuickMint(
     throw new HttpError(503, `Staged quick mint ${row.id} changed underneath this request — retry.`)
   }
 
-  await treasury.record(requiredLamports, {
-    kind: 'quick_mint_fee',
-    asset: req.assetAddress,
-    wallet: row.wallet,
-    signature: req.signature,
-  })
+  // treasury_entries tracks SOL that needs manual -> $SKR conversion
+  // (ManualSink's doc comment); a $SKR payment needs no conversion, the
+  // treasury already holds the target currency the instant it lands, so
+  // there is nothing to record here. quick_mints.fee_currency/
+  // skr_quote_atomic (already written by POST /skr/quote) are themselves the
+  // full audit trail for $SKR revenue — see README "Pay with $SKR".
+  if (row.fee_currency !== 'SKR') {
+    await treasury.record(requiredLamports, {
+      kind: 'quick_mint_fee',
+      asset: req.assetAddress,
+      wallet: row.wallet,
+      signature: req.signature,
+    })
+  }
 
   // A send failure here leaves a FINALIZING row with no message. The scheduled
   // sweep re-drives stalled FINALIZING rows, so the work is not lost — surface

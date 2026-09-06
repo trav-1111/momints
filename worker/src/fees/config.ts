@@ -63,8 +63,8 @@ export const ARWEAVE_URI_LEN = 64
  */
 export const RATE_REFERENCE_LAMPORTS = 1_000_000_000n
 
-/** $SKR pays a discount off the cost-plus fee. See fees/compute.ts's skrTargetUsd. */
-export const SKR_DISCOUNT = 0.25
+/** $SKR pays a discount off the cost-plus fee. See skr/quote.ts. */
+export const SKR_DISCOUNT = 0.15
 
 /**
  * Guard 2 sanity bounds on Turbo's storage quote for one ESTIMATED_FRAME_BYTES

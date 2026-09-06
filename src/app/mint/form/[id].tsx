@@ -95,6 +95,10 @@ export default function MintFormScreen() {
   const [artist, setArtist] = useState(existing?.artist ?? '')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [focusedField, setFocusedField] = useState<'title' | 'artist' | null>(null)
+  // Intent only — the worker quote actually fires (and the exact amount is
+  // shown) at mint-start, in useMint.ts. A quote failure there falls back to
+  // SOL automatically, so this toggle never blocks minting.
+  const [payWithSkr, setPayWithSkr] = useState(existing?.paymentCurrency === 'SKR')
 
   // Pre-populate title from roll on first mount — but never over a title the
   // user already saved, or re-opening a queued frame would silently discard it.
@@ -143,6 +147,7 @@ export default function MintFormScreen() {
         capturedAt: photo.capturedAt,
         rollContext: rollContext ?? undefined,
         captureMeta: photo.meta,
+        paymentCurrency: !rollContext && payWithSkr ? 'SKR' : 'SOL',
       })
 
       router.back()
@@ -152,7 +157,7 @@ export default function MintFormScreen() {
     } finally {
       setIsSubmitting(false)
     }
-  }, [photo, title, artist, account, connect, addToQueue, router, rollContext])
+  }, [photo, title, artist, account, connect, addToQueue, router, rollContext, payWithSkr])
 
   const handleBack = useCallback(() => {
     router.back()
@@ -290,6 +295,39 @@ export default function MintFormScreen() {
             )}
             <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textSecondary }}>~0.01 SOL</Text>
           </View>
+
+          {/* Pay with $SKR — roll frames have no per-frame fee, so this only
+              applies to a standalone quick mint. The exact amount is quoted
+              and shown at mint-start (useMint.ts), not here. */}
+          {!rollContext && (
+            <Pressable
+              onPress={() => setPayWithSkr((v) => !v)}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                paddingVertical: 11,
+                paddingHorizontal: 15,
+                borderRadius: 12,
+                backgroundColor: colors.surface,
+                borderWidth: 1,
+                borderColor: payWithSkr ? colors.accent : colors.border,
+                marginBottom: 20,
+              }}
+            >
+              <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 12.5, color: colors.text }}>Pay with $SKR</Text>
+              <View
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: 9,
+                  backgroundColor: payWithSkr ? colors.accent : 'transparent',
+                  borderWidth: 1,
+                  borderColor: payWithSkr ? colors.accent : colors.border,
+                }}
+              />
+            </Pressable>
+          )}
         </View>
 
         {/* Mint Button */}

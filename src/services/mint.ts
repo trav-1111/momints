@@ -4,12 +4,14 @@ import {
   createNoopSigner,
   generateSigner,
   publicKey,
+  publicKeyBytes,
   signTransaction as umiSignTransaction,
   transactionBuilder,
   type Umi,
   type PublicKey as UmiPublicKey,
   type BlockhashWithExpiryBlockHeight,
 } from '@metaplex-foundation/umi'
+import { SKR_DECIMALS, SKR_MINT_ADDRESS } from '../config/skr'
 import { toWeb3JsTransaction } from '@metaplex-foundation/umi-web3js-adapters'
 import { sendTransactionWithoutConfirmingFactory } from '@solana/kit'
 import type { Signature } from '@solana/keys'
@@ -100,6 +102,68 @@ export function transferSolItem(from: UmiPublicKey, to: UmiPublicKey, lamports: 
   }
 }
 
+// Well-known, network-wide program ids — never configuration, never secrets.
+const TOKEN_PROGRAM_ID = publicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
+const ASSOCIATED_TOKEN_PROGRAM_ID = publicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
+
+// SPL Token TransferChecked: u8 instruction index (12) + u64 amount, LE, + u8
+// decimals. TransferChecked (not the bare Transfer) so a wrong mint or
+// decimals mismatch fails the instruction itself rather than silently moving
+// the wrong token — worth the 2 extra bytes for a fee-paying transfer.
+function encodeTransferChecked(amount: number, decimals: number): Uint8Array {
+  const data = new Uint8Array(10)
+  const view = new DataView(data.buffer)
+  data[0] = 12
+  view.setUint32(1, amount >>> 0, true)
+  view.setUint32(5, Math.floor(amount / 0x100000000), true)
+  data[9] = decimals
+  return data
+}
+
+/**
+ * A $SKR fee transfer as a transaction-builder item — the $SKR analogue of
+ * transferSolItem, same "ride inside the transaction it pays for" shape.
+ * `source`/`destination` are token accounts (ATAs), not wallets.
+ */
+export function transferSplTokenCheckedItem(params: {
+  source: UmiPublicKey
+  mint: UmiPublicKey
+  destination: UmiPublicKey
+  owner: UmiPublicKey
+  amount: number
+  decimals: number
+}) {
+  return {
+    instruction: {
+      programId: TOKEN_PROGRAM_ID,
+      keys: [
+        { pubkey: params.source, isSigner: false, isWritable: true },
+        { pubkey: params.mint, isSigner: false, isWritable: false },
+        { pubkey: params.destination, isSigner: false, isWritable: true },
+        { pubkey: params.owner, isSigner: true, isWritable: false },
+      ],
+      data: encodeTransferChecked(params.amount, params.decimals),
+    },
+    signers: [],
+    bytesCreatedOnChain: 0,
+  }
+}
+
+/**
+ * The standard Associated Token Account for `owner` holding $SKR — a pure,
+ * local PDA derivation (no RPC call). Mirrored by hand in the Worker
+ * (worker/src/skr/ata.ts) for the treasury's own ATA — kept in sync by hand,
+ * same discipline as this file's other app/worker constant duplication.
+ */
+export function deriveOwnerSkrAta(umi: Umi, owner: UmiPublicKey): UmiPublicKey {
+  const [pda] = umi.eddsa.findPda(ASSOCIATED_TOKEN_PROGRAM_ID, [
+    publicKeyBytes(owner),
+    publicKeyBytes(TOKEN_PROGRAM_ID),
+    publicKeyBytes(publicKey(SKR_MINT_ADDRESS)),
+  ])
+  return pda
+}
+
 // Momints earns on the mint fee, not on secondary sales. 100% of the royalty
 // goes to the shooter; there is no platform cut. This is a DECIDED value, not
 // a placeholder — mirrors ROYALTY_BASIS_POINTS in worker/src/lib/royalties.ts
@@ -129,6 +193,18 @@ export interface QuickMintTerms {
   treasury: string
   feeLamports: number
   updateAuthority: string
+  /**
+   * Present only when this mint's FEE is being paid in $SKR instead of SOL —
+   * `feeLamports` above is then unused. Both `atomicAmount` and
+   * `treasurySkrAta` come from the Worker's own POST /skr/quote response,
+   * never computed app-side (see services/skrApi.ts). Asset-creation RENT is
+   * unaffected either way — it is paid automatically by createCoreAsset's
+   * payer (the wallet), in SOL, regardless of which currency covers the fee.
+   */
+  skr?: {
+    atomicAmount: number
+    treasurySkrAta: string
+  }
 }
 
 export interface MintNFTParams {
@@ -329,10 +405,24 @@ async function buildQuickCoreTransaction(
 ): Promise<{ kitTx: Transaction; mintAddress: string }> {
   const assetSigner = generateSigner(umi)
   const [limitItem, priceItem] = computeBudgetItems()
+  // Fee item: $SKR (TransferChecked to the treasury's SKR ATA, worker-issued
+  // amount) when the quote succeeded, otherwise the ordinary SOL transfer.
+  // Rent for the asset account below is unaffected either way — createCoreAsset
+  // pays it in SOL regardless of which currency covers the fee.
+  const feeItem = item.terms.skr
+    ? transferSplTokenCheckedItem({
+        source: deriveOwnerSkrAta(umi, walletPk),
+        mint: publicKey(SKR_MINT_ADDRESS),
+        destination: publicKey(item.terms.skr.treasurySkrAta),
+        owner: walletPk,
+        amount: item.terms.skr.atomicAmount,
+        decimals: SKR_DECIMALS,
+      })
+    : transferSolItem(walletPk, publicKey(item.terms.treasury), item.terms.feeLamports)
   const built = transactionBuilder()
     .add(limitItem)
     .add(priceItem)
-    .add(transferSolItem(walletPk, publicKey(item.terms.treasury), item.terms.feeLamports))
+    .add(feeItem)
     .add(
       createCoreAsset(umi, {
         asset: assetSigner,
