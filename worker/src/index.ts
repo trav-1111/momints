@@ -18,6 +18,7 @@ import { runFeeRecompute } from './fees/compute'
 import { isBase58Address } from './lib/address'
 import { HttpError, json } from './lib/http'
 import { sanitizeAttributes } from './lib/sanitize'
+import { getHealthSnapshot, getMetricsSnapshot, getWalletsSnapshot, type MetricsWindow } from './ops/dashboard'
 import { postDiscordAlert, type AlertSeverity } from './ops/discord'
 import {
   ALERT_THRESHOLD_CRITICAL_ROLLS,
@@ -73,6 +74,12 @@ const USAGE = `Momints roll backend.
   DEL  /quick/stage/<stagingKey>        give back an unminted stage (user declined the wallet prompt)
   GET  /quick/<asset>                   quick-mint finalize status
   POST /skr/quote                       Worker-issued $SKR fee quote (JSON: {context:'quick',stagingKey} or {context:'roll',wallet,size})
+  GET  /ops/dashboard/wallets           signer + treasury balances (SOL, $SKR, Turbo credits) — operator dashboard
+                                         requires: Authorization: Bearer <OPS_AUTH_TOKEN>
+  GET  /ops/dashboard/health            cron last-run, stuck/DEAD counts, current fees — operator dashboard
+                                         requires: Authorization: Bearer <OPS_AUTH_TOKEN>
+  GET  /ops/dashboard/metrics?window=all|7d|30d   aggregate usage metrics ONLY, never per-wallet — operator dashboard
+                                         requires: Authorization: Bearer <OPS_AUTH_TOKEN>
 See README.md for request shapes and the operator runbook.
 `
 
@@ -125,7 +132,10 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
   try {
     body = (await request.json()) as CreateRollRequest
   } catch {
-    throw new HttpError(400, 'Body must be JSON: { wallet, size, feeSignature, artist?, skrIdentity?, localDate?, payment? }')
+    throw new HttpError(
+      400,
+      'Body must be JSON: { wallet, size, feeSignature, artist?, skrIdentity?, localDate?, payment? }',
+    )
   }
   // Not folded into validateEnv: a half-configured quick flow (missing
   // QUICK_PLACEHOLDER_URI) must never take roll creation down with it, so this
@@ -155,7 +165,10 @@ async function handleMintFrame(ctx: WorkerContext, request: Request, collectionA
   try {
     form = await request.formData()
   } catch {
-    throw new HttpError(400, 'Body must be multipart/form-data with fields: image (file), frameIndex, description?, attributes?')
+    throw new HttpError(
+      400,
+      'Body must be multipart/form-data with fields: image (file), frameIndex, description?, attributes?',
+    )
   }
   const image = form.get('image')
   const frameIndex = Number(form.get('frameIndex'))
@@ -391,6 +404,41 @@ function requireOpsAuth(ctx: WorkerContext, request: Request): void {
   }
 }
 
+/**
+ * CORS for GET /ops/dashboard/* only — every other route here is app-to-
+ * worker, which browsers don't CORS-check. Never reflects an arbitrary
+ * Origin: the allow-origin header is set ONLY when it exactly matches the
+ * configured DASHBOARD_ORIGIN, so this can't be tricked into allowing a
+ * different site — see env.ts's doc comment on why this is a courtesy
+ * header, not the actual security boundary (requireOpsAuth is).
+ */
+function dashboardOriginMatch(env: Env, request: Request): string | null {
+  const origin = request.headers.get('origin')
+  return env.DASHBOARD_ORIGIN && origin === env.DASHBOARD_ORIGIN ? env.DASHBOARD_ORIGIN : null
+}
+
+function dashboardCorsPreflight(env: Env, request: Request): Response {
+  const headers = new Headers()
+  const allowedOrigin = dashboardOriginMatch(env, request)
+  if (allowedOrigin) {
+    headers.set('access-control-allow-origin', allowedOrigin)
+    headers.set('access-control-allow-headers', 'authorization, content-type')
+    headers.set('access-control-allow-methods', 'GET, OPTIONS')
+    headers.set('access-control-max-age', '86400')
+    headers.set('vary', 'origin')
+  }
+  return new Response(null, { status: 204, headers })
+}
+
+function withDashboardCors(response: Response, env: Env, request: Request): Response {
+  const allowedOrigin = dashboardOriginMatch(env, request)
+  if (!allowedOrigin) return response
+  const headers = new Headers(response.headers)
+  headers.set('access-control-allow-origin', allowedOrigin)
+  headers.set('vary', 'origin')
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
+
 async function handleOpsStatus(ctx: WorkerContext): Promise<Response> {
   const { funding } = await ctx.storageSeams()
   const snapshot = await readFundingSnapshot(funding)
@@ -409,9 +457,7 @@ async function handleOpsStatus(ctx: WorkerContext): Promise<Response> {
     perFrameAtomic: snapshot.perFrameAtomic,
     sufficientForOneFrame: snapshot.funding.sufficient,
     thresholds: { lowRolls: ALERT_THRESHOLD_LOW_ROLLS, criticalRolls: ALERT_THRESHOLD_CRITICAL_ROLLS },
-    lastAlerted: state
-      ? { level: state.last_level, value: state.last_value, updatedAt: state.updated_at }
-      : null,
+    lastAlerted: state ? { level: state.last_level, value: state.last_value, updatedAt: state.updated_at } : null,
     /** What the next cron run would do at this instant. */
     wouldPost: snapshot.level !== lastLevel,
     discordConfigured: Boolean(ctx.env.DISCORD_WEBHOOK_URL),
@@ -491,7 +537,10 @@ function parseSkrQuoteRequest(body: unknown): SkrQuoteRequest {
       throw new HttpError(400, "$SKR quote for context 'roll' requires wallet to be a base58 Solana address")
     }
     if (typeof b.size !== 'number' || !isRollSize(b.size)) {
-      throw new HttpError(400, `$SKR quote for context 'roll' requires size to be 12 or 24, got ${JSON.stringify(b.size)}`)
+      throw new HttpError(
+        400,
+        `$SKR quote for context 'roll' requires size to be 12 or 24, got ${JSON.stringify(b.size)}`,
+      )
     }
     return { context: 'roll', wallet: b.wallet, size: b.size }
   }
@@ -559,6 +608,39 @@ async function handleOpsSweepQuickMints(ctx: WorkerContext): Promise<Response> {
   return json(result)
 }
 
+// ─── Operator dashboard (ops/dashboard.ts) ─────────────────────────────────
+//
+// Three read-only, aggregate-only, OPS_AUTH_TOKEN-gated endpoints for the
+// Cloudflare Pages dashboard — see worker/README.md "Operator dashboard" and
+// dashboard/README.md. requireOpsAuth() at each call site below is the real
+// security boundary; withDashboardCors()/dashboardCorsPreflight() near the
+// bottom of this file are a browser-side courtesy on top of it, not a
+// substitute for it.
+
+async function handleOpsDashboardWallets(ctx: WorkerContext): Promise<Response> {
+  const env = validateQuickEnv(ctx.env) // needs QUICK_TREASURY_ADDRESS
+  const result = await getWalletsSnapshot({
+    env: ctx.env,
+    rpcUrl: ctx.env.SOLANA_RPC_URL,
+    treasuryAddress: env.QUICK_TREASURY_ADDRESS,
+    getUmi: () => createWorkerUmi(ctx.env),
+    getFunding: async () => (await ctx.storageSeams()).funding,
+  })
+  return json(result)
+}
+
+async function handleOpsDashboardHealth(ctx: WorkerContext): Promise<Response> {
+  const result = await getHealthSnapshot({ db: ctx.db, feeCache: ctx.feeCache, opsAlerts: ctx.opsAlerts })
+  return json(result)
+}
+
+async function handleOpsDashboardMetrics(ctx: WorkerContext, url: URL): Promise<Response> {
+  const raw = url.searchParams.get('window')
+  const window: MetricsWindow = raw === '7d' || raw === '30d' ? raw : 'all'
+  const result = await getMetricsSnapshot({ db: ctx.db }, window)
+  return json(result)
+}
+
 type Route =
   | { kind: 'funding-status' }
   | { kind: 'treasury-status' }
@@ -577,6 +659,9 @@ type Route =
   | { kind: 'release-quick'; stagingKey: string }
   | { kind: 'get-quick'; asset: string }
   | { kind: 'skr-quote' }
+  | { kind: 'ops-dashboard-wallets' }
+  | { kind: 'ops-dashboard-health' }
+  | { kind: 'ops-dashboard-metrics' }
 
 /** Match secret-requiring routes. Unknown paths 404 before env validation. */
 function matchRoute(method: string, path: string): Route | null {
@@ -592,6 +677,9 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'POST' && path === '/quick/stage') return { kind: 'stage-quick' }
   if (method === 'POST' && path === '/quick/finalize') return { kind: 'finalize-quick' }
   if (method === 'POST' && path === '/skr/quote') return { kind: 'skr-quote' }
+  if (method === 'GET' && path === '/ops/dashboard/wallets') return { kind: 'ops-dashboard-wallets' }
+  if (method === 'GET' && path === '/ops/dashboard/health') return { kind: 'ops-dashboard-health' }
+  if (method === 'GET' && path === '/ops/dashboard/metrics') return { kind: 'ops-dashboard-metrics' }
   // stagingKey is a uuid, not an address — matched before the base58 rule below.
   const releaseMatch = path.match(/^\/quick\/stage\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)
   if (releaseMatch && method === 'DELETE') return { kind: 'release-quick', stagingKey: releaseMatch[1] }
@@ -613,91 +701,117 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     const path = url.pathname.replace(/\/+$/, '') || '/'
-
-    try {
-      if (request.method === 'GET' && path === '/') {
-        return new Response(USAGE, { headers: { 'content-type': 'text/plain' } })
-      }
-      if (request.method === 'GET' && path === '/health') {
-        return handleHealth(env)
-      }
-
-      const route = matchRoute(request.method, path)
-      if (!route) {
-        return json({ error: `No route: ${request.method} ${path}. GET / for usage.` }, 404)
-      }
-
-      // Fail fast, operator-facing, before any work: required secrets present
-      // and not pointing at a public RPC (no public fallback exists).
-      const ctx = new WorkerContext(validateEnv(env))
-
-      switch (route.kind) {
-        case 'funding-status': {
-          const { funding } = await ctx.storageSeams()
-          // Same single balance read the cron uses (ops/monitor.ts). Response
-          // is the original FundingStatus plus the derived roll headroom.
-          const snapshot = await readFundingSnapshot(funding)
-          return json({
-            ...snapshot.funding,
-            balanceCredits: snapshot.balanceCredits,
-            perRollCredits: snapshot.perRollCredits,
-            rollsRemaining: snapshot.rollsRemaining,
-            level: snapshot.level,
-          })
-        }
-        case 'treasury-status':
-          return json(await ctx.treasury.status())
-        case 'fees':
-          return await handleGetFees(ctx)
-        case 'ops-status':
-          requireOpsAuth(ctx, request)
-          return await handleOpsStatus(ctx)
-        case 'ops-test-alert':
-          requireOpsAuth(ctx, request)
-          return await handleOpsTestAlert(ctx, url)
-        case 'ops-recompute-fees':
-          requireOpsAuth(ctx, request)
-          return await handleOpsRecomputeFees(ctx)
-        case 'ops-sweep-quick-mints':
-          requireOpsAuth(ctx, request)
-          return await handleOpsSweepQuickMints(ctx)
-        case 'create-roll':
-          return await handleCreateRoll(ctx, request)
-        case 'open-roll':
-          return await handleGetOpenRoll(ctx, url)
-        case 'get-roll':
-          return await handleGetRoll(ctx, route.collection)
-        case 'mint-frame':
-          return await handleMintFrame(ctx, request, route.collection)
-        case 'complete-roll':
-          return await handleCompleteRoll(ctx, route.collection)
-        case 'stage-quick':
-          return await handleStageQuickMint(ctx, request)
-        case 'finalize-quick':
-          return await handleFinalizeQuickMint(ctx, request)
-        case 'release-quick':
-          return await handleReleaseQuickStage(ctx, route.stagingKey)
-        case 'get-quick':
-          return await handleGetQuickMint(ctx, route.asset)
-        case 'skr-quote':
-          return await handleSkrQuote(ctx, request)
-      }
-    } catch (err) {
-      if (err instanceof HttpError) {
-        return json({ error: err.message }, err.status)
-      }
-      if (err instanceof ConfigError) {
-        return json({ error: `Worker misconfigured: ${err.message}` }, 500)
-      }
-      if (err instanceof TurboFundingShortError) {
-        // Same operator-facing shape as the ensureFunded() pre-check 503s —
-        // this is the backstop for the balance moving between that check and
-        // the upload itself. Never a user-facing bug; see turboClient.ts.
-        return json({ error: `Storage funding: ${err.message}` }, 503)
-      }
-      console.error('[unhandled]', err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err))
-      return json({ error: err instanceof Error ? err.message : 'Internal error' }, 500)
+    // Only the operator dashboard's data routes are ever called from a
+    // browser — every other route here is app-to-worker, which CORS doesn't
+    // apply to. Scoping CORS to this prefix keeps every other route's
+    // response byte-for-byte unchanged.
+    const isDashboardRoute = path.startsWith('/ops/dashboard/')
+    if (isDashboardRoute && request.method === 'OPTIONS') {
+      return dashboardCorsPreflight(env, request)
     }
+
+    const response = await (async (): Promise<Response> => {
+      try {
+        if (request.method === 'GET' && path === '/') {
+          return new Response(USAGE, { headers: { 'content-type': 'text/plain' } })
+        }
+        if (request.method === 'GET' && path === '/health') {
+          return handleHealth(env)
+        }
+
+        const route = matchRoute(request.method, path)
+        if (!route) {
+          return json({ error: `No route: ${request.method} ${path}. GET / for usage.` }, 404)
+        }
+
+        // Fail fast, operator-facing, before any work: required secrets present
+        // and not pointing at a public RPC (no public fallback exists).
+        const ctx = new WorkerContext(validateEnv(env))
+
+        switch (route.kind) {
+          case 'funding-status': {
+            const { funding } = await ctx.storageSeams()
+            // Same single balance read the cron uses (ops/monitor.ts). Response
+            // is the original FundingStatus plus the derived roll headroom.
+            const snapshot = await readFundingSnapshot(funding)
+            return json({
+              ...snapshot.funding,
+              balanceCredits: snapshot.balanceCredits,
+              perRollCredits: snapshot.perRollCredits,
+              rollsRemaining: snapshot.rollsRemaining,
+              level: snapshot.level,
+            })
+          }
+          case 'treasury-status':
+            return json(await ctx.treasury.status())
+          case 'fees':
+            return await handleGetFees(ctx)
+          case 'ops-status':
+            requireOpsAuth(ctx, request)
+            return await handleOpsStatus(ctx)
+          case 'ops-test-alert':
+            requireOpsAuth(ctx, request)
+            return await handleOpsTestAlert(ctx, url)
+          case 'ops-recompute-fees':
+            requireOpsAuth(ctx, request)
+            return await handleOpsRecomputeFees(ctx)
+          case 'ops-sweep-quick-mints':
+            requireOpsAuth(ctx, request)
+            return await handleOpsSweepQuickMints(ctx)
+          case 'create-roll':
+            return await handleCreateRoll(ctx, request)
+          case 'open-roll':
+            return await handleGetOpenRoll(ctx, url)
+          case 'get-roll':
+            return await handleGetRoll(ctx, route.collection)
+          case 'mint-frame':
+            return await handleMintFrame(ctx, request, route.collection)
+          case 'complete-roll':
+            return await handleCompleteRoll(ctx, route.collection)
+          case 'stage-quick':
+            return await handleStageQuickMint(ctx, request)
+          case 'finalize-quick':
+            return await handleFinalizeQuickMint(ctx, request)
+          case 'release-quick':
+            return await handleReleaseQuickStage(ctx, route.stagingKey)
+          case 'get-quick':
+            return await handleGetQuickMint(ctx, route.asset)
+          case 'skr-quote':
+            return await handleSkrQuote(ctx, request)
+          case 'ops-dashboard-wallets':
+            requireOpsAuth(ctx, request)
+            return await handleOpsDashboardWallets(ctx)
+          case 'ops-dashboard-health':
+            requireOpsAuth(ctx, request)
+            return await handleOpsDashboardHealth(ctx)
+          case 'ops-dashboard-metrics':
+            requireOpsAuth(ctx, request)
+            return await handleOpsDashboardMetrics(ctx, url)
+        }
+      } catch (err) {
+        if (err instanceof HttpError) {
+          return json({ error: err.message }, err.status)
+        }
+        if (err instanceof ConfigError) {
+          return json({ error: `Worker misconfigured: ${err.message}` }, 500)
+        }
+        if (err instanceof TurboFundingShortError) {
+          // Same operator-facing shape as the ensureFunded() pre-check 503s —
+          // this is the backstop for the balance moving between that check and
+          // the upload itself. Never a user-facing bug; see turboClient.ts.
+          return json({ error: `Storage funding: ${err.message}` }, 503)
+        }
+        console.error('[unhandled]', err instanceof Error ? `${err.message}\n${err.stack ?? ''}` : String(err))
+        return json({ error: err instanceof Error ? err.message : 'Internal error' }, 500)
+      }
+    })()
+
+    // CORS is a browser-side courtesy header, applied uniformly to success
+    // AND error responses alike (a 401 from requireOpsAuth must still be
+    // readable by the dashboard's own fetch(), or it shows as an opaque
+    // network error instead of "wrong token"). requireOpsAuth() above is
+    // what actually gates the data — this never widens access.
+    return isDashboardRoute ? withDashboardCors(response, env, request) : response
   },
 
   /**

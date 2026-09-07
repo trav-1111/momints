@@ -68,6 +68,30 @@ export interface ParsedTransaction {
   } | null
 }
 
+/** Lamport balance of any account — dashboard wallet reads (ops/dashboard.ts). Zero for an unfunded/nonexistent account, same as the RPC itself. */
+export async function getSolBalance(rpcUrl: string, address: string): Promise<number> {
+  const result = await withBackoff('getBalance', () => rpcCall<{ value: number }>(rpcUrl, 'getBalance', [address]))
+  return result.value
+}
+
+/** One SPL token account's raw balance — dashboard wallet reads. Null when the account doesn't exist yet, not an error (mirrors TurboClient.getBalance()'s 404-is-zero pattern). */
+export async function getTokenAccountBalance(
+  rpcUrl: string,
+  tokenAccount: string,
+): Promise<{ amount: string; decimals: number } | null> {
+  const result = await withBackoff('getTokenAccountBalance', () =>
+    rpcCall<{ value: { amount: string; decimals: number } | null } | null>(rpcUrl, 'getTokenAccountBalance', [
+      tokenAccount,
+    ]).catch((err: unknown) => {
+      // A never-initialized token account 400s ("could not find account") rather than returning value: null.
+      const message = err instanceof Error ? err.message : String(err)
+      if (message.includes('could not find account')) return { value: null }
+      throw err
+    }),
+  )
+  return result?.value ?? null
+}
+
 /**
  * Fetch a landed transaction. Returns null when the RPC has no record of it —
  * which is NOT proof it failed: a very recent signature can be invisible for a
