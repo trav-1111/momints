@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Momints — Operator Dashboard</title>
+    <style>
+      :root {
+        --bg: #0c0d16;
+        --surface: #14151e;
+        --border: #24252f;
+        --accent: #7d7bf0;
+        --accent-soft: #b3b1ff;
+        --accent-tint: rgba(125, 123, 240, 0.14);
+        --text: #f5f5f4;
+        --text-soft: #c9cacc;
+        --text-secondary: #8b8d90;
+        --text-muted: #6b6d70;
+        --green: #3ad07a;
+        --red: #e5544b;
+        --red-tint: rgba(229, 84, 75, 0.14);
+        --yellow: #facc15;
+        --yellow-tint: rgba(250, 204, 21, 0.14);
+        --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Consolas', monospace;
+        --sans:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--sans);
+      }
+      body {
+        min-height: 100vh;
+      }
+
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 28px 20px 64px;
+      }
+
+      header.topbar {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+      }
+      header.topbar h1 {
+        font-size: 18px;
+        font-weight: 700;
+        margin: 0;
+        letter-spacing: -0.01em;
+      }
+      header.topbar .eyebrow {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        letter-spacing: 0.16em;
+        color: var(--accent);
+        text-transform: uppercase;
+        display: block;
+        margin-bottom: 2px;
+      }
+      .token-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--mono);
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .token-row button {
+        background: none;
+        border: 1px solid var(--border);
+        color: var(--text-secondary);
+        border-radius: 8px;
+        padding: 5px 10px;
+        font-family: var(--mono);
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .token-row button:hover {
+        border-color: var(--accent);
+        color: var(--accent-soft);
+      }
+
+      /* ---- Token gate ---- */
+      #gate {
+        max-width: 420px;
+        margin: 18vh auto 0;
+        text-align: center;
+      }
+      #gate h2 {
+        font-size: 16px;
+        margin: 0 0 6px;
+      }
+      #gate p {
+        color: var(--text-secondary);
+        font-size: 13px;
+        line-height: 1.5;
+        margin: 0 0 20px;
+      }
+      #gate form {
+        display: flex;
+        gap: 8px;
+      }
+      #gate input {
+        flex: 1;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 11px 13px;
+        color: var(--text);
+        font-family: var(--mono);
+        font-size: 13px;
+      }
+      #gate input:focus {
+        outline: none;
+        border-color: var(--accent);
+      }
+      #gate button[type='submit'] {
+        background: var(--accent);
+        border: 1px solid var(--accent);
+        color: white;
+        border-radius: 10px;
+        padding: 0 18px;
+        font-family: var(--sans);
+        font-weight: 600;
+        font-size: 13px;
+        cursor: pointer;
+      }
+      #gate-error {
+        color: var(--red);
+        font-size: 12px;
+        margin-top: 10px;
+        min-height: 16px;
+      }
+
+      /* ---- Sections / cards ---- */
+      [hidden] {
+        display: none !important;
+      }
+      section.panel {
+        margin-bottom: 28px;
+      }
+      section.panel .panel-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        margin-bottom: 12px;
+      }
+      section.panel h2 {
+        font-size: 13px;
+        font-family: var(--mono);
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: var(--text-secondary);
+        margin: 0;
+      }
+      .updated {
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--text-muted);
+      }
+      .updated.stale {
+        color: var(--yellow);
+      }
+      .updated.error {
+        color: var(--red);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+      }
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 16px;
+      }
+      .card h3 {
+        font-size: 11.5px;
+        font-weight: 600;
+        color: var(--text-soft);
+        margin: 0 0 12px;
+      }
+      .card .addr {
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--text-muted);
+        margin-bottom: 10px;
+        word-break: break-all;
+      }
+      .stat {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        padding: 5px 0;
+        border-bottom: 1px solid var(--border);
+        font-size: 12.5px;
+      }
+      .stat:last-child {
+        border-bottom: none;
+      }
+      .stat .label {
+        color: var(--text-secondary);
+      }
+      .stat .value {
+        font-family: var(--mono);
+        font-weight: 600;
+        color: var(--text);
+      }
+      .stat .value.warn {
+        color: var(--yellow);
+      }
+      .stat .value.bad {
+        color: var(--red);
+      }
+      .stat .value.good {
+        color: var(--green);
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-family: var(--mono);
+        font-size: 10px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        color: var(--text-secondary);
+      }
+      .badge .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 3px;
+        background: var(--text-muted);
+      }
+      .badge.ok .dot {
+        background: var(--green);
+      }
+      .badge.ok {
+        color: var(--green);
+        border-color: rgba(58, 208, 122, 0.35);
+      }
+      .badge.warn .dot {
+        background: var(--yellow);
+      }
+      .badge.warn {
+        color: var(--yellow);
+        border-color: rgba(250, 204, 21, 0.35);
+      }
+      .badge.bad .dot {
+        background: var(--red);
+      }
+      .badge.bad {
+        color: var(--red);
+        border-color: rgba(229, 84, 75, 0.35);
+      }
+
+      .chart-card svg {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+      .legend {
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        color: var(--text-secondary);
+      }
+      .legend .item {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+      }
+      .legend .swatch {
+        width: 8px;
+        height: 8px;
+        border-radius: 2px;
+      }
+
+      .window-tabs {
+        display: flex;
+        gap: 6px;
+      }
+      .window-tabs button {
+        background: transparent;
+        border: 1px solid var(--border);
+        color: var(--text-secondary);
+        border-radius: 999px;
+        padding: 4px 11px;
+        font-family: var(--mono);
+        font-size: 10.5px;
+        cursor: pointer;
+      }
+      .window-tabs button.active {
+        background: var(--accent-tint);
+        border-color: var(--accent);
+        color: var(--accent-soft);
+      }
+
+      .error-note {
+        font-size: 12px;
+        color: var(--red);
+        background: var(--red-tint);
+        border: 1px solid rgba(229, 84, 75, 0.3);
+        border-radius: 10px;
+        padding: 10px 13px;
+      }
+      .skeleton {
+        color: var(--text-muted);
+        font-family: var(--mono);
+        font-size: 11.5px;
+        padding: 4px 0;
+      }
+
+      footer {
+        margin-top: 40px;
+        font-family: var(--mono);
+        font-size: 10px;
+        color: var(--text-muted);
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow">MOMINTS</span>
+          <h1>Operator Dashboard</h1>
+        </div>
+        <div class="token-row" id="token-row" hidden>
+          <span id="token-hint">token set</span>
+          <button id="change-token-btn" type="button">change token</button>
+        </div>
+      </header>
+
+      <div id="gate">
+        <h2>Enter your ops token</h2>
+        <p>
+          Cloudflare Access already confirmed it's you. This token authenticates the dashboard's
+          data requests to the Worker — the same <code>OPS_AUTH_TOKEN</code> used for
+          <code>/ops/status</code> etc. It's stored only in this browser.
+        </p>
+        <form id="gate-form">
+          <input
+            id="token-input"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="OPS_AUTH_TOKEN"
+          />
+          <button type="submit">Unlock</button>
+        </form>
+        <div id="gate-error"></div>
+      </div>
+
+      <main id="dashboard" hidden>
+        <section class="panel" id="panel-wallets">
+          <div class="panel-head">
+            <h2>Wallets</h2>
+            <span class="updated" id="wallets-updated">—</span>
+          </div>
+          <div id="wallets-body" class="grid">
+            <div class="skeleton">Loading…</div>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-health">
+          <div class="panel-head">
+            <h2>Health</h2>
+            <span class="updated" id="health-updated">—</span>
+          </div>
+          <div id="health-body" class="grid">
+            <div class="skeleton">Loading…</div>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-metrics">
+          <div class="panel-head">
+            <h2>Metrics</h2>
+            <div style="display: flex; align-items: center; gap: 12px">
+              <div class="window-tabs" id="window-tabs">
+                <button data-window="7d" type="button">7d</button>
+                <button data-window="30d" type="button">30d</button>
+                <button data-window="all" class="active" type="button">all</button>
+              </div>
+              <span class="updated" id="metrics-updated">—</span>
+            </div>
+          </div>
+          <div id="metrics-body" class="grid">
+            <div class="skeleton">Loading…</div>
+          </div>
+          <div class="grid" style="margin-top: 12px" id="metrics-charts"></div>
+        </section>
+      </main>
+
+      <footer>read-only · aggregate metrics only · no per-wallet data is ever requested or shown</footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

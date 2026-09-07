@@ -588,6 +588,140 @@ export class RollDb {
       .all<QuickMintRow>()
     return result.results
   }
+
+  // ─── Dashboard aggregates (ops/dashboard.ts) ───────────────────────────────
+  //
+  // Every method here returns a COUNT/SUM or a small GROUP BY result — never a
+  // `wallet` column. That is the structural half of "aggregate only, no
+  // per-wallet profiling": there is no query in this file a dashboard handler
+  // could call to answer "what has wallet X done."
+
+  /** GROUP BY status/currency — health's DEAD/deferred counts and metrics' quick-mint totals both derive from this one read. `sinceIso` null = all-time. */
+  async getQuickMintCounts(
+    sinceIso: string | null,
+  ): Promise<{ status: QuickMintStatus; feeCurrency: 'SOL' | 'SKR'; count: number }[]> {
+    const result = await this.db
+      .prepare(
+        `SELECT status, fee_currency, COUNT(*) as n FROM quick_mints
+         WHERE (?1 IS NULL OR created_at >= ?1)
+         GROUP BY status, fee_currency`,
+      )
+      .bind(sinceIso)
+      .all<{ status: QuickMintStatus; fee_currency: 'SOL' | 'SKR'; n: number }>()
+    return result.results.map((r) => ({ status: r.status, feeCurrency: r.fee_currency, count: r.n }))
+  }
+
+  /** STAGED-with-a-recorded-signature — the round-4 deferred-finalize recovery population. No window: this is a current-state health count, not a historical one. */
+  async getDeferredQuickMintCount(): Promise<number> {
+    const row = await this.db
+      .prepare("SELECT COUNT(*) as n FROM quick_mints WHERE status = 'STAGED' AND signature IS NOT NULL")
+      .first<{ n: number }>()
+    return row?.n ?? 0
+  }
+
+  /** GROUP BY status/currency, with total frames minted per group — feeds both health-adjacent and metrics reads. `sinceIso` null = all-time. */
+  async getRollCounts(
+    sinceIso: string | null,
+  ): Promise<{ status: RollStatus; feeCurrency: 'SOL' | 'SKR'; count: number; framesMinted: number }[]> {
+    const result = await this.db
+      .prepare(
+        `SELECT status, fee_currency, COUNT(*) as n, COALESCE(SUM(minted_count), 0) as frames FROM rolls
+         WHERE (?1 IS NULL OR created_at >= ?1)
+         GROUP BY status, fee_currency`,
+      )
+      .bind(sinceIso)
+      .all<{ status: RollStatus; fee_currency: 'SOL' | 'SKR'; n: number; frames: number }>()
+    return result.results.map((r) => ({ status: r.status, feeCurrency: r.fee_currency, count: r.n, framesMinted: r.frames }))
+  }
+
+  /** COMPLETE rolls whose delegate revoke never landed — the same population "Re-driving a stuck roll handoff" (README) covers. Current-state, no window. */
+  async getStuckRollHandoffCount(): Promise<number> {
+    const row = await this.db
+      .prepare("SELECT COUNT(*) as n FROM rolls WHERE status = 'COMPLETE' AND handoff_signature IS NULL")
+      .first<{ n: number }>()
+    return row?.n ?? 0
+  }
+
+  /**
+   * SOL fees actually collected, by kind — treasury_entries is already the
+   * correct source (both quick_mint_fee and roll_fee land here via
+   * TreasurySink.record()). $SKR fees are deliberately absent from this
+   * table (see providers/treasury/manual.ts's doc comment: no conversion
+   * needed, so nothing is recorded) — see getSkrFeeTotals for those.
+   */
+  async getTreasuryFeeTotals(sinceIso: string | null): Promise<{ kind: string; totalLamports: number; count: number }[]> {
+    const result = await this.db
+      .prepare(
+        `SELECT json_extract(context, '$.kind') as kind, COALESCE(SUM(amount_lamports), 0) as total, COUNT(*) as n
+         FROM treasury_entries
+         WHERE (?1 IS NULL OR created_at >= ?1)
+         GROUP BY kind`,
+      )
+      .bind(sinceIso)
+      .all<{ kind: string; total: number; n: number }>()
+    return result.results.map((r) => ({ kind: r.kind, totalLamports: r.total, count: r.n }))
+  }
+
+  /** $SKR fees actually collected — quick_mints/rolls are the source (never treasury_entries; see getTreasuryFeeTotals). `sinceIso` null = all-time. */
+  async getSkrFeeTotals(
+    sinceIso: string | null,
+  ): Promise<{ quickTotalAtomic: number; quickCount: number; rollTotalAtomic: number; rollCount: number }> {
+    const row = await this.db
+      .prepare(
+        `SELECT
+           (SELECT COALESCE(SUM(skr_quote_atomic), 0) FROM quick_mints WHERE status = 'FINALIZED' AND fee_currency = 'SKR' AND (?1 IS NULL OR created_at >= ?1)) as quick_total,
+           (SELECT COUNT(*) FROM quick_mints WHERE status = 'FINALIZED' AND fee_currency = 'SKR' AND (?1 IS NULL OR created_at >= ?1)) as quick_count,
+           (SELECT COALESCE(SUM(skr_fee_atomic), 0) FROM rolls WHERE fee_currency = 'SKR' AND (?1 IS NULL OR created_at >= ?1)) as roll_total,
+           (SELECT COUNT(*) FROM rolls WHERE fee_currency = 'SKR' AND (?1 IS NULL OR created_at >= ?1)) as roll_count`,
+      )
+      .bind(sinceIso)
+      .first<{ quick_total: number; quick_count: number; roll_total: number; roll_count: number }>()
+    return {
+      quickTotalAtomic: row?.quick_total ?? 0,
+      quickCount: row?.quick_count ?? 0,
+      rollTotalAtomic: row?.roll_total ?? 0,
+      rollCount: row?.roll_count ?? 0,
+    }
+  }
+
+  /** A single COUNT(DISTINCT wallet) across finalized quick mints + rolls — the per-row wallets themselves never leave SQL. `sinceIso` null = all-time. */
+  async getUniqueWalletCount(sinceIso: string | null): Promise<number> {
+    const row = await this.db
+      .prepare(
+        `SELECT COUNT(DISTINCT wallet) as n FROM (
+           SELECT wallet FROM quick_mints WHERE status = 'FINALIZED' AND (?1 IS NULL OR created_at >= ?1)
+           UNION
+           SELECT wallet FROM rolls WHERE (?1 IS NULL OR created_at >= ?1)
+         )`,
+      )
+      .bind(sinceIso)
+      .first<{ n: number }>()
+    return row?.n ?? 0
+  }
+
+  /** Daily FINALIZED-quick-mint counts since `sinceIso` — one half of the mints-over-time chart; see getRollFramesPerDay for the other. */
+  async getQuickMintsPerDay(sinceIso: string): Promise<{ day: string; count: number }[]> {
+    const result = await this.db
+      .prepare(
+        `SELECT date(finalized_at) as day, COUNT(*) as n FROM quick_mints
+         WHERE status = 'FINALIZED' AND finalized_at >= ? GROUP BY day ORDER BY day`,
+      )
+      .bind(sinceIso)
+      .all<{ day: string; n: number }>()
+    return result.results.map((r) => ({ day: r.day, count: r.n }))
+  }
+
+  /** Daily MINTED-frame counts since `sinceIso` — the roll half of the mints-over-time chart. */
+  async getRollFramesPerDay(sinceIso: string): Promise<{ day: string; count: number }[]> {
+    const result = await this.db
+      .prepare(
+        `SELECT date(updated_at) as day, COUNT(*) as n FROM frames
+         WHERE status = 'MINTED' AND updated_at >= ? GROUP BY day ORDER BY day`,
+      )
+      .bind(sinceIso)
+      .all<{ day: string; n: number }>()
+    return result.results.map((r) => ({ day: r.day, count: r.n }))
+  }
 }
 
 /**

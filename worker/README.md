@@ -133,6 +133,9 @@ POST /quick/finalize               JSON { stagingKey, signature, assetAddress }
 DEL  /quick/stage/<stagingKey>     give back an unminted stage (user declined the prompt)
 GET  /quick/<asset>                quick-mint finalize status
 POST /skr/quote                    JSON { context:'quick', stagingKey } or { context:'roll', wallet, size } — see "Pay with $SKR"
+GET  /ops/dashboard/wallets        signer + treasury balances (needs OPS_AUTH_TOKEN) — see "Operator dashboard"
+GET  /ops/dashboard/health         cron/health snapshot (needs OPS_AUTH_TOKEN) — see "Operator dashboard"
+GET  /ops/dashboard/metrics        aggregate usage metrics ONLY (needs OPS_AUTH_TOKEN) — see "Operator dashboard"
 ```
 
 `/complete` exists because a roll only auto-completes at `mintedCount >= size`.
@@ -499,6 +502,58 @@ wrangler d1 execute momints-rolls --remote --command \
 wrangler d1 execute momints-rolls --remote --command \
   "SELECT collection_address, wallet, skr_fee_atomic FROM rolls WHERE fee_currency='SKR'"
 ```
+
+### Operator dashboard
+
+A read-only, operator-only view of wallet balances, system health, and
+aggregate usage — replacing scattered `wrangler d1 execute` queries and
+Discord alerts with one page. Two independently deployed pieces:
+
+- **This Worker** exposes three new `GET /ops/dashboard/*` endpoints (below),
+  gated by the same `OPS_AUTH_TOKEN` bearer as `/ops/status` etc. This is the
+  REAL security boundary — even if the dashboard's URL leaks, these
+  endpoints return nothing without the token.
+- **`dashboard/`** (repo root, sibling to `worker/`) is a static site meant
+  for Cloudflare Pages, put behind **Cloudflare Access** so only the
+  operator can even load the page. See `dashboard/README.md` for deploying
+  it — that's an operator action (Zero Trust configuration), not something
+  this Worker does.
+
+CORS on the three routes below is scoped to `DASHBOARD_ORIGIN`
+(`wrangler.toml [vars]`, optional) — set it once the Pages site has a URL,
+then redeploy. It's a browser-side courtesy header on top of the token gate,
+never a substitute for it: unset, the routes still work fine for
+curl/server callers, they just don't get a CORS header a browser would need.
+
+**Aggregate only, structurally.** `GET /ops/dashboard/metrics` returns
+counts, splits, and totals — never a `wallet` field, anywhere. There is no
+endpoint that takes a wallet and answers "what has this wallet done," and
+none of the three response shapes has a place to put one. This isn't a UI
+choice to preserve later; it's what the underlying D1 queries select (see
+`src/ops/dashboard.ts` and its new `RollDb` aggregate methods in
+`src/db/index.ts`) — the per-row wallet values never leave SQL.
+
+```sh
+curl -H "Authorization: Bearer $OPS_AUTH_TOKEN" "$WORKER_URL/ops/dashboard/wallets"
+curl -H "Authorization: Bearer $OPS_AUTH_TOKEN" "$WORKER_URL/ops/dashboard/health"
+curl -H "Authorization: Bearer $OPS_AUTH_TOKEN" "$WORKER_URL/ops/dashboard/metrics?window=7d"
+```
+
+- `wallets` — signer SOL balance + Turbo credit balance (raw and "~N rolls
+  of headroom", the same figure `/funding/status` already computes via
+  `readFundingSnapshot`); treasury SOL balance + $SKR balance (derives the
+  treasury's SKR ATA the same way `skr/quote.ts` does, then reads its
+  on-chain balance).
+- `health` — the fee-recompute cron's last attempt (`fee_cache`'s own
+  bookkeeping) and the treasury-monitor/sweep cron's last run
+  (`ops_alert_state.updated_at`, written on every run whether or not it
+  alerted); counts of deferred (STAGED-with-signature) and DEAD quick
+  mints, and stuck roll handoffs; the currently-served fees and rent.
+- `metrics` — `?window=all|7d|30d` (default `all`): total mints and the
+  quick/roll split, rolls created and average frames per roll, fees
+  collected in SOL and in $SKR (kept separate — never summed across
+  currencies), the SOL/$SKR payment-method split, a unique-wallet COUNT,
+  and a 30-day mints-per-day series for the chart.
 
 ### Treasury monitor — Discord alerts
 

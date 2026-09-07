@@ -83,6 +83,16 @@ export interface Env {
    * without it, even if the secret itself is unset — see requireOpsAuth().
    */
   OPS_AUTH_TOKEN?: string
+  /**
+   * Origin of the deployed operator dashboard (Cloudflare Pages), e.g.
+   * "https://dash.momints.xyz" — used ONLY to set Access-Control-Allow-Origin
+   * on the three GET /ops/dashboard/* routes. Optional and not ConfigError-
+   * enforced: CORS is a browser-side courtesy header, not the real security
+   * boundary (OPS_AUTH_TOKEN is, on every one of those routes regardless).
+   * Unset just means a browser-based caller gets no CORS header back — a
+   * curl/server caller with the right token is unaffected either way.
+   */
+  DASHBOARD_ORIGIN?: string
 }
 
 /** Env after validation — the two required secrets are guaranteed present. */

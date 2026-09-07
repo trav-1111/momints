@@ -79,6 +79,11 @@ QUICK_PLACEHOLDER_URI = "https://arweave.net/JbRjC4JbM7jbNRyiEZO7gj43gbOWBqt-O5R
 # the Worker verifies payment to this exact address out of the landed
 # transaction, so a mismatch rejects finalizes the user has already paid for.
 QUICK_TREASURY_ADDRESS = "o4w1THGTu1ufcRUEpVn45zttpcPoQBFFSLtMYeu5HpW"
+# Origin of the deployed operator dashboard (Cloudflare Pages) — sets CORS on
+# GET /ops/dashboard/* only. Optional: fill in after `wrangler pages deploy
+# dashboard/` gives you a URL, then redeploy this Worker. See
+# dashboard/README.md and worker/README.md "Operator dashboard".
+# DASHBOARD_ORIGIN = "https://dash.momints.xyz"
 
 [[d1_databases]]
 binding = "DB"
