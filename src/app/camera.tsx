@@ -114,6 +114,14 @@ export default function CameraScreen() {
 
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
+  useEffect(() => {
+    if (!account || !walletAddress) return
+    if (__DEV__)
+      console.log('[wallet] authorization completed', {
+        address: walletAddress.slice(0, 4) + '...' + walletAddress.slice(-4),
+        label: account.label ? '[present]' : '[absent]',
+      })
+  }, [account, walletAddress])
 
   const locationGranularity = useLocationSettingsStore((s) => s.granularity)
   const setLocationGranularity = useLocationSettingsStore((s) => s.setGranularity)
@@ -145,10 +153,7 @@ export default function CameraScreen() {
   const quickPhotos = useMemo(() => photos.filter((p) => !p.rollId), [photos])
   // Already-minted photos are terminal — they shouldn't inflate the "needs a
   // mint decision" badge.
-  const quickMintBadgeCount = useMemo(
-    () => quickPhotos.filter((p) => p.action !== 'minted').length,
-    [quickPhotos],
-  )
+  const quickMintBadgeCount = useMemo(() => quickPhotos.filter((p) => p.action !== 'minted').length, [quickPhotos])
 
   const frontDevice = useCameraDevice('front')
   const backDevice = useCameraDevice('back')
@@ -214,9 +219,7 @@ export default function CameraScreen() {
       // as a roll (and out of the quick-photo flows) forever after.
       const photoId = addPhoto(
         destFile.uri,
-        activeMode === 'roll' && activeRoll !== null
-          ? { id: activeRoll.id, name: activeRoll.name }
-          : undefined,
+        activeMode === 'roll' && activeRoll !== null ? { id: activeRoll.id, name: activeRoll.name } : undefined,
       )
 
       // Post-capture processing: crop to the aspect ratio first, then apply the
@@ -351,6 +354,7 @@ export default function CameraScreen() {
   const handleConnectWallet = useCallback(async () => {
     try {
       await connect()
+      if (__DEV__) console.log('[wallet] authorization completed; awaiting stable account state')
     } catch (error) {
       console.error('Failed to connect wallet:', error)
     }
@@ -848,7 +852,7 @@ export default function CameraScreen() {
               CONNECTED WALLET
             </Text>
             <Text numberOfLines={1} style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.text }}>
-              {walletAddress}
+              {walletAddress ? formatWalletDisplay(walletAddress, domain) : ''}
             </Text>
           </View>
 
@@ -948,9 +952,7 @@ export default function CameraScreen() {
               }}
             >
               <View>
-                <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>
-                  {option.label}
-                </Text>
+                <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>{option.label}</Text>
                 <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
                   {option.description}
                 </Text>

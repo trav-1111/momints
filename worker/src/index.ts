@@ -44,6 +44,7 @@ import { mintFrame, summarizeFrames } from './rolls/frames'
 import { revokeRollDelegate, revokeRollDelegateSafely } from './rolls/handoff'
 import { issueSkrQuote, type SkrQuoteRequest } from './skr/quote'
 import { createWorkerUmi, getWorkerPublicKey } from './solana/client'
+import { resolveSkrNames } from './skr/resolve'
 
 // Must equal one of the strings in wrangler.toml [triggers] crons exactly —
 // scheduled() below uses it to tell the two registered cron schedules apart.
@@ -56,6 +57,7 @@ const USAGE = `Momints roll backend.
   GET  /funding/status                  Turbo credit balance sufficiency (operator)
   GET  /treasury/status                 accrued fees pending manual conversion (operator)
   GET  /fees                            current cost-plus mint fees (quick, roll 12/24)
+  GET  /identity/skr?wallet=<address>  read-only reverse skr display identity
   GET  /ops/status                      treasury monitor: current level, roll headroom, last alert
                                          requires: Authorization: Bearer <OPS_AUTH_TOKEN>
   GET  /ops/test-alert?severity=low     post a dummy Discord alert (low|critical|healthy)
@@ -351,6 +353,17 @@ async function handleGetQuickMint(ctx: WorkerContext, assetAddress: string): Pro
   })
 }
 
+async function handleIdentitySkr(ctx: WorkerContext, url: URL): Promise<Response> {
+  const wallet = url.searchParams.get('wallet')
+  if (!wallet || !isBase58Address(wallet)) throw new HttpError(400, 'wallet must be a valid Solana public key')
+  try {
+    const names = await resolveSkrNames(ctx.env.SOLANA_RPC_URL, wallet)
+    return json({ domain: names[0] ?? null }, 200, { 'cache-control': 'public, max-age=300' })
+  } catch (error) {
+    console.warn('[identity/skr] lookup failed', error instanceof Error ? error.message : 'unknown')
+    throw new HttpError(503, 'Wallet name lookup temporarily unavailable')
+  }
+}
 async function handleGetOpenRoll(ctx: WorkerContext, url: URL): Promise<Response> {
   const wallet = url.searchParams.get('wallet')
   if (!wallet) throw new HttpError(400, 'Missing ?wallet= query parameter')
@@ -659,6 +672,7 @@ type Route =
   | { kind: 'release-quick'; stagingKey: string }
   | { kind: 'get-quick'; asset: string }
   | { kind: 'skr-quote' }
+  | { kind: 'identity-skr' }
   | { kind: 'ops-dashboard-wallets' }
   | { kind: 'ops-dashboard-health' }
   | { kind: 'ops-dashboard-metrics' }
@@ -677,6 +691,7 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'POST' && path === '/quick/stage') return { kind: 'stage-quick' }
   if (method === 'POST' && path === '/quick/finalize') return { kind: 'finalize-quick' }
   if (method === 'POST' && path === '/skr/quote') return { kind: 'skr-quote' }
+  if (method === 'GET' && path === '/identity/skr') return { kind: 'identity-skr' }
   if (method === 'GET' && path === '/ops/dashboard/wallets') return { kind: 'ops-dashboard-wallets' }
   if (method === 'GET' && path === '/ops/dashboard/health') return { kind: 'ops-dashboard-health' }
   if (method === 'GET' && path === '/ops/dashboard/metrics') return { kind: 'ops-dashboard-metrics' }
@@ -778,6 +793,8 @@ export default {
             return await handleGetQuickMint(ctx, route.asset)
           case 'skr-quote':
             return await handleSkrQuote(ctx, request)
+          case 'identity-skr':
+            return await handleIdentitySkr(ctx, url)
           case 'ops-dashboard-wallets':
             requireOpsAuth(ctx, request)
             return await handleOpsDashboardWallets(ctx)

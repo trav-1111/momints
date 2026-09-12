@@ -16,6 +16,7 @@
   "main": "./index.js",
   "version": "1.0.0",
   "scripts": {
+    "test:wallet-domain": "node --test tests/wallet-domain.test.cjs",
     "android": "expo run:android",
     "android:build": "expo prebuild -p android",
     "build": "tsc --noEmit && npm run android:build",
@@ -77,6 +78,7 @@
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
     "prettier": "^3.8.1",
+    "react-test-renderer": "19.1.0",
     "typescript": "~5.9.2"
   },
   "private": true
