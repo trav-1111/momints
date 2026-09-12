@@ -46,7 +46,9 @@ export function WalletStatus({ compact = false }: WalletStatusProps) {
       }}
     >
       <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.green }} />
-      <Text style={{ fontFamily: fonts.mono, fontSize: compact ? 10 : 11, color: colors.text }}>{formatWalletDisplay(address, domain)}</Text>
+      <Text style={{ fontFamily: fonts.mono, fontSize: compact ? 10 : 11, color: colors.text }}>
+        {formatWalletDisplay(address, domain)}
+      </Text>
     </Pressable>
   )
 }

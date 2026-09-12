@@ -1,21 +1,16 @@
 import { useState, useEffect } from 'react'
-import { AppState } from 'react-native'
-import { getClusterRpc } from '../store/network'
 import { getCachedWalletDomain, resolveWalletDomain, WalletDomainError } from '../services/walletDomain'
 
 interface DomainState {
   address: string | null
-  rpc: string
   domain: string | null
   status: 'idle' | 'loading' | 'resolved' | 'not-found' | 'error'
   error: WalletDomainError | null
 }
-
-function initialState(address: string | null, rpc: string): DomainState {
-  const cached = address ? getCachedWalletDomain(address, rpc) : undefined
+function initialState(address: string | null): DomainState {
+  const cached = address ? getCachedWalletDomain(address) : undefined
   return {
     address,
-    rpc,
     domain: cached?.domain ?? null,
     status: cached?.status ?? (address ? 'loading' : 'idle'),
     error: null,
@@ -23,64 +18,39 @@ function initialState(address: string | null, rpc: string): DomainState {
 }
 
 export function useWalletDomain(walletAddress: string | null) {
-  const rpc = getClusterRpc()
-  const [state, setState] = useState<DomainState>(() => initialState(walletAddress, rpc))
-
+  const [state, setState] = useState<DomainState>(() => initialState(walletAddress))
   useEffect(() => {
     let cancelled = false
-    let running = false
-    let refreshTimer: ReturnType<typeof setTimeout> | undefined
-    setState(initialState(walletAddress, rpc))
+    setState(initialState(walletAddress))
     if (!walletAddress) return
-
-    const refresh = async () => {
-      if (cancelled || running || AppState.currentState === 'background') return
-      running = true
-      clearTimeout(refreshTimer)
-      setState(initialState(walletAddress, rpc))
+    const resolve = async () => {
       try {
-        const result = await resolveWalletDomain(walletAddress, rpc)
+        const result = await resolveWalletDomain(walletAddress)
         if (cancelled) return
-        setState({ address: walletAddress, rpc, domain: result.domain, status: result.status, error: null })
-        refreshTimer = setTimeout(refresh, Math.max(1, result.expiresAt - Date.now()))
+        setState({ address: walletAddress, domain: result.domain, status: result.status, error: null })
+        if (__DEV__) console.log('[wallet-domain] UI identity state updated', result.domain ?? 'address fallback')
       } catch (error) {
         if (cancelled) return
-        setState({
-          address: walletAddress,
-          rpc,
-          domain: null,
-          status: 'error',
-          error: error instanceof WalletDomainError ? error : new WalletDomainError('rpc'),
-        })
-        // The resolver already tried three times. A foreground event or a
-        // reconnect starts another bounded attempt; failures are never cached.
-      } finally {
-        running = false
+        const safeError = error instanceof WalletDomainError ? error : new WalletDomainError('rpc')
+        if (__DEV__) console.log('[wallet-domain] lookup error', safeError.code)
+        setState({ address: walletAddress, domain: null, status: 'error', error: safeError })
       }
     }
-
-    void refresh()
-    const subscription = AppState.addEventListener('change', next => {
-      if (next === 'active') void refresh()
-    })
+    void resolve()
     return () => {
       cancelled = true
-      clearTimeout(refreshTimer)
-      subscription.remove()
     }
-  }, [walletAddress, rpc])
-
-  // Effects run after render: guard here too, so even the first frame of an
-  // account switch cannot show the old wallet's name or seed an artist field.
-  const current = state.address === walletAddress && state.rpc === rpc ? state : initialState(walletAddress, rpc)
-  return { domain: current.domain, isLoading: current.status === 'loading', status: current.status, error: current.error }
+  }, [walletAddress])
+  const current = state.address === walletAddress ? state : initialState(walletAddress)
+  return {
+    domain: current.domain,
+    isLoading: current.status === 'loading',
+    status: current.status,
+    error: current.error,
+  }
 }
 
-export function formatWalletDisplay(
-  address: string,
-  domain: string | null,
-  maxLength: number = 12
-): string {
+export function formatWalletDisplay(address: string, domain: string | null, maxLength: number = 12): string {
   if (domain) {
     if (domain.length <= maxLength) return domain
     const extension = domain.includes('.') ? domain.slice(domain.lastIndexOf('.')) : ''

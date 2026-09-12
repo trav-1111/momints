@@ -1,127 +1,157 @@
-import { Connection, PublicKey } from '@solana/web3.js'
-import { TldParser } from '@onsol/tldparser'
+import { File, Paths } from 'expo-file-system'
+import { ROLL_API_BASE } from '../config/rollApi'
 
-export const DOMAIN_CACHE_MS = 5 * 60_000
-export const DOMAIN_MISS_CACHE_MS = 60_000
-export const DOMAIN_TIMEOUT_MS = 10_000
-const RETRY_DELAYS_MS = [1_000, 3_000]
-const MAX_CACHE_ENTRIES = 64
+export const RESOLVER_VERSION = 2
+export const DOMAIN_CACHE_MS = 24 * 60 * 60_000
+export const DOMAIN_TIMEOUT_MS = 8_000
+const CACHE_FILE = 'wallet-domain-cache-v2.json'
 
-export type DomainErrorCode = 'rpc' | 'timeout' | 'invalid-response' | 'invalid-address'
-
+type CacheRecord = { walletAddress: string; domain: string | null; resolvedAt: string; resolverVersion: number }
+export type DomainErrorCode = 'http' | 'timeout' | 'rpc' | 'invalid-response' | 'invalid-address' | 'unavailable'
 export class WalletDomainError extends Error {
-  constructor(readonly code: DomainErrorCode) {
-    // RPC exceptions can contain the endpoint's API key. Never expose the raw
-    // exception through UI state or logs.
+  constructor(
+    readonly code: DomainErrorCode,
+    readonly httpStatus?: number,
+  ) {
     super(`Wallet name lookup failed (${code})`)
     this.name = 'WalletDomainError'
   }
 }
-
 export interface WalletDomainResult {
   status: 'resolved' | 'not-found'
   domain: string | null
   expiresAt: number
 }
 
-// Display-only, bounded, in-memory state. Nothing is written to disk or used
-// as a transaction identity. Include the RPC so a changed endpoint can recover.
-const cache = new Map<string, WalletDomainResult>()
+const cache = new Map<string, CacheRecord>()
 const inFlight = new Map<string, Promise<WalletDomainResult>>()
-const cacheKey = (address: string, rpc: string) => `${rpc}\n${address}`
+let cacheReady: Promise<void> | null = null
 
-export function getCachedWalletDomain(address: string, rpc: string): WalletDomainResult | undefined {
-  const key = cacheKey(address, rpc)
-  const result = cache.get(key)
-  if (result && result.expiresAt > Date.now()) return result
-  cache.delete(key)
+function cacheFile(): File {
+  return new File(Paths.document, CACHE_FILE)
+}
+function validAddress(address: string): boolean {
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)
+}
+function validDomain(domain: unknown): domain is string {
+  return typeof domain === 'string' && /^[^.]+\.skr$/i.test(domain)
+}
+function log(message: string, details?: string): void {
+  if (__DEV__) console.log(`[wallet-domain] ${message}${details ? ` ${details}` : ''}`)
 }
 
-function selectSkrDomain(records: unknown): string | null {
-  if (!Array.isArray(records)) throw new WalletDomainError('invalid-response')
-  const names = records.map((record: unknown) => {
-    if (!record || typeof record !== 'object' || !('domain' in record) || typeof record.domain !== 'string') {
-      throw new WalletDomainError('invalid-response')
-    }
-    const domain = record.domain.trim()
-    if (!domain || /[\s\u0000-\u001f\u007f]/.test(domain)) throw new WalletDomainError('invalid-response')
-    return domain
-  })
-  // The SDK already returns the suffix. Sort independently of RPC ordering
-  // and device locale; no primary-domain record is required.
-  return names.filter(name => /^[^.]+\.skr$/i.test(name)).sort()[0] ?? null
-}
-
-async function lookupSkrDomain(address: string, rpc: string): Promise<string | null> {
-  let owner: PublicKey
+async function loadCache(): Promise<void> {
   try {
-    owner = new PublicKey(address)
+    const file = cacheFile()
+    if (!file.exists) return
+    const raw = JSON.parse(await file.text()) as unknown
+    if (!Array.isArray(raw)) return
+    for (const item of raw) {
+      if (!item || typeof item !== 'object') continue
+      const record = item as Partial<CacheRecord>
+      if (
+        record.resolverVersion !== RESOLVER_VERSION ||
+        typeof record.walletAddress !== 'string' ||
+        typeof record.resolvedAt !== 'string'
+      )
+        continue
+      if (record.domain !== null && !validDomain(record.domain)) continue
+      cache.set(record.walletAddress, record as CacheRecord)
+    }
   } catch {
-    throw new WalletDomainError('invalid-address')
+    log('cache read failed')
   }
-
-  const controller = new AbortController()
-  let timeout: ReturnType<typeof setTimeout> | undefined
+}
+function ensureCache(): Promise<void> {
+  return (cacheReady ??= loadCache())
+}
+async function persistCache(): Promise<void> {
   try {
-    const connection = new Connection(rpc, {
-      commitment: 'confirmed',
-      // Retry the small lookup as a unit, rather than multiplying the SDK's
-      // per-request 429 retries across every mounted wallet-name consumer.
-      disableRetryOnRateLimit: true,
-      fetch: (url, init) => fetch(url, { ...init, signal: controller.signal }),
-    })
-    const parser = new TldParser(connection)
-    const deadline = new Promise<never>((_resolve, reject) => {
-      timeout = setTimeout(() => {
-        reject(new WalletDomainError('timeout'))
-        controller.abort()
-      }, DOMAIN_TIMEOUT_MS)
-    })
-    // Enumerating ALL TLDs repeatedly fetches this wallet's NFT metadata for
-    // unrelated namespaces. The targeted API retains wrapped-domain support.
-    const records = await Promise.race([parser.getParsedAllUserDomainsFromTld(owner, 'skr'), deadline])
-    return selectSkrDomain(records)
-  } catch (error) {
-    throw error instanceof WalletDomainError ? error : new WalletDomainError('rpc')
-  } finally {
-    clearTimeout(timeout)
-    controller.abort()
+    cacheFile().write(JSON.stringify([...cache.values()]))
+  } catch {
+    log('cache write failed')
   }
 }
 
-export function resolveWalletDomain(address: string, rpc: string): Promise<WalletDomainResult> {
-  const cached = getCachedWalletDomain(address, rpc)
-  if (cached) return Promise.resolve(cached)
-  const key = cacheKey(address, rpc)
-  const pending = inFlight.get(key)
-  if (pending) return pending
+export function getCachedWalletDomain(address: string): WalletDomainResult | undefined {
+  const record = cache.get(address)
+  if (
+    !record ||
+    !Number.isFinite(Date.parse(record.resolvedAt)) ||
+    Date.now() - Date.parse(record.resolvedAt) > DOMAIN_CACHE_MS
+  ) {
+    if (record) cache.delete(address)
+    return undefined
+  }
+  return {
+    status: record.domain ? 'resolved' : 'not-found',
+    domain: record.domain,
+    expiresAt: Date.parse(record.resolvedAt) + DOMAIN_CACHE_MS,
+  }
+}
 
-  const request = (async () => {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        const domain = await lookupSkrDomain(address, rpc)
-        const result: WalletDomainResult = {
-          status: domain ? 'resolved' : 'not-found',
-          domain,
-          expiresAt: Date.now() + (domain ? DOMAIN_CACHE_MS : DOMAIN_MISS_CACHE_MS),
-        }
-        for (const [entryKey, entry] of cache) {
-          if (entry.expiresAt <= Date.now()) cache.delete(entryKey)
-        }
-        if (cache.size >= MAX_CACHE_ENTRIES) cache.delete(cache.keys().next().value!)
-        cache.set(key, result)
-        return result
-      } catch (error) {
-        if (
-          !(error instanceof WalletDomainError) ||
-          error.code === 'invalid-address' ||
-          error.code === 'invalid-response' ||
-          attempt >= RETRY_DELAYS_MS.length
-        ) throw error
-        await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt]))
-      }
-    }
-  })().finally(() => inFlight.delete(key))
-  inFlight.set(key, request)
+export async function clearWalletDomainCache(): Promise<void> {
+  cache.clear()
+  try {
+    const file = cacheFile()
+    if (file.exists) file.delete()
+  } catch {
+    /* development helper */
+  }
+}
+
+async function requestDomain(address: string): Promise<WalletDomainResult> {
+  if (!validAddress(address)) throw new WalletDomainError('invalid-address')
+  if (!ROLL_API_BASE) throw new WalletDomainError('unavailable')
+  log('lookup started', `${address.slice(0, 4)}...${address.slice(-4)}`)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), DOMAIN_TIMEOUT_MS)
+  let response: Response
+  try {
+    response = await fetch(`${ROLL_API_BASE}/identity/skr?wallet=${encodeURIComponent(address)}`, {
+      signal: controller.signal,
+    })
+  } catch {
+    throw new WalletDomainError(controller.signal.aborted ? 'timeout' : 'rpc')
+  } finally {
+    clearTimeout(timer)
+  }
+  log('worker HTTP status', String(response.status))
+  if (response.status === 503 || response.status === 429)
+    throw new WalletDomainError(response.status === 429 ? 'http' : 'rpc', response.status)
+  if (!response.ok) throw new WalletDomainError('http', response.status)
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    throw new WalletDomainError('invalid-response')
+  }
+  if (!body || typeof body !== 'object' || !('domain' in body)) throw new WalletDomainError('invalid-response')
+  const domain = (body as { domain: unknown }).domain
+  if (domain !== null && !validDomain(domain)) throw new WalletDomainError('invalid-response')
+  const now = new Date().toISOString()
+  const result = {
+    status: domain ? ('resolved' as const) : ('not-found' as const),
+    domain,
+    expiresAt: Date.now() + DOMAIN_CACHE_MS,
+  }
+  cache.set(address, { walletAddress: address, domain, resolvedAt: now, resolverVersion: RESOLVER_VERSION })
+  await persistCache()
+  log(domain ? 'domain found' : 'confirmed no-domain', domain ?? '')
+  return result
+}
+
+export async function resolveWalletDomain(address: string): Promise<WalletDomainResult> {
+  await ensureCache()
+  const cached = getCachedWalletDomain(address)
+  if (cached) {
+    log('cache hit', `${address.slice(0, 4)}...${address.slice(-4)}`)
+    return cached
+  }
+  log('cache miss', `${address.slice(0, 4)}...${address.slice(-4)}`)
+  const pending = inFlight.get(address)
+  if (pending) return pending
+  const request = requestDomain(address).finally(() => inFlight.delete(address))
+  inFlight.set(address, request)
   return request
 }

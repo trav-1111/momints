@@ -1,6 +1,8 @@
+/* global __dirname */
 const fs = require('node:fs')
 const path = require('node:path')
 const { createRequire } = require('node:module')
+global.__DEV__ = false
 const ts = require('typescript')
 
 const root = path.resolve(__dirname, '../..')
@@ -22,7 +24,7 @@ function sourceLoader(mocks = {}) {
       if (id.startsWith('.')) {
         const base = path.resolve(path.dirname(absolute), id)
         const candidate = [base, base + '.ts', base + '.tsx', path.join(base, 'index.ts')].find(
-          file => fs.existsSync(file) && fs.statSync(file).isFile(),
+          (file) => fs.existsSync(file) && fs.statSync(file).isFile(),
         )
         if (candidate) return load(candidate)
       }
