@@ -43,6 +43,8 @@ app-example
 # generated native folders
 /ios
 /android
+modules/*/android/build
+modules/*/android/.cxx
 
 # installed agent skills — vendored third-party content, re-created by
 # `npx skills add <source>`. .claude/skills holds symlinks into .agents.
