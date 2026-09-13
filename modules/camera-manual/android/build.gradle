@@ -1,0 +1,24 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.momints.spike'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.cameramanual"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
+}
+
+dependencies {
+  implementation 'com.facebook.react:react-android'
+  // compileOnly: these classes are already on the runtime classpath via
+  // react-native-vision-camera's own CameraX dependency. Pinned to the same
+  // version vision-camera uses to avoid any duplicate-class resolution surprises.
+  compileOnly "androidx.camera:camera-core:1.5.0-alpha03"
+  compileOnly "androidx.camera:camera-camera2:1.5.0-alpha03"
+}
