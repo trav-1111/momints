@@ -6,7 +6,7 @@
 // ---- Config ---------------------------------------------------------------
 // EDIT before deploying: the Worker's own URL (see worker/.env / EXPO_PUBLIC_ROLL_API
 // in the app's .env for the same value already in use).
-const WORKER_URL = 'https://momints-roll-worker.YOUR-SUBDOMAIN.workers.dev'
+const WORKER_URL = 'https://momints-roll-worker.traviskeir.workers.dev'
 
 const TOKEN_STORAGE_KEY = 'momints_ops_token'
 const REFRESH_FAST_MS = 45_000 // wallets + health

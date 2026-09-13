@@ -1,6 +1,7 @@
 import { Text, Pressable, View } from 'react-native'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { colors, fonts } from '../theme'
+import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 
 interface WalletStatusProps {
   compact?: boolean
@@ -8,8 +9,10 @@ interface WalletStatusProps {
 
 export function WalletStatus({ compact = false }: WalletStatusProps) {
   const { account, connect, disconnect } = useMobileWallet()
+  const address = account?.address?.toString() ?? null
+  const { domain } = useWalletDomain(address)
 
-  if (!account) {
+  if (!account || !address) {
     return (
       <Pressable
         onPress={connect}
@@ -27,9 +30,6 @@ export function WalletStatus({ compact = false }: WalletStatusProps) {
     )
   }
 
-  const address = account.address.toString()
-  const shortAddress = `${address.slice(0, 4)}…${address.slice(-4)}`
-
   return (
     <Pressable
       onPress={disconnect}
@@ -46,7 +46,7 @@ export function WalletStatus({ compact = false }: WalletStatusProps) {
       }}
     >
       <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.green }} />
-      <Text style={{ fontFamily: fonts.mono, fontSize: compact ? 10 : 11, color: colors.text }}>{shortAddress}</Text>
+      <Text style={{ fontFamily: fonts.mono, fontSize: compact ? 10 : 11, color: colors.text }}>{formatWalletDisplay(address, domain)}</Text>
     </Pressable>
   )
 }

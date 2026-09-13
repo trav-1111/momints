@@ -848,7 +848,7 @@ export default function CameraScreen() {
               CONNECTED WALLET
             </Text>
             <Text numberOfLines={1} style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.text }}>
-              {walletAddress}
+              {walletAddress ? formatWalletDisplay(walletAddress, domain) : ''}
             </Text>
           </View>
 

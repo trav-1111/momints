@@ -16,7 +16,7 @@ import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore } from '../../../store/photos'
 import { useMintQueue } from '../../../store/mintQueue'
 import { useSessionStore } from '../../../store/session'
-import { useWalletDomain } from '../../../hooks/useWalletDomain'
+import { useWalletDomain, formatWalletDisplay } from '../../../hooks/useWalletDomain'
 import { resolveLocation } from '../../../services/captureMetadata'
 import { colors, fonts, tracking } from '../../../theme'
 import { IconBack, IconFilm, IconMint, IconPhone, IconPin } from '../../../components/icons'
@@ -284,7 +284,7 @@ export default function MintFormScreen() {
             />
             {account && walletAddress ? (
               <Text numberOfLines={1} style={{ flex: 1, fontFamily: fonts.mono, fontSize: 12, color: colors.text }}>
-                {walletAddress.slice(0, 4)}…{walletAddress.slice(-4)}
+                {formatWalletDisplay(walletAddress, domain)}
               </Text>
             ) : (
               <Pressable onPress={connect} style={{ flex: 1 }}>
