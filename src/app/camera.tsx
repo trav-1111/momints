@@ -13,6 +13,7 @@ import {
   AppState,
   useWindowDimensions,
   ViewStyle,
+  findNodeHandle,
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useIsFocused } from '@react-navigation/native'
@@ -32,6 +33,7 @@ import { applyFilm } from '../services/filmProcessor'
 import { cropToAspect } from '../services/cropImage'
 import { ensureUnderCeiling } from '../services/compressImage'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
+import ManualControls from '../components/ManualControls'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { useSessionStore } from '../store/session'
@@ -56,6 +58,12 @@ const QUICK_ASPECTS: { value: AspectRatio; label: string }[] = [
   { value: '4:3', label: '4:3' },
   { value: '16:9', label: '16:9' },
 ]
+
+// Tier 2 (manual ISO/shutter/white balance via Camera2Interop) is additive on
+// top of Tier 1 (EV bias/focus/zoom, all vision-camera-native and proven).
+// Flip to false to hide the manual-controls panel entirely without touching
+// Tier 1 — the hackathon-cutoff fallback if Tier 2 isn't solid in time.
+const TIER2_ENABLED = true
 
 const LOCATION_OPTIONS: { value: LocationGranularity; label: string; description: string }[] = [
   { value: 'off', label: 'Off', description: 'No location is captured' },
@@ -96,6 +104,12 @@ export default function CameraScreen() {
   const shutterFlashAnim = useRef(new Animated.Value(0)).current
   const [walletMenuVisible, setWalletMenuVisible] = useState(false)
   const [locationMenuVisible, setLocationMenuVisible] = useState(false)
+
+  // Pro mode — Tier 1 (EV bias) is always available here; Tier 2 (manual
+  // ISO/shutter/WB) mounts underneath, gated by TIER2_ENABLED.
+  const [proOpen, setProOpen] = useState(false)
+  const [ev, setEv] = useState(0)
+  const [manualEnabled, setManualEnabled] = useState(false)
 
   // Release the camera when the screen loses focus or the app is backgrounded
   // (e.g. wallet handoff) — Android throws camera-is-restricted otherwise
@@ -162,6 +176,8 @@ export default function CameraScreen() {
   const supportsFlash = activeDevice?.hasFlash && cameraPosition === 'back'
   const minZoom = activeDevice?.minZoom ?? 1
   const maxZoom = Math.min(activeDevice?.maxZoom ?? 5, 10)
+  const minExposure = activeDevice?.minExposure ?? -2
+  const maxExposure = activeDevice?.maxExposure ?? 2
 
   useEffect(() => {
     if (!hasPermission) {
@@ -306,6 +322,21 @@ export default function CameraScreen() {
     }
   }, [flash])
 
+  const nudgeEv = useCallback(
+    (delta: number) => {
+      setEv((prev) => Math.min(maxExposure, Math.max(minExposure, prev + delta)))
+    },
+    [minExposure, maxExposure],
+  )
+
+  // Manual ISO/shutter dominates the visual result once engaged — leaving EV
+  // bias "active" underneath it at the same time is just a confusing extra
+  // dial with no visible effect, so zero it out at the moment Tier 2 takes over.
+  const handleManualToggle = useCallback((next: boolean) => {
+    setManualEnabled(next)
+    if (next) setEv(0)
+  }, [])
+
   const handleFocus = useCallback(
     async (event: GestureResponderEvent) => {
       if (!cameraRef.current || !activeDevice?.supportsFocus) return
@@ -443,6 +474,8 @@ export default function CameraScreen() {
     )
   }
 
+  const cameraViewTag = findNodeHandle(cameraRef.current)
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <GestureDetector gesture={pinchGesture}>
@@ -454,6 +487,7 @@ export default function CameraScreen() {
             isActive={isFocused && appActive}
             photo={true}
             zoom={zoom}
+            exposure={ev}
           />
 
           {/* Aspect-ratio framing guide */}
@@ -545,6 +579,33 @@ export default function CameraScreen() {
             style={[roundChip(42), { opacity: locationGranularity === 'off' ? 0.4 : 1 }]}
           >
             <IconPin size={19} color={locationGranularity === 'off' ? colors.text : colors.accent} />
+          </Pressable>
+
+          <Pressable
+            onPress={() => setProOpen((o) => !o)}
+            style={[
+              chip,
+              {
+                height: 42,
+                paddingHorizontal: 14,
+                borderRadius: 21,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderColor: proOpen ? colors.accent : colors.chipBorder,
+                backgroundColor: proOpen ? colors.accentTint : colors.chipBg,
+              },
+            ]}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.sansBold,
+                fontSize: 11,
+                letterSpacing: tracking(0.1, 11),
+                color: proOpen ? colors.accentSoft : colors.text,
+              }}
+            >
+              PRO
+            </Text>
           </Pressable>
         </View>
 
@@ -717,6 +778,95 @@ export default function CameraScreen() {
                 </Pressable>
               ))}
             </View>
+          )}
+        </View>
+      )}
+
+      {/* Pro mode panel — Tier 1 (EV bias) always here; Tier 2 (manual
+          ISO/shutter/WB) mounts underneath when TIER2_ENABLED. */}
+      {proOpen && (
+        <View
+          style={{
+            position: 'absolute',
+            left: 18,
+            right: 18,
+            bottom: 160,
+            backgroundColor: 'rgba(0,0,0,0.6)',
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: colors.chipBorder,
+            padding: 12,
+            gap: 10,
+          }}
+        >
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text
+              style={{
+                fontFamily: fonts.monoBold,
+                fontSize: 10,
+                letterSpacing: tracking(0.16, 10),
+                color: colors.accentSoft,
+              }}
+            >
+              EXPOSURE
+            </Text>
+            <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: colors.text }}>{ev.toFixed(1)} EV</Text>
+          </View>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Pressable
+              onPress={() => nudgeEv(-0.5)}
+              disabled={manualEnabled}
+              style={{
+                flex: 1,
+                paddingVertical: 8,
+                borderRadius: 8,
+                alignItems: 'center',
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                opacity: manualEnabled ? 0.35 : 1,
+              }}
+            >
+              <Text style={{ fontFamily: fonts.sansBold, fontSize: 12, color: colors.text }}>− EV</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setEv(0)}
+              disabled={manualEnabled}
+              style={{
+                flex: 1,
+                paddingVertical: 8,
+                borderRadius: 8,
+                alignItems: 'center',
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                opacity: manualEnabled ? 0.35 : 1,
+              }}
+            >
+              <Text style={{ fontFamily: fonts.sansBold, fontSize: 12, color: colors.text }}>Reset</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => nudgeEv(0.5)}
+              disabled={manualEnabled}
+              style={{
+                flex: 1,
+                paddingVertical: 8,
+                borderRadius: 8,
+                alignItems: 'center',
+                backgroundColor: 'rgba(255,255,255,0.12)',
+                opacity: manualEnabled ? 0.35 : 1,
+              }}
+            >
+              <Text style={{ fontFamily: fonts.sansBold, fontSize: 12, color: colors.text }}>+ EV</Text>
+            </Pressable>
+          </View>
+          {manualEnabled && (
+            <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted }}>
+              EV bias is off while manual exposure is active — ISO/shutter control brightness below.
+            </Text>
+          )}
+
+          {TIER2_ENABLED && (
+            <>
+              <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.12)' }} />
+              <ManualControls viewTag={cameraViewTag} enabled={manualEnabled} onToggleEnabled={handleManualToggle} />
+            </>
           )}
         </View>
       )}

@@ -18,7 +18,6 @@ import {
   resetToAuto,
   ISO_RANGE,
   SHUTTER_NS_RANGE,
-  WhiteBalancePreset,
   type WhiteBalancePresetName,
 } from '../../modules/camera-manual'
 import { colors, fonts } from '../theme'
@@ -166,7 +165,7 @@ export default function ManualControls({ viewTag, enabled, onToggleEnabled }: Pr
     return (
       <View style={styles.root}>
         <Pressable style={styles.autoBtn} onPress={() => handleToggle(true)}>
-          <Text style={styles.autoBtnText}>PRO</Text>
+          <Text style={styles.autoBtnText}>MANUAL</Text>
         </Pressable>
       </View>
     )
