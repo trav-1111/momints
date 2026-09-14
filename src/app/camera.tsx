@@ -34,6 +34,7 @@ import { cropToAspect } from '../services/cropImage'
 import { ensureUnderCeiling } from '../services/compressImage'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
 import ManualControls from '../components/ManualControls'
+import { applyMeteringMode, type MeteringMode } from '../../modules/camera-manual'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { useSessionStore } from '../store/session'
@@ -59,11 +60,20 @@ const QUICK_ASPECTS: { value: AspectRatio; label: string }[] = [
   { value: '16:9', label: '16:9' },
 ]
 
-// Tier 2 (manual ISO/shutter/white balance via Camera2Interop) is additive on
-// top of Tier 1 (EV bias/focus/zoom, all vision-camera-native and proven).
-// Flip to false to hide the manual-controls panel entirely without touching
-// Tier 1 — the hackathon-cutoff fallback if Tier 2 isn't solid in time.
+// Tier 2 (manual ISO/shutter/focus/white balance via Camera2Interop) is
+// additive on top of Tier 1 (EV bias/tap-focus/zoom, all vision-camera-native
+// and proven). Flip to false to hide the manual-controls panel entirely
+// without touching Tier 1 — the hackathon-cutoff fallback if Tier 2 isn't
+// solid in time.
 const TIER2_ENABLED = true
+
+// CONTROL_AE_REGIONS metering (matrix/center/spot) — a Tier-1-adjacent
+// control since it only affects the auto-exposure algorithm, not a manual
+// override. Gated on CONTROL_MAX_REGIONS_AE > 0 — confirmed on-device via
+// camera-caps: the Seeker's main rear camera (id 0) reports maxRegionsAe=1,
+// activeArraySize 4000x3000. Some devices report 0, meaning AE_REGIONS is
+// silently ignored — same kill-switch pattern as TIER2_ENABLED for those.
+const METERING_ENABLED = true
 
 const LOCATION_OPTIONS: { value: LocationGranularity; label: string; description: string }[] = [
   { value: 'off', label: 'Off', description: 'No location is captured' },
@@ -93,6 +103,7 @@ export default function CameraScreen() {
   const { account, connect, disconnect } = useMobileWallet()
   const { hasPermission, requestPermission } = useCameraPermission()
   const cameraRef = useRef<Camera>(null)
+  const cameraViewTag = findNodeHandle(cameraRef.current)
 
   const [flash, setFlash] = useState<'off' | 'on'>('off')
   const [isCapturing, setIsCapturing] = useState(false)
@@ -105,10 +116,11 @@ export default function CameraScreen() {
   const [walletMenuVisible, setWalletMenuVisible] = useState(false)
   const [locationMenuVisible, setLocationMenuVisible] = useState(false)
 
-  // Pro mode — Tier 1 (EV bias) is always available here; Tier 2 (manual
-  // ISO/shutter/WB) mounts underneath, gated by TIER2_ENABLED.
+  // Pro mode — Tier 1 (EV bias, metering) is always available here; Tier 2
+  // (manual ISO/shutter/focus/WB) mounts underneath, gated by TIER2_ENABLED.
   const [proOpen, setProOpen] = useState(false)
   const [ev, setEv] = useState(0)
+  const [meteringMode, setMeteringMode] = useState<MeteringMode>('matrix')
   const [manualEnabled, setManualEnabled] = useState(false)
 
   // Release the camera when the screen loses focus or the app is backgrounded
@@ -178,6 +190,10 @@ export default function CameraScreen() {
   const maxZoom = Math.min(activeDevice?.maxZoom ?? 5, 10)
   const minExposure = activeDevice?.minExposure ?? -2
   const maxExposure = activeDevice?.maxExposure ?? 2
+  // vision-camera reports minFocusDistance in cm (0 = unknown/fixed-focus);
+  // Camera2's LENS_FOCUS_DISTANCE is diopters (1/meters) — 100/cm converts.
+  const maxFocusDiopters =
+    activeDevice && activeDevice.minFocusDistance > 0 ? 100 / activeDevice.minFocusDistance : null
 
   useEffect(() => {
     if (!hasPermission) {
@@ -337,6 +353,17 @@ export default function CameraScreen() {
     if (next) setEv(0)
   }, [])
 
+  // AE_REGIONS only steers the auto-exposure algorithm — a no-op while Tier 2
+  // manual exposure has it switched off, so this is disabled (not called)
+  // during manual mode, matching the EV bias control right next to it.
+  const handleMeteringSelect = useCallback(
+    (mode: MeteringMode) => {
+      setMeteringMode(mode)
+      if (cameraViewTag != null && !manualEnabled) applyMeteringMode(cameraViewTag, mode)
+    },
+    [cameraViewTag, manualEnabled],
+  )
+
   const handleFocus = useCallback(
     async (event: GestureResponderEvent) => {
       if (!cameraRef.current || !activeDevice?.supportsFocus) return
@@ -473,8 +500,6 @@ export default function CameraScreen() {
       </View>
     )
   }
-
-  const cameraViewTag = findNodeHandle(cameraRef.current)
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -856,16 +881,52 @@ export default function CameraScreen() {
               <Text style={{ fontFamily: fonts.sansBold, fontSize: 12, color: colors.text }}>+ EV</Text>
             </Pressable>
           </View>
+          {METERING_ENABLED && (
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {(['matrix', 'center', 'spot'] as const).map((mode) => (
+                <Pressable
+                  key={mode}
+                  onPress={() => handleMeteringSelect(mode)}
+                  disabled={manualEnabled}
+                  style={{
+                    flex: 1,
+                    paddingVertical: 8,
+                    borderRadius: 8,
+                    alignItems: 'center',
+                    backgroundColor: meteringMode === mode ? colors.accentTint : 'rgba(255,255,255,0.12)',
+                    borderWidth: meteringMode === mode ? 1 : 0,
+                    borderColor: colors.accent,
+                    opacity: manualEnabled ? 0.35 : 1,
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: fonts.sansBold,
+                      fontSize: 11,
+                      color: meteringMode === mode ? colors.accentSoft : colors.text,
+                    }}
+                  >
+                    {mode.toUpperCase()}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
           {manualEnabled && (
             <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted }}>
-              EV bias is off while manual exposure is active — ISO/shutter control brightness below.
+              EV bias and metering are off while manual exposure is active — ISO/shutter control brightness below.
             </Text>
           )}
 
           {TIER2_ENABLED && (
             <>
               <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.12)' }} />
-              <ManualControls viewTag={cameraViewTag} enabled={manualEnabled} onToggleEnabled={handleManualToggle} />
+              <ManualControls
+                viewTag={cameraViewTag}
+                enabled={manualEnabled}
+                onToggleEnabled={handleManualToggle}
+                maxFocusDiopters={maxFocusDiopters}
+              />
             </>
           )}
         </View>

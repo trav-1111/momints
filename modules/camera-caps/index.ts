@@ -18,6 +18,10 @@ export type CameraCapability = {
   manualFocusPossible: boolean
   hasAfModeOff: boolean
   hasAwbModeOff: boolean
+  maxRegionsAe: number
+  meteringModePossible: boolean
+  activeArrayWidth?: number
+  activeArrayHeight?: number
 }
 
 // Reads android.hardware.camera2.CameraCharacteristics directly — this is

@@ -15,6 +15,7 @@ import { Gesture, GestureDetector, GestureUpdateEvent, PanGestureHandlerEventPay
 import {
   applyManualExposure,
   applyWhiteBalance,
+  applyManualFocus,
   resetToAuto,
   ISO_RANGE,
   SHUTTER_NS_RANGE,
@@ -22,7 +23,8 @@ import {
 } from '../../modules/camera-manual'
 import { colors, fonts } from '../theme'
 
-const PX_PER_STOP = 70 // drag distance for one full stop (one doubling) — tuned for a phone-width screen
+const PX_PER_STOP = 70 // drag distance for one full log2 stop (one doubling) — tuned for a phone-width screen
+const FOCUS_DRAG_PX = 280 // fixed full-sweep drag distance for the (linear, small-range) focus dial
 
 function log2(n: number): number {
   return Math.log(n) / Math.LN2
@@ -74,26 +76,33 @@ const WB_LABELS: Record<WhiteBalancePresetName, string> = {
 type Dial = {
   label: string
   valueText: string
-  stops: number
-  maxStops: number
-  onDrag: (stops: number) => void
+  value: number
+  min: number
+  max: number
+  // Total drag distance (px) to sweep the full min..max range — lets a
+  // small linear range (focus, a few diopters) feel just as controllable as
+  // a huge log-scaled one (ISO/shutter, many stops) without a shared,
+  // wrong-for-one-of-them px-per-unit constant.
+  pxRange: number
+  onDrag: (value: number) => void
   onDragEnd: () => void
 }
 
-function DragDial({ label, valueText, stops, maxStops, onDrag, onDragEnd }: Dial) {
-  const baseStops = useRef(stops)
+function DragDial({ label, valueText, value, min, max, pxRange, onDrag, onDragEnd }: Dial) {
+  const baseValue = useRef(value)
   const pan = Gesture.Pan()
     .onStart(() => {
-      baseStops.current = stops
+      baseValue.current = value
     })
     .onUpdate((e: GestureUpdateEvent<PanGestureHandlerEventPayload>) => {
-      const next = Math.min(maxStops, Math.max(0, baseStops.current + e.translationX / PX_PER_STOP))
+      const delta = (e.translationX / pxRange) * (max - min)
+      const next = Math.min(max, Math.max(min, baseValue.current + delta))
       onDrag(next)
     })
     .onEnd(() => onDragEnd())
     .runOnJS(true)
 
-  const fillPct = Math.max(0, Math.min(1, stops / maxStops)) * 100
+  const fillPct = Math.max(0, Math.min(1, (value - min) / (max - min))) * 100
 
   return (
     <GestureDetector gesture={pan}>
@@ -114,15 +123,25 @@ type Props = {
   viewTag: number | null
   enabled: boolean
   onToggleEnabled: (next: boolean) => void
+  // Device-reported LENS_INFO_MINIMUM_FOCUS_DISTANCE in diopters, derived by
+  // the caller from vision-camera's `minFocusDistance` (cm): 100 / cm.
+  // null/0 means this physical camera can't manually focus (fixed-focus
+  // lens, e.g. many front cameras) — the dial hides itself in that case
+  // rather than offering a control that would silently do nothing.
+  maxFocusDiopters: number | null
 }
 
-export default function ManualControls({ viewTag, enabled, onToggleEnabled }: Props) {
+export default function ManualControls({ viewTag, enabled, onToggleEnabled, maxFocusDiopters }: Props) {
   const [isoStops, setIsoStops] = useState(isoToStops(400))
   const [shutterStops, setShutterStops] = useState(shutterToStops(1_000_000)) // 1/1000s default
   const [wb, setWb] = useState<WhiteBalancePresetName>('AUTO')
+  const [focusDiopters, setFocusDiopters] = useState(0) // 0 = infinity
+
+  const canFocus = maxFocusDiopters != null && maxFocusDiopters > 0
 
   const lastAppliedIso = useRef<number | null>(null)
   const lastAppliedShutterNs = useRef<number | null>(null)
+  const lastAppliedFocus = useRef<number | null>(null)
 
   const applyExposureIfChanged = useCallback(
     (nextIsoStops: number, nextShutterStops: number) => {
@@ -137,6 +156,17 @@ export default function ManualControls({ viewTag, enabled, onToggleEnabled }: Pr
     [viewTag],
   )
 
+  const applyFocusIfChanged = useCallback(
+    (next: number) => {
+      if (viewTag == null || !canFocus || maxFocusDiopters == null) return
+      const rounded = Math.round(next * 100) / 100
+      if (rounded === lastAppliedFocus.current) return
+      lastAppliedFocus.current = rounded
+      applyManualFocus(viewTag, rounded, maxFocusDiopters)
+    },
+    [viewTag, canFocus, maxFocusDiopters],
+  )
+
   const handleToggle = useCallback(
     (next: boolean) => {
       onToggleEnabled(next)
@@ -144,13 +174,25 @@ export default function ManualControls({ viewTag, enabled, onToggleEnabled }: Pr
       if (next) {
         applyExposureIfChanged(isoStops, shutterStops)
         applyWhiteBalance(viewTag, wb)
+        if (canFocus) applyFocusIfChanged(focusDiopters)
       } else {
         resetToAuto(viewTag)
         lastAppliedIso.current = null
         lastAppliedShutterNs.current = null
+        lastAppliedFocus.current = null
       }
     },
-    [onToggleEnabled, viewTag, isoStops, shutterStops, wb, applyExposureIfChanged],
+    [
+      onToggleEnabled,
+      viewTag,
+      isoStops,
+      shutterStops,
+      wb,
+      canFocus,
+      focusDiopters,
+      applyExposureIfChanged,
+      applyFocusIfChanged,
+    ],
   )
 
   const handleWbSelect = useCallback(
@@ -176,8 +218,10 @@ export default function ManualControls({ viewTag, enabled, onToggleEnabled }: Pr
       <DragDial
         label="ISO"
         valueText={String(Math.round(stopsToIso(isoStops)))}
-        stops={isoStops}
-        maxStops={ISO_STOPS}
+        value={isoStops}
+        min={0}
+        max={ISO_STOPS}
+        pxRange={ISO_STOPS * PX_PER_STOP}
         onDrag={(s) => {
           setIsoStops(s)
           applyExposureIfChanged(s, shutterStops)
@@ -187,14 +231,31 @@ export default function ManualControls({ viewTag, enabled, onToggleEnabled }: Pr
       <DragDial
         label="SHUTTER"
         valueText={formatShutter(stopsToShutter(shutterStops))}
-        stops={shutterStops}
-        maxStops={SHUTTER_STOPS}
+        value={shutterStops}
+        min={0}
+        max={SHUTTER_STOPS}
+        pxRange={SHUTTER_STOPS * PX_PER_STOP}
         onDrag={(s) => {
           setShutterStops(s)
           applyExposureIfChanged(isoStops, s)
         }}
         onDragEnd={() => applyExposureIfChanged(isoStops, shutterStops)}
       />
+      {canFocus && maxFocusDiopters != null && (
+        <DragDial
+          label="FOCUS"
+          valueText={focusDiopters < 0.05 ? '∞' : `${(1 / focusDiopters).toFixed(2)}m`}
+          value={focusDiopters}
+          min={0}
+          max={maxFocusDiopters}
+          pxRange={FOCUS_DRAG_PX}
+          onDrag={(d) => {
+            setFocusDiopters(d)
+            applyFocusIfChanged(d)
+          }}
+          onDragEnd={() => applyFocusIfChanged(focusDiopters)}
+        />
+      )}
 
       <View style={styles.wbRow}>
         {WB_PRESETS.map((preset) => (

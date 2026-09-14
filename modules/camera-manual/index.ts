@@ -53,8 +53,30 @@ export function applyWhiteBalance(viewTag: number, preset: WhiteBalancePresetNam
   CameraManualNative.applyWhiteBalance(viewTag, WhiteBalancePreset[preset])
 }
 
-// Clears every override (exposure AND white balance) — hands the whole
-// session back to CameraX's normal auto-everything behavior in one call.
+// focusDistanceDiopters: 0 = infinity, up to maxDiopters (the device's real
+// LENS_INFO_MINIMUM_FOCUS_DISTANCE — pass activeDevice.minFocusDistance
+// converted from vision-camera's cm to diopters: 100 / minFocusDistanceCm).
+// Deliberately NOT a hardcoded module constant like ISO_RANGE/SHUTTER_NS_RANGE
+// — focus range varies per physical camera (main vs macro vs front) even on
+// the same device, unlike the exposure ranges which are pinned to one camera.
+export function applyManualFocus(viewTag: number, focusDistanceDiopters: number, maxDiopters: number): void {
+  const clamped = clamp(focusDistanceDiopters, { min: 0, max: maxDiopters })
+  CameraManualNative.applyManualFocus(viewTag, clamped)
+}
+
+export type MeteringMode = 'matrix' | 'center' | 'spot'
+
+// Only has any visible effect while auto-exposure is actually running — i.e.
+// NOT while Tier-2 manual exposure (applyManualExposure) is active, since
+// AE_REGIONS steers an AE algorithm that's off in that mode. normX/normY are
+// 0..1 frame-normalized and only used for 'spot' (default: frame center).
+export function applyMeteringMode(viewTag: number, mode: MeteringMode, normX?: number, normY?: number): void {
+  CameraManualNative.applyMeteringMode(viewTag, mode, normX ?? null, normY ?? null)
+}
+
+// Clears every override (exposure, white balance, focus, metering regions —
+// everything) — hands the whole session back to CameraX's normal
+// auto-everything behavior in one call.
 export function resetToAuto(viewTag: number): void {
   CameraManualNative.resetToAuto(viewTag)
 }

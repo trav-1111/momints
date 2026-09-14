@@ -42,6 +42,12 @@ class CameraCapsModule : Module() {
         // amount of AF_MODE_OFF + LENS_FOCUS_DISTANCE will move it.
         val manualFocusPossible = (minFocusDistance != null && minFocusDistance > 0f) && hasAfModeOff
 
+        // Metering-mode feasibility: CONTROL_AE_REGIONS only does anything if the
+        // device reports it can actually use at least one region — some devices
+        // report 0, meaning AE_REGIONS is silently ignored no matter what you set.
+        val maxRegionsAe = chars.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0
+        val activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+
         val entry = JSONObject()
         entry.put("cameraId", id)
         entry.put("lensFacing", lensFacingName(chars.get(CameraCharacteristics.LENS_FACING)))
@@ -67,6 +73,12 @@ class CameraCapsModule : Module() {
         entry.put("manualFocusPossible", manualFocusPossible)
         entry.put("hasAfModeOff", hasAfModeOff)
         entry.put("hasAwbModeOff", hasAwbModeOff)
+        entry.put("maxRegionsAe", maxRegionsAe)
+        entry.put("meteringModePossible", maxRegionsAe > 0)
+        if (activeArray != null) {
+          entry.put("activeArrayWidth", activeArray.width())
+          entry.put("activeArrayHeight", activeArray.height())
+        }
         cameras.put(entry)
       }
 

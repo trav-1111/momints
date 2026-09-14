@@ -37,12 +37,18 @@ export default function ManualControlsSpike() {
   }
 
   const viewTag = findNodeHandle(cameraRef.current)
+  const maxFocusDiopters = device.minFocusDistance > 0 ? 100 / device.minFocusDistance : null
 
   return (
     <View style={styles.root}>
       <Camera ref={cameraRef} style={StyleSheet.absoluteFill} device={device} isActive={true} />
       <View style={styles.hud}>
-        <ManualControls viewTag={viewTag} enabled={enabled} onToggleEnabled={setEnabled} />
+        <ManualControls
+          viewTag={viewTag}
+          enabled={enabled}
+          onToggleEnabled={setEnabled}
+          maxFocusDiopters={maxFocusDiopters}
+        />
       </View>
     </View>
   )

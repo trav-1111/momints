@@ -1,8 +1,11 @@
 package expo.modules.cameramanual
 
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.params.MeteringRectangle
 import android.view.View
 import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
@@ -49,8 +52,27 @@ class CameraManualModule : Module() {
       applyWhiteBalance(viewTag, awbMode)
     }
 
-    // Clears every override (AE, AWB, everything) — hands the whole session
-    // back to CameraX's normal auto-everything behavior in one call.
+    // focusDistance: diopters (0 = infinity, up to the device's
+    // LENS_INFO_MINIMUM_FOCUS_DISTANCE — see camera-caps for the real value).
+    // Forces CONTROL_AF_MODE off — same reasoning as AE_MODE for exposure:
+    // the continuous-AF algorithm would just overwrite this every frame.
+    Function("applyManualFocus") { viewTag: Int, focusDistance: Float ->
+      applyManualFocus(viewTag, focusDistance)
+    }
+
+    // mode: "matrix" (whole-frame, the device default — clears any region
+    // override), "center" (weights the middle ~50%), or "spot" (a small
+    // region at normX/normY, each 0..1, defaulting to frame center).
+    // Only affects anything while CONTROL_AE_MODE is NOT off — i.e. while
+    // Tier-2 manual exposure is NOT active, since AE_REGIONS only steers an
+    // AE algorithm that's actually running.
+    Function("applyMeteringMode") { viewTag: Int, mode: String, normX: Float?, normY: Float? ->
+      applyMeteringMode(viewTag, mode, normX ?: 0.5f, normY ?: 0.5f)
+    }
+
+    // Clears every override (AE, AWB, focus, metering regions — everything)
+    // — hands the whole session back to CameraX's normal auto-everything
+    // behavior in one call.
     Function("resetToAuto") { viewTag: Int ->
       resetAuto(viewTag)
     }
@@ -76,6 +98,68 @@ class CameraManualModule : Module() {
     val builder = CaptureRequestOptions.Builder()
       .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, awbMode)
     control.addCaptureRequestOptions(builder.build())
+  }
+
+  @OptIn(ExperimentalCamera2Interop::class)
+  private fun applyManualFocus(viewTag: Int, focusDistance: Float) {
+    val control = requireCamera2Control(viewTag)
+    val builder = CaptureRequestOptions.Builder()
+      .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+      .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, focusDistance)
+    control.addCaptureRequestOptions(builder.build())
+  }
+
+  @OptIn(ExperimentalCamera2Interop::class)
+  private fun applyMeteringMode(viewTag: Int, mode: String, normX: Float, normY: Float) {
+    val camera = resolveCameraXCamera(viewTag)
+      ?: throw CodedException(
+        "ERR_CAMERA_NOT_BOUND",
+        "No bound CameraX session on view $viewTag yet — try again once the preview is visible",
+        null,
+      )
+
+    val regions: Array<MeteringRectangle> = if (mode == "matrix") {
+      arrayOf() // clears any region override — device default is whole-frame metering
+    } else {
+      val array = activeArraySize(camera)
+        ?: throw CodedException(
+          "ERR_NO_ACTIVE_ARRAY",
+          "Device did not report SENSOR_INFO_ACTIVE_ARRAY_SIZE — can't build a metering region",
+          null,
+        )
+      when (mode) {
+        "center" -> arrayOf(centeredRegion(array, 0.5f, 0.5f, 0.5f))
+        "spot" -> arrayOf(centeredRegion(array, normX, normY, 0.12f))
+        else -> throw CodedException("ERR_BAD_METERING_MODE", "Unknown metering mode: $mode", null)
+      }
+    }
+
+    val control = Camera2CameraControl.from(camera.cameraControl)
+    val builder = CaptureRequestOptions.Builder()
+      .setCaptureRequestOption(CaptureRequest.CONTROL_AE_REGIONS, regions)
+    control.addCaptureRequestOptions(builder.build())
+  }
+
+  // A square region of `sizeFraction` of the active array's shorter side,
+  // centered at (centerXFrac, centerYFrac) in 0..1 normalized coordinates,
+  // clamped so it never runs off the sensor's real pixel bounds.
+  private fun centeredRegion(
+    array: android.graphics.Rect,
+    centerXFrac: Float,
+    centerYFrac: Float,
+    sizeFraction: Float,
+  ): MeteringRectangle {
+    val side = (minOf(array.width(), array.height()) * sizeFraction).toInt().coerceAtLeast(1)
+    val cx = (array.left + array.width() * centerXFrac).toInt()
+    val cy = (array.top + array.height() * centerYFrac).toInt()
+    val left = (cx - side / 2).coerceIn(array.left, array.right - side)
+    val top = (cy - side / 2).coerceIn(array.top, array.bottom - side)
+    return MeteringRectangle(left, top, side, side, MeteringRectangle.METERING_WEIGHT_MAX)
+  }
+
+  private fun activeArraySize(camera: Camera): android.graphics.Rect? {
+    return Camera2CameraInfo.from(camera.cameraInfo)
+      .getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
   }
 
   @OptIn(ExperimentalCamera2Interop::class)
