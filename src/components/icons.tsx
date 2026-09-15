@@ -207,3 +207,145 @@ export function IconCheck(p: IconProps) {
     </IconBase>
   )
 }
+
+// ---- Pro-mode metering (M strip parameter) ----
+
+/** Metering: matrix (whole-frame evaluative). */
+export function IconMeteringMatrix(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="2.5" y="5" width="19" height="14" rx="2" />
+      <Rect x="9.5" y="9.5" width="5" height="5" rx="1" />
+    </IconBase>
+  )
+}
+
+/** Metering: center-weighted. */
+export function IconMeteringCenter(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="2.5" y="5" width="19" height="14" rx="2" />
+      <Circle cx="12" cy="12" r="4.4" />
+      <Circle cx="12" cy="12" r="1.5" fill={p.color ?? colors.text} stroke="none" />
+    </IconBase>
+  )
+}
+
+/** Metering: spot. */
+export function IconMeteringSpot(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="2.5" y="5" width="19" height="14" rx="2" />
+      <Line x1="9" y1="5" x2="9" y2="19" />
+      <Line x1="15" y1="5" x2="15" y2="19" />
+      <Line x1="2.5" y1="12" x2="21.5" y2="12" />
+    </IconBase>
+  )
+}
+
+// ---- White balance presets (WB strip parameter) ----
+
+/** WB: incandescent — bulb. */
+export function IconWbIncandescent(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Path d="M8.5 14.5a5 5 0 1 1 7 0c-.9.9-1 1.6-1 2.5h-5c0-.9-.1-1.6-1-2.5z" />
+      <Line x1="10" y1="20" x2="14" y2="20" />
+    </IconBase>
+  )
+}
+
+/** WB: fluorescent — tube. */
+export function IconWbFluorescent(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="4" y="10" width="16" height="4.5" rx="2.2" />
+      <Line x1="7" y1="6.5" x2="8.5" y2="8.5" />
+      <Line x1="17" y1="6.5" x2="15.5" y2="8.5" />
+    </IconBase>
+  )
+}
+
+/** WB: warm fluorescent — tube variant, dot marks the warm shift. */
+export function IconWbWarmFluorescent(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="4" y="10" width="16" height="4.5" rx="2.2" />
+      <Line x1="7" y1="6.5" x2="8.5" y2="8.5" />
+      <Line x1="17" y1="6.5" x2="15.5" y2="8.5" />
+      <Circle cx="12" cy="12.25" r="1.1" fill={p.color ?? colors.text} stroke="none" />
+    </IconBase>
+  )
+}
+
+/** WB: cloudy daylight. */
+export function IconWbCloudy(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Path d="M7 18h10a3.5 3.5 0 0 0 .2-7A5 5 0 0 0 7.6 10.6 3.7 3.7 0 0 0 7 18z" />
+    </IconBase>
+  )
+}
+
+/** WB: daylight — sun. */
+export function IconWbDaylight(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Circle cx="12" cy="12" r="4" />
+      <Line x1="12" y1="3" x2="12" y2="5.5" />
+      <Line x1="12" y1="18.5" x2="12" y2="21" />
+      <Line x1="3" y1="12" x2="5.5" y2="12" />
+      <Line x1="18.5" y1="12" x2="21" y2="12" />
+      <Line x1="5.9" y1="5.9" x2="7.6" y2="7.6" />
+      <Line x1="16.4" y1="16.4" x2="18.1" y2="18.1" />
+      <Line x1="5.9" y1="18.1" x2="7.6" y2="16.4" />
+      <Line x1="16.4" y1="7.6" x2="18.1" y2="5.9" />
+    </IconBase>
+  )
+}
+
+/** WB: twilight — crescent moon. */
+export function IconWbTwilight(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+    </IconBase>
+  )
+}
+
+/** WB: shade — starburst. */
+export function IconWbShade(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Circle cx="12" cy="12" r="8" />
+      <Path d="M6.3 17.7 17.7 6.3" />
+      <Path d="M9.6 19.6 19.6 9.6" />
+      <Path d="M4.4 14.4 14.4 4.4" />
+    </IconBase>
+  )
+}
+
+// ---- Manual focus ruler end-marks ----
+
+/** Focus ruler, near end — macro (clover). */
+export function IconFocusNear(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Path d="M12 11.5c-2-2.6-1.6-5.6.4-7 1.5 1.9 1.4 4.6-.4 7z" />
+      <Path d="M12 11.5c-3.2-.4-5-2.8-4.3-5.2 2.3.4 4 2.4 4.3 5.2z" />
+      <Path d="M12 11.5c3.2-.4 5-2.8 4.3-5.2-2.3.4-4 2.4-4.3 5.2z" />
+      <Path d="M12 11.5v9" />
+    </IconBase>
+  )
+}
+
+/** Focus ruler, far end — infinity (mountains, filled). */
+export function IconFocusFar(p: IconProps) {
+  const color = p.color ?? colors.text
+  return (
+    <IconBase {...p}>
+      <Path d="M12 7.5 18.5 18h-13z" fill={color} stroke="none" />
+      <Path d="M6.5 11 10 18H3z" fill={color} stroke="none" />
+    </IconBase>
+  )
+}

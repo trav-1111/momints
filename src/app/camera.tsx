@@ -67,14 +67,6 @@ const QUICK_ASPECTS: { value: AspectRatio; label: string }[] = [
 // solid in time.
 const TIER2_ENABLED = true
 
-// CONTROL_AE_REGIONS metering (matrix/center/spot) — a Tier-1-adjacent
-// control since it only affects the auto-exposure algorithm, not a manual
-// override. Gated on CONTROL_MAX_REGIONS_AE > 0 — confirmed on-device via
-// camera-caps: the Seeker's main rear camera (id 0) reports maxRegionsAe=1,
-// activeArraySize 4000x3000. Some devices report 0, meaning AE_REGIONS is
-// silently ignored — same kill-switch pattern as TIER2_ENABLED for those.
-const METERING_ENABLED = true
-
 const LOCATION_OPTIONS: { value: LocationGranularity; label: string; description: string }[] = [
   { value: 'off', label: 'Off', description: 'No location is captured' },
   { value: 'country', label: 'Country', description: 'e.g. "United States"' },
@@ -337,13 +329,6 @@ export default function CameraScreen() {
       setFlash('off')
     }
   }, [flash])
-
-  const nudgeEv = useCallback(
-    (delta: number) => {
-      setEv((prev) => Math.min(maxExposure, Math.max(minExposure, prev + delta)))
-    },
-    [minExposure, maxExposure],
-  )
 
   // Manual ISO+shutter together (fullyManual, i.e. AE_MODE_OFF) dominates the
   // visual result — leaving EV bias "active" underneath it is a confusing
@@ -798,124 +783,13 @@ export default function CameraScreen() {
         </View>
       )}
 
-      {/* Pro mode panel — Tier 1 (EV bias) always here; Tier 2 (manual
-          ISO/shutter/WB) mounts underneath when TIER2_ENABLED. */}
-      {proOpen && (
-        <View
-          style={{
-            position: 'absolute',
-            left: 18,
-            right: 18,
-            bottom: 160,
-            backgroundColor: 'rgba(0,0,0,0.6)',
-            borderRadius: 14,
-            borderWidth: 1,
-            borderColor: colors.chipBorder,
-            padding: 12,
-            gap: 10,
-          }}
-        >
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Text
-              style={{
-                fontFamily: fonts.monoBold,
-                fontSize: 10,
-                letterSpacing: tracking(0.16, 10),
-                color: colors.accentSoft,
-              }}
-            >
-              EXPOSURE
-            </Text>
-            <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: colors.text }}>{ev.toFixed(1)} EV</Text>
-          </View>
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <Pressable
-              onPress={() => nudgeEv(-0.5)}
-              disabled={manualCamera.fullyManual}
-              style={{
-                flex: 1,
-                paddingVertical: 8,
-                borderRadius: 8,
-                alignItems: 'center',
-                backgroundColor: 'rgba(255,255,255,0.12)',
-                opacity: manualCamera.fullyManual ? 0.35 : 1,
-              }}
-            >
-              <Text style={{ fontFamily: fonts.sansBold, fontSize: 12, color: colors.text }}>− EV</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => setEv(0)}
-              disabled={manualCamera.fullyManual}
-              style={{
-                flex: 1,
-                paddingVertical: 8,
-                borderRadius: 8,
-                alignItems: 'center',
-                backgroundColor: 'rgba(255,255,255,0.12)',
-                opacity: manualCamera.fullyManual ? 0.35 : 1,
-              }}
-            >
-              <Text style={{ fontFamily: fonts.sansBold, fontSize: 12, color: colors.text }}>Reset</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => nudgeEv(0.5)}
-              disabled={manualCamera.fullyManual}
-              style={{
-                flex: 1,
-                paddingVertical: 8,
-                borderRadius: 8,
-                alignItems: 'center',
-                backgroundColor: 'rgba(255,255,255,0.12)',
-                opacity: manualCamera.fullyManual ? 0.35 : 1,
-              }}
-            >
-              <Text style={{ fontFamily: fonts.sansBold, fontSize: 12, color: colors.text }}>+ EV</Text>
-            </Pressable>
-          </View>
-          {METERING_ENABLED && (
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              {(['matrix', 'center', 'spot'] as const).map((mode) => (
-                <Pressable
-                  key={mode}
-                  onPress={() => manualCamera.setMeteringMode(mode)}
-                  disabled={manualCamera.fullyManual}
-                  style={{
-                    flex: 1,
-                    paddingVertical: 8,
-                    borderRadius: 8,
-                    alignItems: 'center',
-                    backgroundColor:
-                      manualCamera.meteringMode === mode ? colors.accentTint : 'rgba(255,255,255,0.12)',
-                    borderWidth: manualCamera.meteringMode === mode ? 1 : 0,
-                    borderColor: colors.accent,
-                    opacity: manualCamera.fullyManual ? 0.35 : 1,
-                  }}
-                >
-                  <Text
-                    style={{
-                      fontFamily: fonts.sansBold,
-                      fontSize: 11,
-                      color: manualCamera.meteringMode === mode ? colors.accentSoft : colors.text,
-                    }}
-                  >
-                    {mode.toUpperCase()}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-          {manualCamera.fullyManual && (
-            <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted }}>
-              EV bias and metering are off while both ISO and shutter are manual — they control brightness below.
-            </Text>
-          )}
-
-          {TIER2_ENABLED && (
-            <>
-              <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.12)' }} />
-              <ManualControls controls={manualCamera} />
-            </>
-          )}
+      {/* Pro mode strip — persistent M · ISO · S · EV · WB · AF value strip
+          pinned above the shutter row, one parameter expanded at a time.
+          See ManualControls.tsx for the design source and the adjustments
+          made from it for this camera's real (coupled) exposure model. */}
+      {proOpen && TIER2_ENABLED && (
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 150 }}>
+          <ManualControls controls={manualCamera} ev={ev} setEv={setEv} minExposure={minExposure} maxExposure={maxExposure} />
         </View>
       )}
 

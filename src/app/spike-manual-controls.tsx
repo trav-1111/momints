@@ -9,7 +9,7 @@
 // the on-device verification vehicle and a smoke test of the component
 // before/alongside its use in camera.tsx.
 // ============================================================================
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { View, Text, StyleSheet, findNodeHandle } from 'react-native'
 import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera'
 import ManualControls from '../components/ManualControls'
@@ -22,6 +22,9 @@ export default function ManualControlsSpike() {
   const viewTag = findNodeHandle(cameraRef.current)
   const maxFocusDiopters = device && device.minFocusDistance > 0 ? 100 / device.minFocusDistance : null
   const controls = useManualCameraState(viewTag, device?.id ?? null, maxFocusDiopters)
+  const [ev, setEv] = useState(0)
+  const minExposure = device?.minExposure ?? -2
+  const maxExposure = device?.maxExposure ?? 2
 
   if (!hasPermission) {
     return (
@@ -44,7 +47,7 @@ export default function ManualControlsSpike() {
     <View style={styles.root}>
       <Camera ref={cameraRef} style={StyleSheet.absoluteFill} device={device} isActive={true} />
       <View style={styles.hud}>
-        <ManualControls controls={controls} />
+        <ManualControls controls={controls} ev={ev} setEv={setEv} minExposure={minExposure} maxExposure={maxExposure} />
       </View>
     </View>
   )

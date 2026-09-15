@@ -1,28 +1,67 @@
-// Tier 2 — manual camera controls (ISO / shutter / focus / white balance) on
-// top of modules/camera-manual's Camera2Interop bridge. Proven on-device:
-// reflection into vision-camera's live CameraX session, verified to visibly
-// affect both the preview and the actual captured photo, not just "didn't
-// throw."
+// Tier 2 — manual camera controls (metering / ISO / shutter / EV / white
+// balance / focus) on top of modules/camera-manual's Camera2Interop bridge.
 //
-// Purely presentational — all state lives in useManualCameraState (see that
-// hook's own comment for why: the native call replaces the whole capture-
-// request override set per-call, so exactly one place must own the full
-// picture). This component just renders controls against that state.
-import { useRef } from 'react'
+// Visual design follows "Camera app UI design" (Claude Design project
+// 10e4ee39-1918-44a0-9f47-65dd74a6490b, "Momints Camera Pro Mode.dc.html"):
+// a persistent six-column value strip (M · ISO · S · EV · WB · AF) pinned
+// above the shutter row, with exactly one parameter's controls expanded
+// directly above it at a time. That mockup was built assuming ISO and
+// shutter could run independent auto states (ISO-priority / shutter-
+// priority) — real-device testing on the Seeker found no
+// CONTROL_AE_AVAILABLE_PRIORITY_MODES support, so this build couples them
+// into one shared exposureMode (see useManualCameraState's own comment).
+// Adjustments from the mockup, made deliberately rather than by omission:
+//   - ISO and S always show the same AUTO/MANUAL state and one "A" badge
+//     tap flips both, since that's the only real state this hardware has.
+//   - EV is enabled while exposure is AUTO (the camera is running AE and a
+//     bias has something to act on) and disabled in MANUAL — the opposite
+//     of the mockup's literal caption, but the real semantics, and what
+//     this app's EV bias already did before this redesign.
+//   - Shutter ruler end labels come from this camera's real measured
+//     SHUTTER_NS_RANGE, not the mockup's placeholder "0.5".
+//   - WB gained two presets (WARM_FLUORESCENT, TWILIGHT) the mockup's
+//     six-icon row didn't have; captions were kept under every icon since
+//     two of the eight are new icons the user hasn't seen before.
+//
+// All state lives in useManualCameraState (see that hook's own comment for
+// why) plus EV bias, which stays local to camera.tsx (it's a vision-camera
+// native prop, not a Camera2Interop override) and is passed in as props.
+// This component is purely presentational.
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { View, Text, Pressable, StyleSheet } from 'react-native'
 import { Gesture, GestureDetector, GestureUpdateEvent, PanGestureHandlerEventPayload } from 'react-native-gesture-handler'
-import { filterIsoNotches, ISO_RANGE, SHUTTER_NS_RANGE, type WhiteBalancePresetName, type AutoManualMode } from '../../modules/camera-manual'
+import {
+  filterIsoNotches,
+  ISO_RANGE,
+  SHUTTER_NS_RANGE,
+  type MeteringMode,
+  type WhiteBalancePresetName,
+} from '../../modules/camera-manual'
 import type { ManualCameraState } from '../hooks/useManualCameraState'
 import { colors, fonts } from '../theme'
+import {
+  IconMeteringMatrix,
+  IconMeteringCenter,
+  IconMeteringSpot,
+  IconWbIncandescent,
+  IconWbFluorescent,
+  IconWbWarmFluorescent,
+  IconWbCloudy,
+  IconWbDaylight,
+  IconWbTwilight,
+  IconWbShade,
+  IconFocusNear,
+  IconFocusFar,
+  type IconProps,
+} from './icons'
 
-const PX_PER_STOP = 70 // drag distance for one full log2 stop (one doubling) — tuned for a phone-width screen
-const FOCUS_DRAG_PX = 280 // fixed full-sweep drag distance for the (linear, small-range) focus dial
+const PX_PER_STOP = 70 // drag distance for one full log2 stop — tuned for a phone-width screen
+const FOCUS_DRAG_PX = 280
 const ISO_NOTCHES = filterIsoNotches(ISO_RANGE)
 
 function log2(n: number): number {
   return Math.log(n) / Math.LN2
 }
-
 const SHUTTER_STOPS = log2(SHUTTER_NS_RANGE.max / SHUTTER_NS_RANGE.min)
 function shutterToStops(ns: number): number {
   return log2(ns / SHUTTER_NS_RANGE.min)
@@ -35,6 +74,18 @@ function formatShutter(ns: number): string {
   if (seconds >= 1) return `${seconds.toFixed(1)}s`
   return `1/${Math.round(1 / seconds)}`
 }
+function formatEv(ev: number): string {
+  if (Math.abs(ev) < 0.05) return '0'
+  return `${ev > 0 ? '+' : ''}${ev.toFixed(1)}`
+}
+
+type ParamKey = 'M' | 'ISO' | 'S' | 'EV' | 'WB' | 'AF'
+
+const METERING_ICON: Record<MeteringMode, React.ComponentType<IconProps>> = {
+  matrix: IconMeteringMatrix,
+  center: IconMeteringCenter,
+  spot: IconMeteringSpot,
+}
 
 const WB_PRESETS: WhiteBalancePresetName[] = [
   'AUTO',
@@ -46,7 +97,16 @@ const WB_PRESETS: WhiteBalancePresetName[] = [
   'TWILIGHT',
   'SHADE',
 ]
-const WB_LABELS: Record<WhiteBalancePresetName, string> = {
+const WB_ICON: Partial<Record<WhiteBalancePresetName, React.ComponentType<IconProps>>> = {
+  INCANDESCENT: IconWbIncandescent,
+  FLUORESCENT: IconWbFluorescent,
+  WARM_FLUORESCENT: IconWbWarmFluorescent,
+  DAYLIGHT: IconWbDaylight,
+  CLOUDY_DAYLIGHT: IconWbCloudy,
+  TWILIGHT: IconWbTwilight,
+  SHADE: IconWbShade,
+}
+const WB_CAPTION: Record<WhiteBalancePresetName, string> = {
   AUTO: 'AUTO',
   INCANDESCENT: 'TUNGSTEN',
   FLUORESCENT: 'FLUOR.',
@@ -56,46 +116,48 @@ const WB_LABELS: Record<WhiteBalancePresetName, string> = {
   TWILIGHT: 'TWILIGHT',
   SHADE: 'SHADE',
 }
+const WB_STRIP_LABEL: Record<WhiteBalancePresetName, string> = {
+  AUTO: 'AUTO',
+  INCANDESCENT: 'TUNG',
+  FLUORESCENT: 'FLUOR',
+  WARM_FLUORESCENT: 'WARM',
+  DAYLIGHT: 'DAY',
+  CLOUDY_DAYLIGHT: 'CLOUD',
+  TWILIGHT: 'TWI',
+  SHADE: 'SHADE',
+}
 
-function ModeToggle({
-  mode,
-  onChange,
-}: {
-  mode: AutoManualMode
-  onChange: (next: AutoManualMode) => void
-}) {
+function AutoBadge({ active, onPress }: { active: boolean; onPress: () => void }) {
   return (
-    <View style={styles.modeToggle}>
-      <Pressable
-        onPress={() => onChange('auto')}
-        style={[styles.modeSeg, mode === 'auto' && styles.modeSegActive]}
-      >
-        <Text style={[styles.modeSegText, mode === 'auto' && styles.modeSegTextActive]}>AUTO</Text>
-      </Pressable>
-      <Pressable
-        onPress={() => onChange('manual')}
-        style={[styles.modeSeg, mode === 'manual' && styles.modeSegActive]}
-      >
-        <Text style={[styles.modeSegText, mode === 'manual' && styles.modeSegTextActive]}>MANUAL</Text>
-      </Pressable>
-    </View>
+    <Pressable onPress={onPress} style={[styles.autoBadge, active && styles.autoBadgeActive]}>
+      <Text style={[styles.autoBadgeText, active && styles.autoBadgeTextActive]}>A</Text>
+    </Pressable>
   )
 }
 
-type DragDialProps = {
-  valueText: string
+// Shared "ruler" for every numeric parameter (ISO, shutter, EV, focus
+// distance). ISO drags in index-space over ISO_NOTCHES so it snaps to the
+// six labelled stops; the others drag continuously. `labels` renders inside
+// the ruler itself via a space-between row, so it works identically for two
+// end labels (shutter/EV/focus) or six evenly-spaced ones (ISO) without any
+// percentage-based text centering (RN has no clean way to center text on a
+// percentage `left`, so evenly-spaced flex children stand in for it).
+type RulerProps = {
   value: number
   min: number
   max: number
   pxRange: number
-  onDrag: (value: number) => void
-  leftLabel?: string
-  rightLabel?: string
+  onDrag: (v: number) => void
+  dim?: boolean
+  labels: ReactNode[]
+  majorCount?: number
+  minorCount?: number
 }
 
-function DragDial({ valueText, value, min, max, pxRange, onDrag, leftLabel, rightLabel }: DragDialProps) {
+function Ruler({ value, min, max, pxRange, onDrag, dim, labels, majorCount, minorCount = 28 }: RulerProps) {
   const baseValue = useRef(value)
   const pan = Gesture.Pan()
+    .enabled(!dim)
     .onStart(() => {
       baseValue.current = value
     })
@@ -108,221 +170,402 @@ function DragDial({ valueText, value, min, max, pxRange, onDrag, leftLabel, righ
   const fillPct = Math.max(0, Math.min(1, (value - min) / (max - min))) * 100
 
   return (
-    <GestureDetector gesture={pan}>
-      <View>
-        <View style={styles.dialTrack}>
-          <View style={[styles.dialFill, { width: `${fillPct}%` }]} />
+    <View style={styles.rulerCol}>
+      <View style={styles.rulerLabelRow}>{labels}</View>
+      <GestureDetector gesture={pan}>
+        <View style={styles.rulerTrack}>
+          {majorCount != null ? (
+            <>
+              <View style={styles.tickRowMinor} pointerEvents="none">
+                {Array.from({ length: minorCount + 1 }).map((_, i) => (
+                  <View key={i} style={[styles.tickMinor, dim && styles.tickDim]} />
+                ))}
+              </View>
+              <View style={styles.tickRowMajor} pointerEvents="none">
+                {Array.from({ length: majorCount + 1 }).map((_, i) => (
+                  <View key={i} style={[styles.tickMajor, dim && styles.tickDim]} />
+                ))}
+              </View>
+            </>
+          ) : (
+            <View style={styles.tickRowMajor} pointerEvents="none">
+              {Array.from({ length: minorCount + 1 }).map((_, i) => (
+                <View key={i} style={[styles.tickMajor, dim && styles.tickDim]} />
+              ))}
+            </View>
+          )}
+          {!dim && <View style={[styles.rulerMarker, { left: `${fillPct}%` }]} />}
         </View>
-        <View style={styles.dialFooter}>
-          <Text style={styles.dialEdgeLabel}>{leftLabel ?? ''}</Text>
-          <Text style={styles.dialValue}>{valueText}</Text>
-          <Text style={styles.dialEdgeLabel}>{rightLabel ?? ''}</Text>
-        </View>
-      </View>
-    </GestureDetector>
+      </GestureDetector>
+    </View>
   )
 }
 
-function NotchedDial({
-  notches,
-  valueIndex,
-  onChangeIndex,
+function MeteringPanel({ controls }: { controls: ManualCameraState }) {
+  const { meteringMode, setMeteringMode } = controls
+  return (
+    <View style={styles.iconChoiceRow}>
+      {(['matrix', 'center', 'spot'] as const).map((mode) => {
+        const Icon = METERING_ICON[mode]
+        const active = meteringMode === mode
+        return (
+          <Pressable key={mode} onPress={() => setMeteringMode(mode)} style={styles.iconChoiceItem}>
+            <Icon size={26} color={active ? colors.accentSoft : colors.text} />
+          </Pressable>
+        )
+      })}
+    </View>
+  )
+}
+
+function IsoPanel({ controls }: { controls: ManualCameraState }) {
+  const { exposureMode, setExposureMode, manualIso, setManualIso } = controls
+  const auto = exposureMode === 'auto'
+  const isoIndex = Math.max(0, ISO_NOTCHES.indexOf(manualIso))
+  return (
+    <View style={styles.panelRow}>
+      <AutoBadge active={auto} onPress={() => setExposureMode(auto ? 'manual' : 'auto')} />
+      <Ruler
+        value={isoIndex}
+        min={0}
+        max={ISO_NOTCHES.length - 1}
+        pxRange={ISO_NOTCHES.length * 60}
+        onDrag={(v) => setManualIso(ISO_NOTCHES[Math.round(v)])}
+        dim={auto}
+        majorCount={ISO_NOTCHES.length - 1}
+        minorCount={24}
+        labels={ISO_NOTCHES.map((n) => (
+          <Text key={n} style={styles.rulerLabelText}>
+            {n}
+          </Text>
+        ))}
+      />
+    </View>
+  )
+}
+
+function ShutterPanel({ controls }: { controls: ManualCameraState }) {
+  const { exposureMode, setExposureMode, manualShutterNs, setManualShutterNs } = controls
+  const auto = exposureMode === 'auto'
+  return (
+    <View style={styles.panelRow}>
+      <AutoBadge active={auto} onPress={() => setExposureMode(auto ? 'manual' : 'auto')} />
+      <Ruler
+        value={shutterToStops(manualShutterNs)}
+        min={0}
+        max={SHUTTER_STOPS}
+        pxRange={SHUTTER_STOPS * PX_PER_STOP}
+        onDrag={(s) => setManualShutterNs(Math.round(stopsToShutter(s)))}
+        dim={auto}
+        minorCount={30}
+        labels={[
+          <Text key="min" style={styles.rulerLabelText}>
+            {formatShutter(SHUTTER_NS_RANGE.min)}
+          </Text>,
+          <Text key="max" style={styles.rulerLabelText}>
+            {formatShutter(SHUTTER_NS_RANGE.max)}
+          </Text>,
+        ]}
+      />
+    </View>
+  )
+}
+
+function EvPanel({
+  ev,
+  setEv,
+  minExposure,
+  maxExposure,
+  dim,
 }: {
-  notches: readonly number[]
-  valueIndex: number
-  onChangeIndex: (index: number) => void
+  ev: number
+  setEv: (v: number) => void
+  minExposure: number
+  maxExposure: number
+  dim: boolean
 }) {
-  const maxIndex = notches.length - 1
-  const pxPerNotch = 60
-  const baseIndex = useRef(valueIndex)
-  const pan = Gesture.Pan()
-    .onStart(() => {
-      baseIndex.current = valueIndex
-    })
-    .onUpdate((e: GestureUpdateEvent<PanGestureHandlerEventPayload>) => {
-      const raw = baseIndex.current + e.translationX / pxPerNotch
-      const snapped = Math.round(Math.min(maxIndex, Math.max(0, raw)))
-      if (snapped !== valueIndex) onChangeIndex(snapped)
-    })
-    .runOnJS(true)
+  return (
+    <View style={styles.panelRow}>
+      <View style={styles.autoBadgeSpacer} />
+      <Ruler
+        value={ev}
+        min={minExposure}
+        max={maxExposure}
+        pxRange={Math.max(1, maxExposure - minExposure) * PX_PER_STOP}
+        onDrag={setEv}
+        dim={dim}
+        majorCount={4}
+        minorCount={20}
+        labels={[
+          <Text key="min" style={styles.rulerLabelText}>
+            {minExposure.toFixed(1)}
+          </Text>,
+          <Text key="max" style={styles.rulerLabelText}>{`+${maxExposure.toFixed(1)}`}</Text>,
+        ]}
+      />
+    </View>
+  )
+}
+
+function WhiteBalancePanel({ controls }: { controls: ManualCameraState }) {
+  const { whiteBalance, setWhiteBalance } = controls
+  return (
+    <View style={styles.wbGrid}>
+      {WB_PRESETS.map((preset) => {
+        const active = whiteBalance === preset
+        const Icon = WB_ICON[preset]
+        return (
+          <Pressable key={preset} onPress={() => setWhiteBalance(preset)} style={styles.wbItem}>
+            {preset === 'AUTO' ? (
+              <View style={[styles.autoBadge, active && styles.autoBadgeActive]}>
+                <Text style={[styles.autoBadgeText, active && styles.autoBadgeTextActive]}>A</Text>
+              </View>
+            ) : Icon ? (
+              <Icon size={24} color={active ? colors.accentSoft : colors.text} />
+            ) : null}
+            <Text style={[styles.wbCaption, active && styles.wbCaptionActive]}>{WB_CAPTION[preset]}</Text>
+          </Pressable>
+        )
+      })}
+    </View>
+  )
+}
+
+function FocusPanel({ controls }: { controls: ManualCameraState }) {
+  const { focusMode, setFocusMode, manualFocusDiopters, setManualFocusDiopters, maxFocusDiopters } = controls
+  if (maxFocusDiopters == null) return null
+
+  if (focusMode === 'auto') {
+    return (
+      <View style={styles.twoChoiceRow}>
+        <View style={styles.twoChoiceItem}>
+          <Text style={[styles.twoChoiceText, styles.twoChoiceTextActive]}>AF</Text>
+        </View>
+        <Pressable onPress={() => setFocusMode('manual')} style={styles.twoChoiceItem}>
+          <Text style={styles.twoChoiceText}>MF</Text>
+        </Pressable>
+      </View>
+    )
+  }
 
   return (
-    <GestureDetector gesture={pan}>
-      <View>
-        <View style={styles.notchRow}>
-          {notches.map((n, i) => (
-            <View key={n} style={styles.notchTickWrap}>
-              <View style={[styles.notchTick, i === valueIndex && styles.notchTickActive]} />
-            </View>
-          ))}
-        </View>
-        <View style={styles.notchLabelRow}>
-          {notches.map((n, i) => (
-            <Text key={n} style={[styles.notchLabel, i === valueIndex && styles.notchLabelActive]}>
-              {n}
-            </Text>
-          ))}
-        </View>
-      </View>
-    </GestureDetector>
+    <View style={styles.panelRow}>
+      <AutoBadge active={false} onPress={() => setFocusMode('auto')} />
+      <Ruler
+        // Same NEAR-left/∞-right inversion as before: high diopters = near,
+        // 0 = infinity, but the ruler reads short-to-long left-to-right.
+        value={maxFocusDiopters - manualFocusDiopters}
+        min={0}
+        max={maxFocusDiopters}
+        pxRange={FOCUS_DRAG_PX}
+        onDrag={(d) => setManualFocusDiopters(maxFocusDiopters - d)}
+        majorCount={5}
+        minorCount={24}
+        labels={[
+          <IconFocusNear key="near" size={17} color={colors.text} />,
+          <IconFocusFar key="far" size={17} color={colors.text} />,
+        ]}
+      />
+    </View>
   )
 }
 
 type Props = {
   controls: ManualCameraState
+  ev: number
+  setEv: (v: number) => void
+  minExposure: number
+  maxExposure: number
 }
 
-export default function ManualControls({ controls }: Props) {
+export default function ManualControls({ controls, ev, setEv, minExposure, maxExposure }: Props) {
+  const [activeParam, setActiveParam] = useState<ParamKey | null>(null)
   const {
     exposureMode,
-    setExposureMode,
-    manualIso,
-    setManualIso,
-    manualShutterNs,
-    setManualShutterNs,
     focusMode,
-    setFocusMode,
-    manualFocusDiopters,
-    setManualFocusDiopters,
-    maxFocusDiopters,
     whiteBalance,
-    setWhiteBalance,
+    meteringMode,
+    manualIso,
+    manualShutterNs,
+    maxFocusDiopters,
+    fullyManual,
     canIndependentExposure,
   } = controls
-
-  const isoIndex = Math.max(0, ISO_NOTCHES.indexOf(manualIso))
-  const shutterStops = shutterToStops(manualShutterNs)
   const canFocus = maxFocusDiopters != null && maxFocusDiopters > 0
-  const exposureManual = exposureMode === 'manual'
+
+  // EV and metering only affect a running AE algorithm — if exposure went
+  // fully manual while one of their panels happened to be open, collapse it
+  // rather than leave a dead panel showing. In practice this can't currently
+  // happen (exposureMode only flips from inside the ISO/S panels), kept as
+  // a cheap guard against future navigation paths.
+  useEffect(() => {
+    if (fullyManual && (activeParam === 'EV' || activeParam === 'M')) setActiveParam(null)
+  }, [fullyManual, activeParam])
+
+  const toggle = (key: ParamKey) => setActiveParam((cur) => (cur === key ? null : key))
+  const MeteringIcon = METERING_ICON[meteringMode]
 
   return (
-    <View style={styles.root}>
-      {!canIndependentExposure && (
-        <Text style={styles.capabilityNote}>
-          This camera supports automatic or fully manual exposure. Independent Auto ISO and Auto Shutter are
-          unavailable.
-        </Text>
-      )}
-
-      <View style={styles.control}>
-        <View style={styles.controlHeader}>
-          <Text style={styles.controlLabel}>EXPOSURE</Text>
-          <ModeToggle mode={exposureMode} onChange={setExposureMode} />
-        </View>
-      </View>
-
-      <View style={styles.control}>
-        <View style={styles.controlHeader}>
-          <Text style={styles.controlLabel}>ISO</Text>
-          {!exposureManual && <Text style={styles.autoValue}>AUTO</Text>}
-        </View>
-        {exposureManual && (
-          <NotchedDial
-            notches={ISO_NOTCHES}
-            valueIndex={isoIndex}
-            onChangeIndex={(i) => setManualIso(ISO_NOTCHES[i])}
-          />
-        )}
-      </View>
-
-      <View style={styles.control}>
-        <View style={styles.controlHeader}>
-          <Text style={styles.controlLabel}>SHUTTER</Text>
-          {!exposureManual && <Text style={styles.autoValue}>AUTO</Text>}
-        </View>
-        {exposureManual && (
-          <DragDial
-            valueText={formatShutter(manualShutterNs)}
-            value={shutterStops}
-            min={0}
-            max={SHUTTER_STOPS}
-            pxRange={SHUTTER_STOPS * PX_PER_STOP}
-            onDrag={(s) => setManualShutterNs(Math.round(stopsToShutter(s)))}
-          />
-        )}
-      </View>
-
-      {canFocus && maxFocusDiopters != null && (
-        <View style={styles.control}>
-          <View style={styles.controlHeader}>
-            <Text style={styles.controlLabel}>FOCUS</Text>
-            <ModeToggle mode={focusMode} onChange={setFocusMode} />
-          </View>
-          {focusMode === 'manual' && (
-            <DragDial
-              // UI runs short (near) -> long (far/infinity) left-to-right, the
-              // opposite of the underlying diopter scale (high diopters =
-              // near, 0 = infinity) — invert for display, invert back on drag.
-              valueText={manualFocusDiopters < 0.05 ? '∞' : `${(1 / manualFocusDiopters).toFixed(2)}m`}
-              value={maxFocusDiopters - manualFocusDiopters}
-              min={0}
-              max={maxFocusDiopters}
-              pxRange={FOCUS_DRAG_PX}
-              onDrag={(d) => setManualFocusDiopters(maxFocusDiopters - d)}
-              leftLabel="NEAR"
-              rightLabel="∞"
-            />
+    <View>
+      {activeParam != null && (
+        <View style={styles.panel}>
+          {activeParam === 'M' && <MeteringPanel controls={controls} />}
+          {activeParam === 'ISO' && <IsoPanel controls={controls} />}
+          {activeParam === 'S' && <ShutterPanel controls={controls} />}
+          {activeParam === 'EV' && (
+            <EvPanel ev={ev} setEv={setEv} minExposure={minExposure} maxExposure={maxExposure} dim={fullyManual} />
+          )}
+          {activeParam === 'WB' && <WhiteBalancePanel controls={controls} />}
+          {activeParam === 'AF' && <FocusPanel controls={controls} />}
+          {(activeParam === 'ISO' || activeParam === 'S') && !canIndependentExposure && (
+            <Text style={styles.capabilityNote}>ISO and shutter share one exposure mode on this camera.</Text>
           )}
         </View>
       )}
 
-      <View style={styles.wbRow}>
-        {WB_PRESETS.map((preset) => (
-          <Pressable
-            key={preset}
-            onPress={() => setWhiteBalance(preset)}
-            style={[styles.wbChip, whiteBalance === preset && styles.wbChipActive]}
-          >
-            <Text style={[styles.wbChipText, whiteBalance === preset && styles.wbChipTextActive]}>
-              {WB_LABELS[preset]}
+      <View style={styles.strip}>
+        <Pressable style={styles.stripCol} onPress={() => toggle('M')}>
+          <Text style={[styles.stripLabel, activeParam === 'M' && styles.stripLabelActive]}>M</Text>
+          <View style={styles.stripValueRow}>
+            <MeteringIcon size={17} color={fullyManual ? colors.textMuted : colors.text} />
+          </View>
+        </Pressable>
+        <Pressable style={styles.stripCol} onPress={() => toggle('ISO')}>
+          <Text style={[styles.stripLabel, activeParam === 'ISO' && styles.stripLabelActive]}>ISO</Text>
+          <View style={styles.stripValueRow}>
+            <Text style={styles.stripValueText}>{exposureMode === 'auto' ? 'AUTO' : manualIso}</Text>
+          </View>
+        </Pressable>
+        <Pressable style={styles.stripCol} onPress={() => toggle('S')}>
+          <Text style={[styles.stripLabel, activeParam === 'S' && styles.stripLabelActive]}>S</Text>
+          <View style={styles.stripValueRow}>
+            <Text style={styles.stripValueText}>
+              {exposureMode === 'auto' ? 'AUTO' : formatShutter(manualShutterNs)}
             </Text>
+          </View>
+        </Pressable>
+        <Pressable style={styles.stripCol} onPress={() => toggle('EV')} disabled={fullyManual}>
+          <Text
+            style={[styles.stripLabel, activeParam === 'EV' && styles.stripLabelActive, fullyManual && styles.stripDisabled]}
+          >
+            EV
+          </Text>
+          <View style={styles.stripValueRow}>
+            <Text style={[styles.stripValueText, fullyManual && styles.stripDisabled]}>{formatEv(ev)}</Text>
+          </View>
+        </Pressable>
+        <Pressable style={styles.stripCol} onPress={() => toggle('WB')}>
+          <Text style={[styles.stripLabel, activeParam === 'WB' && styles.stripLabelActive]}>WB</Text>
+          <View style={styles.stripValueRow}>
+            <Text style={styles.stripValueText}>{WB_STRIP_LABEL[whiteBalance]}</Text>
+          </View>
+        </Pressable>
+        {canFocus && (
+          <Pressable style={styles.stripCol} onPress={() => toggle('AF')}>
+            <Text style={[styles.stripLabel, activeParam === 'AF' && styles.stripLabelActive]}>AF</Text>
+            <View style={styles.stripValueRow}>
+              <Text style={styles.stripValueText}>{focusMode === 'auto' ? 'AF' : 'MF'}</Text>
+            </View>
           </Pressable>
-        ))}
+        )}
       </View>
     </View>
   )
 }
 
 const styles = StyleSheet.create({
-  root: { gap: 12 },
-  capabilityNote: { fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted },
-  control: { gap: 6 },
-  controlHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  controlLabel: { fontFamily: fonts.monoBold, fontSize: 10, color: colors.accentSoft, letterSpacing: 1 },
-  autoValue: { fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted, letterSpacing: 1 },
-  modeToggle: {
+  strip: {
     flexDirection: 'row',
-    borderRadius: 999,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: colors.chipBorder,
+    backgroundColor: 'rgba(8,9,16,0.82)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+    paddingVertical: 13,
+    paddingHorizontal: 6,
   },
-  modeSeg: { paddingHorizontal: 10, paddingVertical: 4, backgroundColor: colors.chipBg },
-  modeSegActive: { backgroundColor: colors.accentTint },
-  modeSegText: { fontFamily: fonts.sansBold, fontSize: 9, color: colors.textSoft },
-  modeSegTextActive: { color: colors.accentSoft },
-  dialTrack: { height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.12)', overflow: 'hidden' },
-  dialFill: { height: '100%', backgroundColor: colors.accent },
-  dialFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
-  dialEdgeLabel: { fontFamily: fonts.mono, fontSize: 9, color: colors.textMuted, minWidth: 30 },
-  dialValue: { fontFamily: fonts.monoBold, fontSize: 12, color: colors.text },
-  notchRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', height: 16 },
-  notchTickWrap: { alignItems: 'center', flex: 1 },
-  notchTick: { width: 2, height: 10, borderRadius: 1, backgroundColor: 'rgba(255,255,255,0.2)' },
-  notchTickActive: { backgroundColor: colors.accent, height: 14 },
-  notchLabelRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
-  notchLabel: { flex: 1, textAlign: 'center', fontFamily: fonts.mono, fontSize: 9, color: colors.textMuted },
-  notchLabelActive: { color: colors.accentSoft, fontFamily: fonts.monoBold },
-  wbRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  wbChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    backgroundColor: colors.chipBg,
-    borderWidth: 1,
-    borderColor: colors.chipBorder,
+  stripCol: { flex: 1, alignItems: 'center', gap: 7 },
+  stripLabel: { fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1, color: colors.textSoft },
+  stripLabelActive: { color: colors.accentSoft, fontFamily: fonts.monoBold },
+  stripDisabled: { color: colors.textMuted },
+  stripValueRow: { minHeight: 18, alignItems: 'center', justifyContent: 'center' },
+  stripValueText: { fontFamily: fonts.mono, fontSize: 12, color: colors.text },
+
+  panel: {
+    backgroundColor: 'rgba(8,9,16,0.7)',
+    paddingVertical: 16,
+    paddingHorizontal: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.07)',
+    gap: 8,
   },
-  wbChipActive: { backgroundColor: colors.accentTint, borderColor: colors.accent },
-  wbChipText: { fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft },
-  wbChipTextActive: { color: colors.accentSoft },
+  panelRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
+  capabilityNote: { fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted },
+
+  autoBadge: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  autoBadgeActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  autoBadgeText: { fontFamily: fonts.monoBold, fontSize: 14, color: colors.textSoft },
+  autoBadgeTextActive: { color: '#0a0a0b' },
+  autoBadgeSpacer: { width: 36 },
+
+  rulerCol: { flex: 1 },
+  rulerLabelRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6, alignItems: 'center' },
+  rulerLabelText: { fontFamily: fonts.mono, fontSize: 11, color: colors.textSoft },
+  rulerTrack: { height: 30, justifyContent: 'flex-end' },
+  tickRowMinor: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 9,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+  },
+  tickMinor: { width: 1.5, height: '70%', backgroundColor: 'rgba(255,255,255,0.4)' },
+  tickRowMajor: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: 17,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-end',
+  },
+  tickMajor: { width: 2, height: '100%', backgroundColor: colors.text },
+  tickDim: { opacity: 0.45 },
+  rulerMarker: {
+    position: 'absolute',
+    bottom: 0,
+    width: 3,
+    height: 26,
+    borderRadius: 2,
+    marginLeft: -1.5,
+    backgroundColor: colors.accent,
+    shadowColor: colors.accent,
+    shadowOpacity: 0.8,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 4,
+  },
+
+  iconChoiceRow: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 6 },
+  iconChoiceItem: { padding: 8 },
+
+  twoChoiceRow: { flexDirection: 'row', paddingVertical: 10 },
+  twoChoiceItem: { flex: 1, alignItems: 'center' },
+  twoChoiceText: { fontFamily: fonts.monoBold, fontSize: 15, letterSpacing: 1, color: colors.text },
+  twoChoiceTextActive: { color: colors.accentSoft },
+
+  wbGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 16 },
+  wbItem: { width: '23%', alignItems: 'center', gap: 6, paddingVertical: 4 },
+  wbCaption: { fontFamily: fonts.mono, fontSize: 8, letterSpacing: 0.4, color: colors.textMuted, textAlign: 'center' },
+  wbCaptionActive: { color: colors.accentSoft },
 })
