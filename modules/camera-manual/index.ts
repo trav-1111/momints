@@ -9,6 +9,21 @@ const CameraManualNative = requireNativeModule('CameraManual')
 export const ISO_RANGE = { min: 100, max: 11470 } as const
 export const SHUTTER_NS_RANGE = { min: 100_000, max: 16_000_000_000 } as const
 
+// Real photographic ISO stops for the manual notched slider — deliberately a
+// curated subset of the hardware's full range (100-11470), not the whole
+// thing: a cleaner, more recognizable "camera" feel than a raw continuous
+// dial up to 11470. Auto ISO is not limited to these — the platform's own AE
+// algorithm can pick any value in the full supported range.
+export const ISO_NOTCHES = [100, 200, 400, 800, 1600, 3200] as const
+
+// Filters the notch list against a camera's real SENSOR_INFO_SENSITIVITY_RANGE
+// (from camera-caps) — defensive for any camera/device where the range
+// doesn't cover the full 100-3200 span (e.g. this app's own camera 3 macro
+// lens tops out at isoMax 4000, still fine, but not every device will).
+export function filterIsoNotches(range: { min: number; max: number }): number[] {
+  return ISO_NOTCHES.filter((n) => n >= range.min && n <= range.max)
+}
+
 // CameraMetadata.CONTROL_AWB_MODE_* — exact values confirmed via javap
 // against the android-36 SDK (android.hardware.camera2.CameraMetadata),
 // not guessed. Presets, not a continuous Kelvin dial — CONTROL_AWB_MODE_OFF
@@ -28,6 +43,22 @@ export const WhiteBalancePreset = {
 
 export type WhiteBalancePresetName = keyof typeof WhiteBalancePreset
 
+export type AutoManualMode = 'auto' | 'manual'
+export type MeteringMode = 'matrix' | 'center' | 'spot'
+
+export type CameraControlState = {
+  isoMode: AutoManualMode
+  iso: number | null // required when isoMode === 'manual'
+  shutterMode: AutoManualMode
+  shutterNs: number | null // required when shutterMode === 'manual'
+  focusMode: AutoManualMode
+  focusDistance: number | null // diopters, required when focusMode === 'manual'
+  whiteBalance: WhiteBalancePresetName
+  metering: MeteringMode
+  meteringNormX?: number // 0..1, only used for 'spot'
+  meteringNormY?: number
+}
+
 function clamp(value: number, range: { min: number; max: number }): number {
   if (!Number.isFinite(value)) {
     throw new Error(`Expected a finite number, got ${value}`)
@@ -37,46 +68,35 @@ function clamp(value: number, range: { min: number; max: number }): number {
 
 // viewTag: the vision-camera <Camera> component's native view tag, e.g.
 //   findNodeHandle(cameraRef.current)
-// Either iso or shutterNs can be omitted to leave that one alone — but
-// CONTROL_AE_MODE is forced off either way, since manual ISO/shutter are
-// ignored by the sensor while auto-exposure is running.
-// Out-of-range values are clamped to the hardware's real range rather than
-// rejected outright — matches how a physical dial behaves at its stops.
-export function applyManualExposure(viewTag: number, iso: number | null, shutterNs: number | null): void {
-  const clampedIso = iso == null ? null : Math.round(clamp(iso, ISO_RANGE))
-  const clampedShutterNs = shutterNs == null ? null : Math.round(clamp(shutterNs, SHUTTER_NS_RANGE))
-  CameraManualNative.applyManualExposure(viewTag, clampedIso, clampedShutterNs)
-}
+//
+// Rebuilds the ENTIRE capture-request override state on every call (see the
+// native module's own doc comment for why this is the "set" not "add"
+// design) — always pass the FULL desired state, not a partial delta.
+// ISO/shutter are clamped to this camera's real hardware range; focus is
+// NOT clamped here since its range is camera-specific (main vs macro vs
+// front) — the caller must clamp against its own maxFocusDiopters.
+export function applyCameraState(viewTag: number, state: CameraControlState): void {
+  const iso = state.iso == null ? null : Math.round(clamp(state.iso, ISO_RANGE))
+  const shutterNs = state.shutterNs == null ? null : Math.round(clamp(state.shutterNs, SHUTTER_NS_RANGE))
 
-// Independent of exposure — safe to call without touching ISO/shutter.
-export function applyWhiteBalance(viewTag: number, preset: WhiteBalancePresetName): void {
-  CameraManualNative.applyWhiteBalance(viewTag, WhiteBalancePreset[preset])
-}
-
-// focusDistanceDiopters: 0 = infinity, up to maxDiopters (the device's real
-// LENS_INFO_MINIMUM_FOCUS_DISTANCE — pass activeDevice.minFocusDistance
-// converted from vision-camera's cm to diopters: 100 / minFocusDistanceCm).
-// Deliberately NOT a hardcoded module constant like ISO_RANGE/SHUTTER_NS_RANGE
-// — focus range varies per physical camera (main vs macro vs front) even on
-// the same device, unlike the exposure ranges which are pinned to one camera.
-export function applyManualFocus(viewTag: number, focusDistanceDiopters: number, maxDiopters: number): void {
-  const clamped = clamp(focusDistanceDiopters, { min: 0, max: maxDiopters })
-  CameraManualNative.applyManualFocus(viewTag, clamped)
-}
-
-export type MeteringMode = 'matrix' | 'center' | 'spot'
-
-// Only has any visible effect while auto-exposure is actually running — i.e.
-// NOT while Tier-2 manual exposure (applyManualExposure) is active, since
-// AE_REGIONS steers an AE algorithm that's off in that mode. normX/normY are
-// 0..1 frame-normalized and only used for 'spot' (default: frame center).
-export function applyMeteringMode(viewTag: number, mode: MeteringMode, normX?: number, normY?: number): void {
-  CameraManualNative.applyMeteringMode(viewTag, mode, normX ?? null, normY ?? null)
+  CameraManualNative.applyCameraState(viewTag, {
+    isoMode: state.isoMode,
+    iso,
+    shutterMode: state.shutterMode,
+    shutterNs,
+    focusMode: state.focusMode,
+    focusDistance: state.focusDistance,
+    awbMode: WhiteBalancePreset[state.whiteBalance],
+    meteringMode: state.metering,
+    meteringNormX: state.meteringNormX ?? 0.5,
+    meteringNormY: state.meteringNormY ?? 0.5,
+  })
 }
 
 // Clears every override (exposure, white balance, focus, metering regions —
-// everything) — hands the whole session back to CameraX's normal
-// auto-everything behavior in one call.
+// everything) in one call — hands the whole session back to CameraX's
+// normal auto-everything behavior without needing to compute a valid full
+// state first. Useful on screen unmount/cleanup.
 export function resetToAuto(viewTag: number): void {
   CameraManualNative.resetToAuto(viewTag)
 }

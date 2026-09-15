@@ -48,6 +48,19 @@ class CameraCapsModule : Module() {
         val maxRegionsAe = chars.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0
         val activeArray = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
 
+        // CONTROL_AE_PRIORITY_MODE (API 36 / Android 16+) is what makes true
+        // ISO-priority / shutter-priority possible — the platform runs its own
+        // AE algorithm for whichever of ISO/shutter you leave on auto, instead
+        // of requiring a hand-rolled metering loop. .get() returns null/absent
+        // on older API levels or unsupporting devices — never throws — so this
+        // is safe to read unconditionally and gate features on the result
+        // rather than inferring support from Build.VERSION.SDK_INT alone.
+        val aePriorityModes = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_PRIORITY_MODES) ?: IntArray(0)
+        val hasIsoPriority =
+          aePriorityModes.contains(CameraCharacteristics.CONTROL_AE_PRIORITY_MODE_SENSOR_SENSITIVITY_PRIORITY)
+        val hasShutterPriority =
+          aePriorityModes.contains(CameraCharacteristics.CONTROL_AE_PRIORITY_MODE_SENSOR_EXPOSURE_TIME_PRIORITY)
+
         val entry = JSONObject()
         entry.put("cameraId", id)
         entry.put("lensFacing", lensFacingName(chars.get(CameraCharacteristics.LENS_FACING)))
@@ -75,6 +88,8 @@ class CameraCapsModule : Module() {
         entry.put("hasAwbModeOff", hasAwbModeOff)
         entry.put("maxRegionsAe", maxRegionsAe)
         entry.put("meteringModePossible", maxRegionsAe > 0)
+        entry.put("hasIsoPriority", hasIsoPriority)
+        entry.put("hasShutterPriority", hasShutterPriority)
         if (activeArray != null) {
           entry.put("activeArrayWidth", activeArray.width())
           entry.put("activeArrayHeight", activeArray.height())

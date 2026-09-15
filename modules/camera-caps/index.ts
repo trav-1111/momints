@@ -22,6 +22,11 @@ export type CameraCapability = {
   meteringModePossible: boolean
   activeArrayWidth?: number
   activeArrayHeight?: number
+  // CONTROL_AE_AVAILABLE_PRIORITY_MODES (API 36+) — whether the platform can
+  // run its own auto-exposure for the axis you leave on auto while the other
+  // is manually set. Query at runtime; don't infer from OS version alone.
+  hasIsoPriority: boolean
+  hasShutterPriority: boolean
 }
 
 // Reads android.hardware.camera2.CameraCharacteristics directly — this is

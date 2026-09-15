@@ -34,7 +34,7 @@ import { cropToAspect } from '../services/cropImage'
 import { ensureUnderCeiling } from '../services/compressImage'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
 import ManualControls from '../components/ManualControls'
-import { applyMeteringMode, type MeteringMode } from '../../modules/camera-manual'
+import { useManualCameraState } from '../hooks/useManualCameraState'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { useSessionStore } from '../store/session'
@@ -120,8 +120,6 @@ export default function CameraScreen() {
   // (manual ISO/shutter/focus/WB) mounts underneath, gated by TIER2_ENABLED.
   const [proOpen, setProOpen] = useState(false)
   const [ev, setEv] = useState(0)
-  const [meteringMode, setMeteringMode] = useState<MeteringMode>('matrix')
-  const [manualEnabled, setManualEnabled] = useState(false)
 
   // Release the camera when the screen loses focus or the app is backgrounded
   // (e.g. wallet handoff) — Android throws camera-is-restricted otherwise
@@ -194,6 +192,8 @@ export default function CameraScreen() {
   // Camera2's LENS_FOCUS_DISTANCE is diopters (1/meters) — 100/cm converts.
   const maxFocusDiopters =
     activeDevice && activeDevice.minFocusDistance > 0 ? 100 / activeDevice.minFocusDistance : null
+
+  const manualCamera = useManualCameraState(cameraViewTag, activeDevice?.id ?? null, maxFocusDiopters)
 
   useEffect(() => {
     if (!hasPermission) {
@@ -345,24 +345,15 @@ export default function CameraScreen() {
     [minExposure, maxExposure],
   )
 
-  // Manual ISO/shutter dominates the visual result once engaged — leaving EV
-  // bias "active" underneath it at the same time is just a confusing extra
-  // dial with no visible effect, so zero it out at the moment Tier 2 takes over.
-  const handleManualToggle = useCallback((next: boolean) => {
-    setManualEnabled(next)
-    if (next) setEv(0)
-  }, [])
-
-  // AE_REGIONS only steers the auto-exposure algorithm — a no-op while Tier 2
-  // manual exposure has it switched off, so this is disabled (not called)
-  // during manual mode, matching the EV bias control right next to it.
-  const handleMeteringSelect = useCallback(
-    (mode: MeteringMode) => {
-      setMeteringMode(mode)
-      if (cameraViewTag != null && !manualEnabled) applyMeteringMode(cameraViewTag, mode)
-    },
-    [cameraViewTag, manualEnabled],
-  )
+  // Manual ISO+shutter together (fullyManual, i.e. AE_MODE_OFF) dominates the
+  // visual result — leaving EV bias "active" underneath it is a confusing
+  // extra dial with no visible effect, so zero it out the moment both go
+  // manual. EV bias and metering both still function during a single-axis
+  // priority mode (ISO-priority or shutter-priority), since AE_MODE stays ON
+  // in those states — only disabled here for the fully-manual case.
+  useEffect(() => {
+    if (manualCamera.fullyManual) setEv(0)
+  }, [manualCamera.fullyManual])
 
   const handleFocus = useCallback(
     async (event: GestureResponderEvent) => {
@@ -840,42 +831,42 @@ export default function CameraScreen() {
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <Pressable
               onPress={() => nudgeEv(-0.5)}
-              disabled={manualEnabled}
+              disabled={manualCamera.fullyManual}
               style={{
                 flex: 1,
                 paddingVertical: 8,
                 borderRadius: 8,
                 alignItems: 'center',
                 backgroundColor: 'rgba(255,255,255,0.12)',
-                opacity: manualEnabled ? 0.35 : 1,
+                opacity: manualCamera.fullyManual ? 0.35 : 1,
               }}
             >
               <Text style={{ fontFamily: fonts.sansBold, fontSize: 12, color: colors.text }}>− EV</Text>
             </Pressable>
             <Pressable
               onPress={() => setEv(0)}
-              disabled={manualEnabled}
+              disabled={manualCamera.fullyManual}
               style={{
                 flex: 1,
                 paddingVertical: 8,
                 borderRadius: 8,
                 alignItems: 'center',
                 backgroundColor: 'rgba(255,255,255,0.12)',
-                opacity: manualEnabled ? 0.35 : 1,
+                opacity: manualCamera.fullyManual ? 0.35 : 1,
               }}
             >
               <Text style={{ fontFamily: fonts.sansBold, fontSize: 12, color: colors.text }}>Reset</Text>
             </Pressable>
             <Pressable
               onPress={() => nudgeEv(0.5)}
-              disabled={manualEnabled}
+              disabled={manualCamera.fullyManual}
               style={{
                 flex: 1,
                 paddingVertical: 8,
                 borderRadius: 8,
                 alignItems: 'center',
                 backgroundColor: 'rgba(255,255,255,0.12)',
-                opacity: manualEnabled ? 0.35 : 1,
+                opacity: manualCamera.fullyManual ? 0.35 : 1,
               }}
             >
               <Text style={{ fontFamily: fonts.sansBold, fontSize: 12, color: colors.text }}>+ EV</Text>
@@ -886,24 +877,25 @@ export default function CameraScreen() {
               {(['matrix', 'center', 'spot'] as const).map((mode) => (
                 <Pressable
                   key={mode}
-                  onPress={() => handleMeteringSelect(mode)}
-                  disabled={manualEnabled}
+                  onPress={() => manualCamera.setMeteringMode(mode)}
+                  disabled={manualCamera.fullyManual}
                   style={{
                     flex: 1,
                     paddingVertical: 8,
                     borderRadius: 8,
                     alignItems: 'center',
-                    backgroundColor: meteringMode === mode ? colors.accentTint : 'rgba(255,255,255,0.12)',
-                    borderWidth: meteringMode === mode ? 1 : 0,
+                    backgroundColor:
+                      manualCamera.meteringMode === mode ? colors.accentTint : 'rgba(255,255,255,0.12)',
+                    borderWidth: manualCamera.meteringMode === mode ? 1 : 0,
                     borderColor: colors.accent,
-                    opacity: manualEnabled ? 0.35 : 1,
+                    opacity: manualCamera.fullyManual ? 0.35 : 1,
                   }}
                 >
                   <Text
                     style={{
                       fontFamily: fonts.sansBold,
                       fontSize: 11,
-                      color: meteringMode === mode ? colors.accentSoft : colors.text,
+                      color: manualCamera.meteringMode === mode ? colors.accentSoft : colors.text,
                     }}
                   >
                     {mode.toUpperCase()}
@@ -912,21 +904,16 @@ export default function CameraScreen() {
               ))}
             </View>
           )}
-          {manualEnabled && (
+          {manualCamera.fullyManual && (
             <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted }}>
-              EV bias and metering are off while manual exposure is active — ISO/shutter control brightness below.
+              EV bias and metering are off while both ISO and shutter are manual — they control brightness below.
             </Text>
           )}
 
           {TIER2_ENABLED && (
             <>
               <View style={{ height: 1, backgroundColor: 'rgba(255,255,255,0.12)' }} />
-              <ManualControls
-                viewTag={cameraViewTag}
-                enabled={manualEnabled}
-                onToggleEnabled={handleManualToggle}
-                maxFocusDiopters={maxFocusDiopters}
-              />
+              <ManualControls controls={manualCamera} />
             </>
           )}
         </View>

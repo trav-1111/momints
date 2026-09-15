@@ -12,6 +12,47 @@ import androidx.camera.core.Camera
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.records.Field
+import expo.modules.kotlin.records.Record
+
+// isoMode/shutterMode/focusMode: "auto" | "manual".
+// meteringMode: "matrix" | "center" | "spot".
+// awbMode: CameraMetadata.CONTROL_AWB_MODE_* (see index.ts presets).
+// A plain Record class instead of ~10 individual Function() params — Expo's
+// Function() DSL has an arity ceiling (Function0..FunctionN) that a flat
+// 11-parameter lambda exceeds; a single structured JS-object argument sails
+// under it and reads better besides.
+class CameraStateRecord : Record {
+  @Field
+  var isoMode: String = "auto"
+
+  @Field
+  var iso: Int? = null
+
+  @Field
+  var shutterMode: String = "auto"
+
+  @Field
+  var shutterNs: Long? = null
+
+  @Field
+  var focusMode: String = "auto"
+
+  @Field
+  var focusDistance: Float? = null
+
+  @Field
+  var awbMode: Int = 1 // CONTROL_AWB_MODE_AUTO
+
+  @Field
+  var meteringMode: String = "matrix"
+
+  @Field
+  var meteringNormX: Float = 0.5f
+
+  @Field
+  var meteringNormY: Float = 0.5f
+}
 
 // TIER 2 — manual camera controls via CameraX's Camera2Interop, pushed onto
 // the LIVE react-native-vision-camera session.
@@ -23,94 +64,48 @@ import expo.modules.kotlin.modules.ModuleDefinition
 // literal name, and Kotlin only mangles cross-module METHOD names, not
 // backing fields — so this doesn't depend on guessing a mangled accessor
 // name and isn't fragile to compiler-version churn the way that would be.
-// No vision-camera fork or patch-package needed. Proven on-device (Day-1
-// gate): repeated ISO changes via this exact path, zero crashes, measured
-// brightness swing matching the requested gain.
+// No vision-camera fork or patch-package needed. Proven on-device across
+// ISO, shutter, white balance, focus, and metering: zero crashes, measured
+// effects landing in the actual captured photo, not just the preview.
 //
-// IMPORTANT: Camera2CameraControl.setCaptureRequestOptions() REPLACES the
-// entire override set — confirmed by reading the real CameraX AAR (it has a
-// separate addCaptureRequestOptions() specifically for merging). Exposure
-// and white balance are independent 3A controls that both need to be live
-// at once, so every incremental call here uses `add`, never `set`. Only the
-// full reset clears everything in one shot.
+// ARCHITECTURE: applyCameraState rebuilds the ENTIRE desired capture-request
+// override set from scratch on every call and uses setCaptureRequestOptions
+// (REPLACE), never addCaptureRequestOptions (MERGE). This sidesteps a real
+// problem with the merge-based approach: there is no "clear just this one
+// key" API on Camera2CameraControl (only clearCaptureRequestOptions(), which
+// clears everything). Independent auto/manual toggles for ISO/shutter/focus
+// need to be able to release JUST one control back to auto while others stay
+// manual — only achievable by owning the full state and replacing it
+// wholesale each time, which is exactly what the JS layer already does
+// (it holds all UI state and calls this after every change anyway).
 class CameraManualModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("CameraManual")
 
-    // iso/shutterNs null-safe: pass only the one(s) you want to change.
-    // Forces CONTROL_AE_MODE off — manual ISO/shutter are ignored by the
-    // sensor otherwise, since the auto-exposure algorithm keeps overwriting
-    // them every frame.
-    Function("applyManualExposure") { viewTag: Int, iso: Int?, shutterNs: Long? ->
-      applyManualExposure(viewTag, iso, shutterNs)
+    // The four isoMode x shutterMode combinations map to Camera2's real
+    // exposure states:
+    //   auto/auto     -> AE_MODE_ON, no priority mode, no manual overrides
+    //   manual/auto   -> AE_MODE_ON + AE_PRIORITY_MODE_SENSOR_SENSITIVITY_PRIORITY
+    //   auto/manual   -> AE_MODE_ON + AE_PRIORITY_MODE_SENSOR_EXPOSURE_TIME_PRIORITY
+    //   manual/manual -> AE_MODE_OFF (full manual, both sensor keys set)
+    // The two priority-mode states require CONTROL_AE_AVAILABLE_PRIORITY_MODES
+    // to actually include that mode (see camera-caps) — the JS layer checks
+    // this and falls back to a paired auto/manual toggle when unsupported,
+    // so this function trusts its caller rather than re-validating.
+    Function("applyCameraState") { viewTag: Int, state: CameraStateRecord ->
+      applyCameraState(viewTag, state)
     }
 
-    // awbMode: one of CameraMetadata.CONTROL_AWB_MODE_* (see index.ts for
-    // the named preset map). Independent of exposure — does not touch
-    // CONTROL_AE_MODE, so this can be called with exposure left on auto.
-    Function("applyWhiteBalance") { viewTag: Int, awbMode: Int ->
-      applyWhiteBalance(viewTag, awbMode)
-    }
-
-    // focusDistance: diopters (0 = infinity, up to the device's
-    // LENS_INFO_MINIMUM_FOCUS_DISTANCE — see camera-caps for the real value).
-    // Forces CONTROL_AF_MODE off — same reasoning as AE_MODE for exposure:
-    // the continuous-AF algorithm would just overwrite this every frame.
-    Function("applyManualFocus") { viewTag: Int, focusDistance: Float ->
-      applyManualFocus(viewTag, focusDistance)
-    }
-
-    // mode: "matrix" (whole-frame, the device default — clears any region
-    // override), "center" (weights the middle ~50%), or "spot" (a small
-    // region at normX/normY, each 0..1, defaulting to frame center).
-    // Only affects anything while CONTROL_AE_MODE is NOT off — i.e. while
-    // Tier-2 manual exposure is NOT active, since AE_REGIONS only steers an
-    // AE algorithm that's actually running.
-    Function("applyMeteringMode") { viewTag: Int, mode: String, normX: Float?, normY: Float? ->
-      applyMeteringMode(viewTag, mode, normX ?: 0.5f, normY ?: 0.5f)
-    }
-
-    // Clears every override (AE, AWB, focus, metering regions — everything)
-    // — hands the whole session back to CameraX's normal auto-everything
-    // behavior in one call.
+    // Full escape hatch — clears every override in one call, distinct from
+    // applyCameraState(all auto) in that it doesn't require knowing/computing
+    // a valid full state first. Useful on screen unmount/cleanup.
     Function("resetToAuto") { viewTag: Int ->
       resetAuto(viewTag)
     }
   }
 
   @OptIn(ExperimentalCamera2Interop::class)
-  private fun applyManualExposure(viewTag: Int, iso: Int?, shutterNs: Long?) {
-    val control = requireCamera2Control(viewTag)
-    val builder = CaptureRequestOptions.Builder()
-      .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-    if (iso != null) {
-      builder.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, iso)
-    }
-    if (shutterNs != null) {
-      builder.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, shutterNs)
-    }
-    control.addCaptureRequestOptions(builder.build())
-  }
-
-  @OptIn(ExperimentalCamera2Interop::class)
-  private fun applyWhiteBalance(viewTag: Int, awbMode: Int) {
-    val control = requireCamera2Control(viewTag)
-    val builder = CaptureRequestOptions.Builder()
-      .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, awbMode)
-    control.addCaptureRequestOptions(builder.build())
-  }
-
-  @OptIn(ExperimentalCamera2Interop::class)
-  private fun applyManualFocus(viewTag: Int, focusDistance: Float) {
-    val control = requireCamera2Control(viewTag)
-    val builder = CaptureRequestOptions.Builder()
-      .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
-      .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, focusDistance)
-    control.addCaptureRequestOptions(builder.build())
-  }
-
-  @OptIn(ExperimentalCamera2Interop::class)
-  private fun applyMeteringMode(viewTag: Int, mode: String, normX: Float, normY: Float) {
+  private fun applyCameraState(viewTag: Int, state: CameraStateRecord) {
     val camera = resolveCameraXCamera(viewTag)
       ?: throw CodedException(
         "ERR_CAMERA_NOT_BOUND",
@@ -118,26 +113,66 @@ class CameraManualModule : Module() {
         null,
       )
 
-    val regions: Array<MeteringRectangle> = if (mode == "matrix") {
-      arrayOf() // clears any region override — device default is whole-frame metering
-    } else {
-      val array = activeArraySize(camera)
-        ?: throw CodedException(
-          "ERR_NO_ACTIVE_ARRAY",
-          "Device did not report SENSOR_INFO_ACTIVE_ARRAY_SIZE — can't build a metering region",
-          null,
+    val builder = CaptureRequestOptions.Builder()
+
+    // --- Exposure (ISO / shutter) ---
+    val isoManual = state.isoMode == "manual"
+    val shutterManual = state.shutterMode == "manual"
+    when {
+      isoManual && shutterManual -> {
+        builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+        state.iso?.let { builder.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, it) }
+        state.shutterNs?.let { builder.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, it) }
+      }
+      isoManual && !shutterManual -> {
+        builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+        builder.setCaptureRequestOption(
+          CaptureRequest.CONTROL_AE_PRIORITY_MODE,
+          CaptureRequest.CONTROL_AE_PRIORITY_MODE_SENSOR_SENSITIVITY_PRIORITY,
         )
-      when (mode) {
-        "center" -> arrayOf(centeredRegion(array, 0.5f, 0.5f, 0.5f))
-        "spot" -> arrayOf(centeredRegion(array, normX, normY, 0.12f))
-        else -> throw CodedException("ERR_BAD_METERING_MODE", "Unknown metering mode: $mode", null)
+        state.iso?.let { builder.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, it) }
+      }
+      !isoManual && shutterManual -> {
+        builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+        builder.setCaptureRequestOption(
+          CaptureRequest.CONTROL_AE_PRIORITY_MODE,
+          CaptureRequest.CONTROL_AE_PRIORITY_MODE_SENSOR_EXPOSURE_TIME_PRIORITY,
+        )
+        state.shutterNs?.let { builder.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, it) }
+      }
+      else -> {
+        // Both auto: omit AE_MODE/AE_PRIORITY_MODE/sensor keys entirely so
+        // CameraX's own default (fully auto) applies — nothing to override.
       }
     }
 
-    val control = Camera2CameraControl.from(camera.cameraControl)
-    val builder = CaptureRequestOptions.Builder()
-      .setCaptureRequestOption(CaptureRequest.CONTROL_AE_REGIONS, regions)
-    control.addCaptureRequestOptions(builder.build())
+    // --- Focus ---
+    if (state.focusMode == "manual") {
+      builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+      state.focusDistance?.let { builder.setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, it) }
+    }
+    // else: omit AF_MODE/LENS_FOCUS_DISTANCE — CameraX's own continuous-AF default applies.
+
+    // --- White balance (always has a value; AUTO=1 is a real preset, not "unset") ---
+    builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, state.awbMode)
+
+    // --- Metering (only meaningful while AE_MODE isn't OFF, harmless otherwise) ---
+    if (state.meteringMode != "matrix") {
+      val array = activeArraySize(camera)
+      if (array != null) {
+        val region = when (state.meteringMode) {
+          "center" -> centeredRegion(array, 0.5f, 0.5f, 0.5f)
+          "spot" -> centeredRegion(array, state.meteringNormX, state.meteringNormY, 0.12f)
+          else -> null
+        }
+        if (region != null) {
+          builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(region))
+        }
+      }
+    }
+    // "matrix": omit CONTROL_AE_REGIONS — device default is whole-frame metering.
+
+    Camera2CameraControl.from(camera.cameraControl).setCaptureRequestOptions(builder.build())
   }
 
   // A square region of `sizeFraction` of the active array's shorter side,
@@ -157,6 +192,7 @@ class CameraManualModule : Module() {
     return MeteringRectangle(left, top, side, side, MeteringRectangle.METERING_WEIGHT_MAX)
   }
 
+  @OptIn(ExperimentalCamera2Interop::class)
   private fun activeArraySize(camera: Camera): android.graphics.Rect? {
     return Camera2CameraInfo.from(camera.cameraInfo)
       .getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
@@ -166,17 +202,6 @@ class CameraManualModule : Module() {
   private fun resetAuto(viewTag: Int) {
     val camera = resolveCameraXCamera(viewTag) ?: return
     Camera2CameraControl.from(camera.cameraControl).clearCaptureRequestOptions()
-  }
-
-  @OptIn(ExperimentalCamera2Interop::class)
-  private fun requireCamera2Control(viewTag: Int): Camera2CameraControl {
-    val camera = resolveCameraXCamera(viewTag)
-      ?: throw CodedException(
-        "ERR_CAMERA_NOT_BOUND",
-        "No bound CameraX session on view $viewTag yet — try again once the preview is visible",
-        null,
-      )
-    return Camera2CameraControl.from(camera.cameraControl)
   }
 
   private fun resolveCameraXCamera(viewTag: Int): Camera? {

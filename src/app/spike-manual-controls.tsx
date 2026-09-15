@@ -1,23 +1,27 @@
 // ============================================================================
-// TIER 2 — DAY 2 verification screen. Not part of the product surface, not
-// linked from any nav. Reach it with:
+// TIER 2 — verification screen for independent ISO/shutter/focus auto-manual
+// toggles. Not part of the product surface, not linked from any nav. Reach
+// it with:
 //   adb shell am start -a android.intent.action.VIEW -d "momints://spike-manual-controls" com.momints.app
 //
 // Mounts the real src/components/ManualControls.tsx (the actual pro-mode
 // panel, not a throwaway) against a live preview, so this doubles as both
-// the on-device verification vehicle for shutter + white balance and a
-// smoke test of the component before it gets wired into camera.tsx.
+// the on-device verification vehicle and a smoke test of the component
+// before/alongside its use in camera.tsx.
 // ============================================================================
-import { useRef, useState } from 'react'
+import { useRef } from 'react'
 import { View, Text, StyleSheet, findNodeHandle } from 'react-native'
 import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera'
 import ManualControls from '../components/ManualControls'
+import { useManualCameraState } from '../hooks/useManualCameraState'
 
 export default function ManualControlsSpike() {
   const { hasPermission, requestPermission } = useCameraPermission()
   const device = useCameraDevice('back')
   const cameraRef = useRef<Camera>(null)
-  const [enabled, setEnabled] = useState(false)
+  const viewTag = findNodeHandle(cameraRef.current)
+  const maxFocusDiopters = device && device.minFocusDistance > 0 ? 100 / device.minFocusDistance : null
+  const controls = useManualCameraState(viewTag, device?.id ?? null, maxFocusDiopters)
 
   if (!hasPermission) {
     return (
@@ -36,19 +40,11 @@ export default function ManualControlsSpike() {
     )
   }
 
-  const viewTag = findNodeHandle(cameraRef.current)
-  const maxFocusDiopters = device.minFocusDistance > 0 ? 100 / device.minFocusDistance : null
-
   return (
     <View style={styles.root}>
       <Camera ref={cameraRef} style={StyleSheet.absoluteFill} device={device} isActive={true} />
       <View style={styles.hud}>
-        <ManualControls
-          viewTag={viewTag}
-          enabled={enabled}
-          onToggleEnabled={setEnabled}
-          maxFocusDiopters={maxFocusDiopters}
-        />
+        <ManualControls controls={controls} />
       </View>
     </View>
   )
