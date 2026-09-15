@@ -174,12 +174,10 @@ type Props = {
 
 export default function ManualControls({ controls }: Props) {
   const {
-    isoMode,
-    setIsoMode,
+    exposureMode,
+    setExposureMode,
     manualIso,
     setManualIso,
-    shutterMode,
-    setShutterMode,
     manualShutterNs,
     setManualShutterNs,
     focusMode,
@@ -195,21 +193,30 @@ export default function ManualControls({ controls }: Props) {
   const isoIndex = Math.max(0, ISO_NOTCHES.indexOf(manualIso))
   const shutterStops = shutterToStops(manualShutterNs)
   const canFocus = maxFocusDiopters != null && maxFocusDiopters > 0
+  const exposureManual = exposureMode === 'manual'
 
   return (
     <View style={styles.root}>
       {!canIndependentExposure && (
-        <Text style={styles.warningText}>
-          This camera doesn&apos;t support independent ISO/shutter automation — they&apos;re paired together.
+        <Text style={styles.capabilityNote}>
+          This camera supports automatic or fully manual exposure. Independent Auto ISO and Auto Shutter are
+          unavailable.
         </Text>
       )}
 
       <View style={styles.control}>
         <View style={styles.controlHeader}>
-          <Text style={styles.controlLabel}>ISO</Text>
-          <ModeToggle mode={isoMode} onChange={setIsoMode} />
+          <Text style={styles.controlLabel}>EXPOSURE</Text>
+          <ModeToggle mode={exposureMode} onChange={setExposureMode} />
         </View>
-        {isoMode === 'manual' && (
+      </View>
+
+      <View style={styles.control}>
+        <View style={styles.controlHeader}>
+          <Text style={styles.controlLabel}>ISO</Text>
+          {!exposureManual && <Text style={styles.autoValue}>AUTO</Text>}
+        </View>
+        {exposureManual && (
           <NotchedDial
             notches={ISO_NOTCHES}
             valueIndex={isoIndex}
@@ -221,9 +228,9 @@ export default function ManualControls({ controls }: Props) {
       <View style={styles.control}>
         <View style={styles.controlHeader}>
           <Text style={styles.controlLabel}>SHUTTER</Text>
-          <ModeToggle mode={shutterMode} onChange={setShutterMode} />
+          {!exposureManual && <Text style={styles.autoValue}>AUTO</Text>}
         </View>
-        {shutterMode === 'manual' && (
+        {exposureManual && (
           <DragDial
             valueText={formatShutter(manualShutterNs)}
             value={shutterStops}
@@ -278,10 +285,11 @@ export default function ManualControls({ controls }: Props) {
 
 const styles = StyleSheet.create({
   root: { gap: 12 },
-  warningText: { fontFamily: fonts.mono, fontSize: 10, color: colors.yellow },
+  capabilityNote: { fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted },
   control: { gap: 6 },
   controlHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   controlLabel: { fontFamily: fonts.monoBold, fontSize: 10, color: colors.accentSoft, letterSpacing: 1 },
+  autoValue: { fontFamily: fonts.mono, fontSize: 10, color: colors.textMuted, letterSpacing: 1 },
   modeToggle: {
     flexDirection: 'row',
     borderRadius: 999,

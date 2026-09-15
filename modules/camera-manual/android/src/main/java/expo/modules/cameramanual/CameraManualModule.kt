@@ -15,22 +15,22 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
 
-// isoMode/shutterMode/focusMode: "auto" | "manual".
+// exposureMode/focusMode: "auto" | "manual". ISO and shutter share ONE
+// exposureMode (see index.ts CameraControlState doc comment for why: this
+// hardware has no CONTROL_AE_AVAILABLE_PRIORITY_MODES support, so an
+// independent "ISO manual, shutter auto" state isn't real on this device).
 // meteringMode: "matrix" | "center" | "spot".
 // awbMode: CameraMetadata.CONTROL_AWB_MODE_* (see index.ts presets).
-// A plain Record class instead of ~10 individual Function() params — Expo's
+// A plain Record class instead of ~9 individual Function() params — Expo's
 // Function() DSL has an arity ceiling (Function0..FunctionN) that a flat
-// 11-parameter lambda exceeds; a single structured JS-object argument sails
-// under it and reads better besides.
+// multi-parameter lambda exceeds; a single structured JS-object argument
+// sails under it and reads better besides.
 class CameraStateRecord : Record {
   @Field
-  var isoMode: String = "auto"
+  var exposureMode: String = "auto"
 
   @Field
   var iso: Int? = null
-
-  @Field
-  var shutterMode: String = "auto"
 
   @Field
   var shutterNs: Long? = null
@@ -82,16 +82,17 @@ class CameraManualModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("CameraManual")
 
-    // The four isoMode x shutterMode combinations map to Camera2's real
-    // exposure states:
-    //   auto/auto     -> AE_MODE_ON, no priority mode, no manual overrides
-    //   manual/auto   -> AE_MODE_ON + AE_PRIORITY_MODE_SENSOR_SENSITIVITY_PRIORITY
-    //   auto/manual   -> AE_MODE_ON + AE_PRIORITY_MODE_SENSOR_EXPOSURE_TIME_PRIORITY
-    //   manual/manual -> AE_MODE_OFF (full manual, both sensor keys set)
-    // The two priority-mode states require CONTROL_AE_AVAILABLE_PRIORITY_MODES
-    // to actually include that mode (see camera-caps) — the JS layer checks
-    // this and falls back to a paired auto/manual toggle when unsupported,
-    // so this function trusts its caller rather than re-validating.
+    // exposureMode maps to Camera2's real exposure states:
+    //   auto   -> AE_MODE_ON, no manual overrides (camera picks ISO + shutter)
+    //   manual -> AE_MODE_OFF, both SENSOR_SENSITIVITY and SENSOR_EXPOSURE_TIME
+    //             set from the caller, plus a matching SENSOR_FRAME_DURATION
+    //             (Camera2 requires frame duration >= exposure time; without
+    //             this a shutter speed slower than the default ~33ms frame
+    //             duration would silently get clipped by the driver).
+    // ISO-priority / shutter-priority (independent auto per-control) is
+    // deliberately not implemented here — see index.ts's CameraControlState
+    // comment: this hardware doesn't support CONTROL_AE_AVAILABLE_PRIORITY_MODES,
+    // so there's no real Camera2 state to drive it with.
     Function("applyCameraState") { viewTag: Int, state: CameraStateRecord ->
       applyCameraState(viewTag, state)
     }
@@ -115,36 +116,22 @@ class CameraManualModule : Module() {
 
     val builder = CaptureRequestOptions.Builder()
 
-    // --- Exposure (ISO / shutter) ---
-    val isoManual = state.isoMode == "manual"
-    val shutterManual = state.shutterMode == "manual"
-    when {
-      isoManual && shutterManual -> {
-        builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-        state.iso?.let { builder.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, it) }
-        state.shutterNs?.let { builder.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, it) }
-      }
-      isoManual && !shutterManual -> {
-        builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-        builder.setCaptureRequestOption(
-          CaptureRequest.CONTROL_AE_PRIORITY_MODE,
-          CaptureRequest.CONTROL_AE_PRIORITY_MODE_SENSOR_SENSITIVITY_PRIORITY,
-        )
-        state.iso?.let { builder.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, it) }
-      }
-      !isoManual && shutterManual -> {
-        builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-        builder.setCaptureRequestOption(
-          CaptureRequest.CONTROL_AE_PRIORITY_MODE,
-          CaptureRequest.CONTROL_AE_PRIORITY_MODE_SENSOR_EXPOSURE_TIME_PRIORITY,
-        )
-        state.shutterNs?.let { builder.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, it) }
-      }
-      else -> {
-        // Both auto: omit AE_MODE/AE_PRIORITY_MODE/sensor keys entirely so
-        // CameraX's own default (fully auto) applies — nothing to override.
+    // --- Exposure (ISO / shutter, one shared mode) ---
+    if (state.exposureMode == "manual") {
+      builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+      state.iso?.let { builder.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, it) }
+      state.shutterNs?.let { ns ->
+        builder.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, ns)
+        // Frame duration must be >= exposure time or the driver silently caps
+        // the achieved exposure at the (much shorter) default frame duration.
+        // Clamp to the sensor's real ceiling so an extreme shutter value
+        // can't request a frame duration the hardware doesn't support.
+        val ceiling = maxFrameDuration(camera) ?: ns
+        builder.setCaptureRequestOption(CaptureRequest.SENSOR_FRAME_DURATION, ns.coerceAtMost(ceiling))
       }
     }
+    // else ("auto"): omit AE_MODE/sensor keys entirely so CameraX's own
+    // default (fully auto) applies — nothing to override.
 
     // --- Focus ---
     if (state.focusMode == "manual") {
@@ -196,6 +183,12 @@ class CameraManualModule : Module() {
   private fun activeArraySize(camera: Camera): android.graphics.Rect? {
     return Camera2CameraInfo.from(camera.cameraInfo)
       .getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+  }
+
+  @OptIn(ExperimentalCamera2Interop::class)
+  private fun maxFrameDuration(camera: Camera): Long? {
+    return Camera2CameraInfo.from(camera.cameraInfo)
+      .getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_MAX_FRAME_DURATION)
   }
 
   @OptIn(ExperimentalCamera2Interop::class)

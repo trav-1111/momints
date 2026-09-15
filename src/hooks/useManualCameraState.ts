@@ -24,9 +24,12 @@ export function useManualCameraState(
   cameraId: string | null,
   maxFocusDiopters: number | null,
 ) {
-  const [isoMode, setIsoMode] = useState<AutoManualMode>('auto')
+  // ISO and shutter share one exposure mode (see camera-manual's index.ts
+  // CameraControlState doc comment) — manualIso/manualShutterNs are kept as
+  // their own state regardless of mode so a round trip through Auto never
+  // loses the user's last manual values.
+  const [exposureMode, setExposureMode] = useState<AutoManualMode>('auto')
   const [manualIso, setManualIso] = useState(DEFAULT_ISO)
-  const [shutterMode, setShutterMode] = useState<AutoManualMode>('auto')
   const [manualShutterNs, setManualShutterNs] = useState(DEFAULT_SHUTTER_NS)
 
   // Focus: no clean way to read the live CaptureResult-reported lens
@@ -43,10 +46,11 @@ export function useManualCameraState(
   const [meteringPoint, setMeteringPoint] = useState({ x: 0.5, y: 0.5 })
 
   // CONTROL_AE_AVAILABLE_PRIORITY_MODES (API 36+) — read once per camera.
-  // Independent ISO/shutter auto toggles only make sense if the platform can
-  // actually run its own AE for whichever one is left on auto; otherwise
-  // fall back to a single paired toggle (see isoMode/shutterMode setters
-  // below, which enforce pairing when unsupported).
+  // Not used to drive any control anymore (see CameraControlState's doc
+  // comment: confirmed false on the real Seeker, so there's no independent-
+  // auto UI to gate) — kept only to surface an honest capability note below
+  // instead of silently implying a capability this hardware doesn't have,
+  // and as a live signal for a future device/build that does support it.
   const { hasIsoPriority, hasShutterPriority } = useMemo(() => {
     if (cameraId == null) return { hasIsoPriority: false, hasShutterPriority: false }
     try {
@@ -61,34 +65,14 @@ export function useManualCameraState(
   }, [cameraId])
 
   const canIndependentExposure = hasIsoPriority && hasShutterPriority
-
-  // When independent priority modes aren't available, ISO and shutter are
-  // pinned together — setting one manual forces the other manual too (both
-  // land on plain AE_MODE_OFF, which needs no priority-mode support at all).
-  const setIsoModeGuarded = useCallback(
-    (next: AutoManualMode) => {
-      setIsoMode(next)
-      if (!canIndependentExposure) setShutterMode(next)
-    },
-    [canIndependentExposure],
-  )
-  const setShutterModeGuarded = useCallback(
-    (next: AutoManualMode) => {
-      setShutterMode(next)
-      if (!canIndependentExposure) setIsoMode(next)
-    },
-    [canIndependentExposure],
-  )
-
-  const fullyManual = isoMode === 'manual' && shutterMode === 'manual'
+  const fullyManual = exposureMode === 'manual'
 
   useEffect(() => {
     if (viewTag == null) return
     applyCameraState(viewTag, {
-      isoMode,
-      iso: isoMode === 'manual' ? manualIso : null,
-      shutterMode,
-      shutterNs: shutterMode === 'manual' ? manualShutterNs : null,
+      exposureMode,
+      iso: exposureMode === 'manual' ? manualIso : null,
+      shutterNs: exposureMode === 'manual' ? manualShutterNs : null,
       focusMode,
       focusDistance: focusMode === 'manual' ? manualFocusDiopters : null,
       whiteBalance,
@@ -98,9 +82,8 @@ export function useManualCameraState(
     })
   }, [
     viewTag,
-    isoMode,
+    exposureMode,
     manualIso,
-    shutterMode,
     manualShutterNs,
     focusMode,
     manualFocusDiopters,
@@ -112,20 +95,17 @@ export function useManualCameraState(
   const reset = useCallback(() => {
     if (viewTag == null) return
     resetToAuto(viewTag)
-    setIsoMode('auto')
-    setShutterMode('auto')
+    setExposureMode('auto')
     setFocusMode('auto')
     setWhiteBalance('AUTO')
     setMeteringMode('matrix')
   }, [viewTag])
 
   return {
-    isoMode,
-    setIsoMode: setIsoModeGuarded,
+    exposureMode,
+    setExposureMode,
     manualIso,
     setManualIso,
-    shutterMode,
-    setShutterMode: setShutterModeGuarded,
     manualShutterNs,
     setManualShutterNs,
     focusMode,

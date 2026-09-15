@@ -46,11 +46,16 @@ export type WhiteBalancePresetName = keyof typeof WhiteBalancePreset
 export type AutoManualMode = 'auto' | 'manual'
 export type MeteringMode = 'matrix' | 'center' | 'spot'
 
+// ISO and shutter share ONE exposure mode, not two independent ones — the
+// real Seeker (and per camera-caps, every camera on it) reports no
+// CONTROL_AE_AVAILABLE_PRIORITY_MODES support, so "ISO manual + shutter
+// auto" isn't a state Camera2 can actually run on this hardware. See
+// hasIsoPriority/hasShutterPriority in modules/camera-caps for the capability
+// check retained for a possible future independent-auto build.
 export type CameraControlState = {
-  isoMode: AutoManualMode
-  iso: number | null // required when isoMode === 'manual'
-  shutterMode: AutoManualMode
-  shutterNs: number | null // required when shutterMode === 'manual'
+  exposureMode: AutoManualMode
+  iso: number | null // required when exposureMode === 'manual'
+  shutterNs: number | null // required when exposureMode === 'manual'
   focusMode: AutoManualMode
   focusDistance: number | null // diopters, required when focusMode === 'manual'
   whiteBalance: WhiteBalancePresetName
@@ -80,9 +85,8 @@ export function applyCameraState(viewTag: number, state: CameraControlState): vo
   const shutterNs = state.shutterNs == null ? null : Math.round(clamp(state.shutterNs, SHUTTER_NS_RANGE))
 
   CameraManualNative.applyCameraState(viewTag, {
-    isoMode: state.isoMode,
+    exposureMode: state.exposureMode,
     iso,
-    shutterMode: state.shutterMode,
     shutterNs,
     focusMode: state.focusMode,
     focusDistance: state.focusDistance,
