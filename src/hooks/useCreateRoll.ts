@@ -129,6 +129,7 @@ export function useCreateRoll() {
           size: opts.size,
           artist,
           skrIdentity,
+          film: opts.film.mode,
           framesMinted: 0,
           status: 'open',
           createdAt: now,

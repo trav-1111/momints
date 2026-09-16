@@ -12,6 +12,8 @@ export interface RollContext {
   collectionAddress?: string
 }
 
+export type MintFilmUsed = 'Color' | 'B&W'
+
 export interface MintQueueItem {
   id: string
   photoId: string
@@ -26,6 +28,8 @@ export interface MintQueueItem {
   createdAt: number
   rollContext?: RollContext
   captureMeta?: CaptureMeta
+  /** App-side display metadata for contact sheets; not sent to mint rails. */
+  filmUsed?: MintFilmUsed
   /** Quick mint only — which currency should pay the fee. Defaults 'SOL'. A Worker quote failure falls back to SOL. */
   paymentCurrency?: 'SOL' | 'SKR'
 }
@@ -38,6 +42,9 @@ export interface MintHistoryItem {
   txSignature: string
   mintAddress?: string
   mintedAt: number
+  capturedAt?: number
+  rollContext?: RollContext
+  filmUsed?: MintFilmUsed
 }
 
 interface MintQueueStore {
@@ -49,7 +56,7 @@ interface MintQueueStore {
     status: MintQueueItem['status'],
     txSignature?: string,
     error?: string,
-    mintAddress?: string
+    mintAddress?: string,
   ) => void
   removeFromQueue: (photoId: string) => void
   getNextPending: () => MintQueueItem | undefined
@@ -68,6 +75,24 @@ function parseHistoryItem(raw: unknown): MintHistoryItem | null {
   if (raw === null || typeof raw !== 'object') return null
   const h = raw as Record<string, unknown>
   if (typeof h.id !== 'string' || typeof h.txSignature !== 'string') return null
+  let rollContext: RollContext | undefined
+  if (h.rollContext !== null && typeof h.rollContext === 'object') {
+    const r = h.rollContext as Record<string, unknown>
+    if (
+      typeof r.rollId === 'string' &&
+      typeof r.rollName === 'string' &&
+      typeof r.frameNumber === 'number' &&
+      typeof r.totalFrames === 'number'
+    ) {
+      rollContext = {
+        rollId: r.rollId,
+        rollName: r.rollName,
+        frameNumber: r.frameNumber,
+        totalFrames: r.totalFrames,
+        collectionAddress: typeof r.collectionAddress === 'string' ? r.collectionAddress : undefined,
+      }
+    }
+  }
   return {
     id: h.id,
     photoUri: typeof h.photoUri === 'string' ? h.photoUri : '',
@@ -76,6 +101,9 @@ function parseHistoryItem(raw: unknown): MintHistoryItem | null {
     txSignature: h.txSignature,
     mintAddress: typeof h.mintAddress === 'string' ? h.mintAddress : undefined,
     mintedAt: typeof h.mintedAt === 'number' ? h.mintedAt : 0,
+    capturedAt: typeof h.capturedAt === 'number' ? h.capturedAt : undefined,
+    rollContext,
+    filmUsed: h.filmUsed === 'B&W' ? 'B&W' : h.filmUsed === 'Color' ? 'Color' : undefined,
   }
 }
 
@@ -120,7 +148,7 @@ export const useMintQueue = create<MintQueueStore>((set, get) => ({
                 txSignature: undefined,
                 mintAddress: undefined,
               }
-            : q
+            : q,
         ),
       }))
     } else {
@@ -139,9 +167,7 @@ export const useMintQueue = create<MintQueueStore>((set, get) => ({
   updateStatus: (photoId, status, txSignature, error, mintAddress) => {
     set((state) => ({
       queue: state.queue.map((item) =>
-        item.photoId === photoId
-          ? { ...item, status, txSignature, error, mintAddress }
-          : item
+        item.photoId === photoId ? { ...item, status, txSignature, error, mintAddress } : item,
       ),
     }))
   },

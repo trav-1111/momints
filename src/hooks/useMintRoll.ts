@@ -88,6 +88,7 @@ export function useMintRoll() {
         artist,
         capturedAt: photo.capturedAt,
         captureMeta: photo.meta,
+        filmUsed: activeRoll.film.mode === 'bw' ? 'B&W' : 'Color',
         rollContext: {
           rollId: activeRoll.id,
           rollName: activeRoll.name,

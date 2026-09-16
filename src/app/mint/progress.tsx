@@ -120,6 +120,9 @@ export default function MintProgressScreen() {
           txSignature: update.signature,
           mintAddress: update.mintAddress,
           mintedAt: Date.now(),
+          capturedAt: queueItem?.capturedAt,
+          rollContext: queueItem?.rollContext,
+          filmUsed: queueItem?.filmUsed ?? 'Color',
         })
         // Terminal state — the photo can never re-enter a mint flow
         setAction(photoId, 'minted')
