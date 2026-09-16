@@ -58,7 +58,6 @@ import {
 // shorter full-sweep distance = a smaller finger movement covers more of
 // the range, which is what "faster" actually means for a drag control.
 const PX_PER_STOP = 48 // drag distance for one full log2 stop
-const FOCUS_DRAG_PX = 190
 const ISO_PX_PER_NOTCH = 42
 const ISO_NOTCHES = filterIsoNotches(ISO_RANGE)
 
@@ -76,6 +75,20 @@ function formatShutter(ns: number): string {
   const seconds = ns / 1e9
   if (seconds >= 1) return `${seconds.toFixed(1)}s`
   return `1/${Math.round(1 / seconds)}`
+}
+// Focus also drags in log2 stops, not raw diopters — a linear-diopter scale
+// over this camera's full manual range (0 to ~22 diopters, see camera.tsx's
+// MANUAL_FOCUS_HEADROOM_DIOPTERS) put over 75% of the slider inside
+// 0.05-1m, leaving almost no travel for the 1m-infinity range most photos
+// actually use. log2(diopters+1) crowds the far/infinity end and spreads
+// macro out, same shape as a real lens's focus-ring distance markings, and
+// matches how the ISO/shutter rulers already scale (consistency, not a new
+// interaction to learn).
+function focusToStops(diopters: number): number {
+  return log2(diopters + 1)
+}
+function stopsToFocus(stops: number): number {
+  return Math.pow(2, stops) - 1
 }
 function formatEv(ev: number): string {
   if (Math.abs(ev) < 0.05) return '0'
@@ -373,6 +386,7 @@ function FocusPanel({ controls, onAutoSelected }: { controls: ManualCameraState;
     )
   }
 
+  const maxStops = focusToStops(maxFocusDiopters)
   return (
     <View style={styles.panelRow}>
       {/* Tapping A both returns to autofocus AND closes the panel in one
@@ -386,13 +400,14 @@ function FocusPanel({ controls, onAutoSelected }: { controls: ManualCameraState;
         }}
       />
       <Ruler
-        // Same NEAR-left/∞-right inversion as before: high diopters = near,
-        // 0 = infinity, but the ruler reads short-to-long left-to-right.
-        value={maxFocusDiopters - manualFocusDiopters}
+        // Drags in log2(diopters+1) stops (see focusToStops' comment), with
+        // the same NEAR-left/∞-right inversion as before: high diopters =
+        // near, 0 = infinity, but the ruler reads short-to-long left-to-right.
+        value={maxStops - focusToStops(manualFocusDiopters)}
         min={0}
-        max={maxFocusDiopters}
-        pxRange={FOCUS_DRAG_PX}
-        onDrag={(d) => setManualFocusDiopters(maxFocusDiopters - d)}
+        max={maxStops}
+        pxRange={maxStops * PX_PER_STOP}
+        onDrag={(v) => setManualFocusDiopters(stopsToFocus(maxStops - v))}
         majorCount={5}
         minorCount={24}
         labels={[
