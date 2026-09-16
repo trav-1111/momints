@@ -184,8 +184,21 @@ export default function CameraScreen() {
   const maxExposure = activeDevice?.maxExposure ?? 2
   // vision-camera reports minFocusDistance in cm (0 = unknown/fixed-focus);
   // Camera2's LENS_FOCUS_DISTANCE is diopters (1/meters) — 100/cm converts.
+  // MANUAL_FOCUS_HEADROOM_DIOPTERS: LENS_INFO_MINIMUM_FOCUS_DISTANCE is
+  // documented by Android as a "guaranteed sharp" floor, not a hard
+  // mechanical limit — the lens can be racked past it, sharp result not
+  // guaranteed. On this Seeker's main camera (reported min: 2 diopters /
+  // 50cm) autofocus visibly focuses much closer than that, which the old
+  // manual range couldn't reach. Verified on-device by manually pushing
+  // LENS_FOCUS_DISTANCE well past the declared max and confirming sharp,
+  // readable macro detail (mm ruler markings in focus) all the way past
+  // 20 diopters (~5cm) — so this headroom is empirical, not a spec value,
+  // and is specific to this camera module.
+  const MANUAL_FOCUS_HEADROOM_DIOPTERS = 20
   const maxFocusDiopters =
-    activeDevice && activeDevice.minFocusDistance > 0 ? 100 / activeDevice.minFocusDistance : null
+    activeDevice && activeDevice.minFocusDistance > 0
+      ? 100 / activeDevice.minFocusDistance + MANUAL_FOCUS_HEADROOM_DIOPTERS
+      : null
 
   const manualCamera = useManualCameraState(cameraViewTag, activeDevice?.id ?? null, maxFocusDiopters)
 

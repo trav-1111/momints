@@ -101,16 +101,6 @@ const WB_ICON: Partial<Record<WhiteBalancePresetName, React.ComponentType<IconPr
   DAYLIGHT: IconWbDaylight,
   CLOUDY_DAYLIGHT: IconWbCloudy,
 }
-const WB_CAPTION: Record<WhiteBalancePresetName, string> = {
-  AUTO: 'AUTO',
-  INCANDESCENT: 'TUNGSTEN',
-  FLUORESCENT: 'FLUOR.',
-  WARM_FLUORESCENT: 'WARM FL.',
-  DAYLIGHT: 'DAYLIGHT',
-  CLOUDY_DAYLIGHT: 'CLOUDY',
-  TWILIGHT: 'TWILIGHT',
-  SHADE: 'SHADE',
-}
 const WB_STRIP_LABEL: Record<WhiteBalancePresetName, string> = {
   AUTO: 'AUTO',
   INCANDESCENT: 'TUNG',
@@ -353,7 +343,6 @@ function WhiteBalancePanel({ controls }: { controls: ManualCameraState }) {
             ) : Icon ? (
               <Icon size={24} color={active ? colors.accentSoft : colors.text} />
             ) : null}
-            <Text style={[styles.wbCaption, active && styles.wbCaptionActive]}>{WB_CAPTION[preset]}</Text>
           </Pressable>
         )
       })}
@@ -612,8 +601,6 @@ const styles = StyleSheet.create({
   twoChoiceText: { fontFamily: fonts.monoBold, fontSize: 15, letterSpacing: 1, color: colors.text },
   twoChoiceTextActive: { color: colors.accentSoft },
 
-  wbGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 16 },
-  wbItem: { width: '23%', alignItems: 'center', gap: 6, paddingVertical: 4 },
-  wbCaption: { fontFamily: fonts.mono, fontSize: 8, letterSpacing: 0.4, color: colors.textMuted, textAlign: 'center' },
-  wbCaptionActive: { color: colors.accentSoft },
+  wbGrid: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 6 },
+  wbItem: { alignItems: 'center', padding: 8 },
 })
