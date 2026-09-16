@@ -19,9 +19,10 @@
 //     this app's EV bias already did before this redesign.
 //   - Shutter ruler end labels come from this camera's real measured
 //     SHUTTER_NS_RANGE, not the mockup's placeholder "0.5".
-//   - WB gained two presets (WARM_FLUORESCENT, TWILIGHT) the mockup's
-//     six-icon row didn't have; captions were kept under every icon since
-//     two of the eight are new icons the user hasn't seen before.
+//   - WB is trimmed to the 5 presets real cameras universally ship (Auto,
+//     Tungsten, Fluorescent, Daylight, Cloudy) rather than the mockup's 6 —
+//     Warm Fluorescent read as visually identical to Fluorescent in testing
+//     and Twilight/Shade weren't worth the extra icons users have to learn.
 //
 // All state lives in useManualCameraState (see that hook's own comment for
 // why) plus EV bias, which stays local to camera.tsx (it's a vision-camera
@@ -30,6 +31,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { View, Text, Pressable, StyleSheet } from 'react-native'
 import { Gesture, GestureDetector, GestureUpdateEvent, PanGestureHandlerEventPayload } from 'react-native-gesture-handler'
+import * as Haptics from 'expo-haptics'
 import {
   filterIsoNotches,
   ISO_RANGE,
@@ -45,18 +47,19 @@ import {
   IconMeteringSpot,
   IconWbIncandescent,
   IconWbFluorescent,
-  IconWbWarmFluorescent,
   IconWbCloudy,
   IconWbDaylight,
-  IconWbTwilight,
-  IconWbShade,
   IconFocusNear,
   IconFocusFar,
   type IconProps,
 } from './icons'
 
-const PX_PER_STOP = 70 // drag distance for one full log2 stop — tuned for a phone-width screen
-const FOCUS_DRAG_PX = 280
+// Drag distances tuned down from an initial pass that read as sluggish —
+// shorter full-sweep distance = a smaller finger movement covers more of
+// the range, which is what "faster" actually means for a drag control.
+const PX_PER_STOP = 48 // drag distance for one full log2 stop
+const FOCUS_DRAG_PX = 190
+const ISO_PX_PER_NOTCH = 42
 const ISO_NOTCHES = filterIsoNotches(ISO_RANGE)
 
 function log2(n: number): number {
@@ -87,24 +90,16 @@ const METERING_ICON: Record<MeteringMode, React.ComponentType<IconProps>> = {
   spot: IconMeteringSpot,
 }
 
-const WB_PRESETS: WhiteBalancePresetName[] = [
-  'AUTO',
-  'INCANDESCENT',
-  'FLUORESCENT',
-  'WARM_FLUORESCENT',
-  'DAYLIGHT',
-  'CLOUDY_DAYLIGHT',
-  'TWILIGHT',
-  'SHADE',
-]
+// The 5 presets real cameras universally ship — see the file-header comment
+// for why WARM_FLUORESCENT/TWILIGHT/SHADE were dropped. The underlying
+// WhiteBalancePreset map in camera-manual/index.ts keeps all 8 real device
+// constants; this is just what the picker exposes.
+const WB_PRESETS: WhiteBalancePresetName[] = ['AUTO', 'INCANDESCENT', 'FLUORESCENT', 'DAYLIGHT', 'CLOUDY_DAYLIGHT']
 const WB_ICON: Partial<Record<WhiteBalancePresetName, React.ComponentType<IconProps>>> = {
   INCANDESCENT: IconWbIncandescent,
   FLUORESCENT: IconWbFluorescent,
-  WARM_FLUORESCENT: IconWbWarmFluorescent,
   DAYLIGHT: IconWbDaylight,
   CLOUDY_DAYLIGHT: IconWbCloudy,
-  TWILIGHT: IconWbTwilight,
-  SHADE: IconWbShade,
 }
 const WB_CAPTION: Record<WhiteBalancePresetName, string> = {
   AUTO: 'AUTO',
@@ -129,7 +124,13 @@ const WB_STRIP_LABEL: Record<WhiteBalancePresetName, string> = {
 
 function AutoBadge({ active, onPress }: { active: boolean; onPress: () => void }) {
   return (
-    <Pressable onPress={onPress} style={[styles.autoBadge, active && styles.autoBadgeActive]}>
+    <Pressable
+      onPress={() => {
+        Haptics.selectionAsync()
+        onPress()
+      }}
+      style={[styles.autoBadge, active && styles.autoBadgeActive]}
+    >
       <Text style={[styles.autoBadgeText, active && styles.autoBadgeTextActive]}>A</Text>
     </Pressable>
   )
@@ -152,18 +153,32 @@ type RulerProps = {
   labels: ReactNode[]
   majorCount?: number
   minorCount?: number
+  // Granularity for the haptic "click" while dragging. Defaults to one tick
+  // per rendered minor tick, matching the visual ruler; ISO overrides this
+  // to 1 (one click per notch) since minorCount there is purely visual
+  // density, not the actual six-value snap granularity.
+  hapticStep?: number
 }
 
-function Ruler({ value, min, max, pxRange, onDrag, dim, labels, majorCount, minorCount = 28 }: RulerProps) {
+function Ruler({ value, min, max, pxRange, onDrag, dim, labels, majorCount, minorCount = 28, hapticStep }: RulerProps) {
   const baseValue = useRef(value)
+  const lastDetent = useRef<number | null>(null)
+  const step = hapticStep ?? (max - min) / minorCount
   const pan = Gesture.Pan()
     .enabled(!dim)
     .onStart(() => {
       baseValue.current = value
+      lastDetent.current = Math.round((value - min) / step)
     })
     .onUpdate((e: GestureUpdateEvent<PanGestureHandlerEventPayload>) => {
       const delta = (e.translationX / pxRange) * (max - min)
-      onDrag(Math.min(max, Math.max(min, baseValue.current + delta)))
+      const next = Math.min(max, Math.max(min, baseValue.current + delta))
+      const detent = Math.round((next - min) / step)
+      if (detent !== lastDetent.current) {
+        lastDetent.current = detent
+        Haptics.selectionAsync()
+      }
+      onDrag(next)
     })
     .runOnJS(true)
 
@@ -209,7 +224,14 @@ function MeteringPanel({ controls }: { controls: ManualCameraState }) {
         const Icon = METERING_ICON[mode]
         const active = meteringMode === mode
         return (
-          <Pressable key={mode} onPress={() => setMeteringMode(mode)} style={styles.iconChoiceItem}>
+          <Pressable
+            key={mode}
+            onPress={() => {
+              Haptics.selectionAsync()
+              setMeteringMode(mode)
+            }}
+            style={styles.iconChoiceItem}
+          >
             <Icon size={26} color={active ? colors.accentSoft : colors.text} />
           </Pressable>
         )
@@ -229,11 +251,12 @@ function IsoPanel({ controls }: { controls: ManualCameraState }) {
         value={isoIndex}
         min={0}
         max={ISO_NOTCHES.length - 1}
-        pxRange={ISO_NOTCHES.length * 60}
+        pxRange={ISO_NOTCHES.length * ISO_PX_PER_NOTCH}
         onDrag={(v) => setManualIso(ISO_NOTCHES[Math.round(v)])}
         dim={auto}
         majorCount={ISO_NOTCHES.length - 1}
         minorCount={24}
+        hapticStep={1}
         labels={ISO_NOTCHES.map((n) => (
           <Text key={n} style={styles.rulerLabelText}>
             {n}
@@ -315,7 +338,14 @@ function WhiteBalancePanel({ controls }: { controls: ManualCameraState }) {
         const active = whiteBalance === preset
         const Icon = WB_ICON[preset]
         return (
-          <Pressable key={preset} onPress={() => setWhiteBalance(preset)} style={styles.wbItem}>
+          <Pressable
+            key={preset}
+            onPress={() => {
+              Haptics.selectionAsync()
+              setWhiteBalance(preset)
+            }}
+            style={styles.wbItem}
+          >
             {preset === 'AUTO' ? (
               <View style={[styles.autoBadge, active && styles.autoBadgeActive]}>
                 <Text style={[styles.autoBadgeText, active && styles.autoBadgeTextActive]}>A</Text>
@@ -331,7 +361,7 @@ function WhiteBalancePanel({ controls }: { controls: ManualCameraState }) {
   )
 }
 
-function FocusPanel({ controls }: { controls: ManualCameraState }) {
+function FocusPanel({ controls, onAutoSelected }: { controls: ManualCameraState; onAutoSelected: () => void }) {
   const { focusMode, setFocusMode, manualFocusDiopters, setManualFocusDiopters, maxFocusDiopters } = controls
   if (maxFocusDiopters == null) return null
 
@@ -341,7 +371,13 @@ function FocusPanel({ controls }: { controls: ManualCameraState }) {
         <View style={styles.twoChoiceItem}>
           <Text style={[styles.twoChoiceText, styles.twoChoiceTextActive]}>AF</Text>
         </View>
-        <Pressable onPress={() => setFocusMode('manual')} style={styles.twoChoiceItem}>
+        <Pressable
+          onPress={() => {
+            Haptics.selectionAsync()
+            setFocusMode('manual')
+          }}
+          style={styles.twoChoiceItem}
+        >
           <Text style={styles.twoChoiceText}>MF</Text>
         </Pressable>
       </View>
@@ -350,7 +386,16 @@ function FocusPanel({ controls }: { controls: ManualCameraState }) {
 
   return (
     <View style={styles.panelRow}>
-      <AutoBadge active={false} onPress={() => setFocusMode('auto')} />
+      {/* Tapping A both returns to autofocus AND closes the panel in one
+          step — the AF/MF chooser re-showing here (AF already picked, since
+          that's what tapping A just did) was a redundant extra tap. */}
+      <AutoBadge
+        active={false}
+        onPress={() => {
+          setFocusMode('auto')
+          onAutoSelected()
+        }}
+      />
       <Ruler
         // Same NEAR-left/∞-right inversion as before: high diopters = near,
         // 0 = infinity, but the ruler reads short-to-long left-to-right.
@@ -402,7 +447,10 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
     if (fullyManual && (activeParam === 'EV' || activeParam === 'M')) setActiveParam(null)
   }, [fullyManual, activeParam])
 
-  const toggle = (key: ParamKey) => setActiveParam((cur) => (cur === key ? null : key))
+  const toggle = (key: ParamKey) => {
+    Haptics.selectionAsync()
+    setActiveParam((cur) => (cur === key ? null : key))
+  }
   const MeteringIcon = METERING_ICON[meteringMode]
 
   return (
@@ -416,7 +464,7 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
             <EvPanel ev={ev} setEv={setEv} minExposure={minExposure} maxExposure={maxExposure} dim={fullyManual} />
           )}
           {activeParam === 'WB' && <WhiteBalancePanel controls={controls} />}
-          {activeParam === 'AF' && <FocusPanel controls={controls} />}
+          {activeParam === 'AF' && <FocusPanel controls={controls} onAutoSelected={() => setActiveParam(null)} />}
           {(activeParam === 'ISO' || activeParam === 'S') && !canIndependentExposure && (
             <Text style={styles.capabilityNote}>ISO and shutter share one exposure mode on this camera.</Text>
           )}

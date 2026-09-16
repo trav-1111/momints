@@ -266,18 +266,6 @@ export function IconWbFluorescent(p: IconProps) {
   )
 }
 
-/** WB: warm fluorescent — tube variant, dot marks the warm shift. */
-export function IconWbWarmFluorescent(p: IconProps) {
-  return (
-    <IconBase {...p}>
-      <Rect x="4" y="10" width="16" height="4.5" rx="2.2" />
-      <Line x1="7" y1="6.5" x2="8.5" y2="8.5" />
-      <Line x1="17" y1="6.5" x2="15.5" y2="8.5" />
-      <Circle cx="12" cy="12.25" r="1.1" fill={p.color ?? colors.text} stroke="none" />
-    </IconBase>
-  )
-}
-
 /** WB: cloudy daylight. */
 export function IconWbCloudy(p: IconProps) {
   return (
@@ -300,27 +288,6 @@ export function IconWbDaylight(p: IconProps) {
       <Line x1="16.4" y1="16.4" x2="18.1" y2="18.1" />
       <Line x1="5.9" y1="18.1" x2="7.6" y2="16.4" />
       <Line x1="16.4" y1="7.6" x2="18.1" y2="5.9" />
-    </IconBase>
-  )
-}
-
-/** WB: twilight — crescent moon. */
-export function IconWbTwilight(p: IconProps) {
-  return (
-    <IconBase {...p}>
-      <Path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-    </IconBase>
-  )
-}
-
-/** WB: shade — starburst. */
-export function IconWbShade(p: IconProps) {
-  return (
-    <IconBase {...p}>
-      <Circle cx="12" cy="12" r="8" />
-      <Path d="M6.3 17.7 17.7 6.3" />
-      <Path d="M9.6 19.6 19.6 9.6" />
-      <Path d="M4.4 14.4 14.4 4.4" />
     </IconBase>
   )
 }

@@ -67,9 +67,8 @@ export function useManualCameraState(
   const canIndependentExposure = hasIsoPriority && hasShutterPriority
   const fullyManual = exposureMode === 'manual'
 
-  useEffect(() => {
-    if (viewTag == null) return
-    applyCameraState(viewTag, {
+  const buildState = useCallback(
+    () => ({
       exposureMode,
       iso: exposureMode === 'manual' ? manualIso : null,
       shutterNs: exposureMode === 'manual' ? manualShutterNs : null,
@@ -79,18 +78,14 @@ export function useManualCameraState(
       metering: meteringMode,
       meteringNormX: meteringPoint.x,
       meteringNormY: meteringPoint.y,
-    })
-  }, [
-    viewTag,
-    exposureMode,
-    manualIso,
-    manualShutterNs,
-    focusMode,
-    manualFocusDiopters,
-    whiteBalance,
-    meteringMode,
-    meteringPoint,
-  ])
+    }),
+    [exposureMode, manualIso, manualShutterNs, focusMode, manualFocusDiopters, whiteBalance, meteringMode, meteringPoint],
+  )
+
+  useEffect(() => {
+    if (viewTag == null) return
+    applyCameraState(viewTag, buildState())
+  }, [viewTag, buildState])
 
   const reset = useCallback(() => {
     if (viewTag == null) return

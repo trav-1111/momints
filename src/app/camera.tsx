@@ -98,6 +98,7 @@ export default function CameraScreen() {
   const cameraViewTag = findNodeHandle(cameraRef.current)
 
   const [flash, setFlash] = useState<'off' | 'on'>('off')
+  const [torchActive, setTorchActive] = useState(false)
   const [isCapturing, setIsCapturing] = useState(false)
   const [cameraPosition, setCameraPosition] = useState<'back' | 'front'>('back')
   const [zoom, setZoom] = useState(1)
@@ -176,6 +177,7 @@ export default function CameraScreen() {
   const activeDevice = cameraPosition === 'front' ? frontDevice : backDevice
 
   const supportsFlash = activeDevice?.hasFlash && cameraPosition === 'back'
+  const supportsTorch = activeDevice?.hasTorch && cameraPosition === 'back'
   const minZoom = activeDevice?.minZoom ?? 1
   const maxZoom = Math.min(activeDevice?.maxZoom ?? 5, 10)
   const minExposure = activeDevice?.minExposure ?? -2
@@ -212,9 +214,25 @@ export default function CameraScreen() {
     }
 
     setIsCapturing(true)
+    // takePhoto's own flash:'on' (CameraX's AE-precapture-driven still
+    // flash) silently doesn't fire on this hardware — confirmed via EXIF
+    // (Flash tag came back "did not fire") and matches a long-standing,
+    // still-unresolved class of react-native-vision-camera/CameraX bugs on
+    // Android (mrousavy/react-native-vision-camera#2663, #2464). Torch is a
+    // much more primitive Camera2 mechanism (a plain repeating-request flag,
+    // no AE handshake) and reliably lights up, so when the user has flash
+    // toggled on we drive the torch for the capture instead and request
+    // flash:'off' from takePhoto so it doesn't also try its broken path.
+    const usingTorchForFlash = supportsFlash && flash === 'on' && supportsTorch
+    if (usingTorchForFlash) {
+      setTorchActive(true)
+      // Give the LED time to actually turn on and the preview to re-expose
+      // under it before the still capture reads the sensor.
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    }
     try {
       const photo: PhotoFile = await cameraRef.current.takePhoto({
-        flash: supportsFlash ? flash : 'off',
+        flash: usingTorchForFlash ? 'off' : supportsFlash ? flash : 'off',
         enableShutterSound: true,
       })
 
@@ -297,6 +315,7 @@ export default function CameraScreen() {
       console.error('Failed to capture photo:', error)
       Alert.alert('Error', 'Failed to capture photo. Please try again.')
     } finally {
+      if (usingTorchForFlash) setTorchActive(false)
       setIsCapturing(false)
     }
   }, [
@@ -304,6 +323,7 @@ export default function CameraScreen() {
     isCapturing,
     addPhoto,
     supportsFlash,
+    supportsTorch,
     activeMode,
     activeRoll,
     addFrameToRoll,
@@ -489,6 +509,7 @@ export default function CameraScreen() {
             photo={true}
             zoom={zoom}
             exposure={ev}
+            torch={torchActive ? 'on' : 'off'}
           />
 
           {/* Aspect-ratio framing guide */}
