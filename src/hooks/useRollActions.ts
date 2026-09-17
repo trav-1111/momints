@@ -1,9 +1,9 @@
 import { useCallback } from 'react'
-import { File } from 'expo-file-system'
 import { usePhotoStore } from '../store/photos'
 import { useSessionStore } from '../store/session'
 import { completeWorkerRoll } from '../services/rollApi'
 import { isWorkerRollEnabled } from '../config/rollApi'
+import { deleteCapture } from '../services/imagePrivacy'
 
 /**
  * Discarding a roll touches the session store, the photo store / filesystem,
@@ -45,13 +45,6 @@ export function useRollActions() {
 function deletePhotoWithFile(photoId: string): void {
   const { photos, removePhoto } = usePhotoStore.getState()
   const photo = photos.find((p) => p.id === photoId)
-  if (photo) {
-    try {
-      const file = new File(photo.uri)
-      if (file.exists) file.delete()
-    } catch {
-      // A stray file is harmless — still drop the record
-    }
-  }
+  if (photo) deleteCapture(photo.uri)
   removePhoto(photoId)
 }

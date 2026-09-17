@@ -1,5 +1,5 @@
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator'
-import { Paths, File, Directory } from 'expo-file-system'
+import { File } from 'expo-file-system'
 import type { AspectRatio } from '../store/session'
 
 // Long-edge : short-edge for each croppable ratio.
@@ -70,10 +70,8 @@ export async function cropToAspect(uri: string, aspect: AspectRatio): Promise<st
     const croppedRef = await ImageManipulator.manipulate(base).crop(rect).renderAsync()
     const saved = await croppedRef.saveAsync({ format: SaveFormat.JPEG, compress: JPEG_QUALITY })
 
-    // saveAsync writes to the cache dir — move it into the persistent photos dir.
-    const photosDir = new Directory(Paths.document, 'photos')
-    if (!photosDir.exists) photosDir.create()
-    const dest = new File(photosDir, `photo_${Date.now()}_crop.jpg`)
+    // Keep every replacement beside its temporary input.
+    const dest = new File(new File(uri).parentDirectory, `photo_${Date.now()}_crop.jpg`)
     new File(saved.uri).move(dest)
 
     // Replace: discard the uncropped original now that the crop is saved.

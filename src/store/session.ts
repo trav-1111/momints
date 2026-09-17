@@ -52,6 +52,7 @@ interface SessionStore extends PersistedSession {
   abandonRoll: () => void
   completeRoll: () => void
   setCollectionAddress: (address: string) => void
+  resetTransientFrames: () => void
 }
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -221,10 +222,20 @@ export const useSessionStore = create<SessionStore>()((set, get) => {
       if (!activeRoll) return
       commit({ hasSetMode: true, activeMode, activeRoll: { ...activeRoll, collectionAddress: address } })
     },
+
+    resetTransientFrames: () => {
+      const { hasSetMode, activeMode, activeRoll } = get()
+      if (!activeRoll || activeRoll.frameIds.length === 0) return
+      commit({
+        hasSetMode,
+        activeMode,
+        activeRoll: { ...activeRoll, frameIds: [], developed: false },
+      })
+    },
   }
 })
 
 // Async hydration on startup — same pattern as network.ts and mintQueue.ts
-readPersistedSession().then((session) => {
+export const sessionHydrated = readPersistedSession().then((session) => {
   useSessionStore.setState(session)
 })
