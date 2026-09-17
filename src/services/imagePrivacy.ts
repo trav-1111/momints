@@ -108,13 +108,27 @@ export async function runPrivacyStartupSweep(): Promise<void> {
   } catch {
     // Retried next launch; never broaden this to arbitrary document files.
   }
-  for (const name of ['image_cache', 'image_manager_disk_cache', 'small_image_cache', 'expo-image-cache']) {
+  for (const name of [
+    'http-cache',
+    'image_cache',
+    'image_manager_disk_cache',
+    'small_image_cache',
+    'expo-image-cache',
+  ]) {
     try {
       const imageCache = new Directory(Paths.cache, name)
       if (imageCache.exists) imageCache.delete()
     } catch {
       // Exact, known image-cache directory only. Never clear the whole cache root.
     }
+  }
+  try {
+    const cacheRoot = new Directory(Paths.cache)
+    for (const entry of cacheRoot.list()) {
+      if (entry instanceof File && /\/momints-contact-sheet-[^/]+\.png$/i.test(entry.uri)) entry.delete()
+    }
+  } catch {
+    // Legacy sheet outputs only; unrelated cache files are intentionally left alone.
   }
   try {
     await ExpoImage.clearDiskCache()

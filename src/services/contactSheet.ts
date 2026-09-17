@@ -279,8 +279,13 @@ export async function renderContactSheet(
         const frame = frames[index]
         if (/^https?:\/\//i.test(frame.imageUri)) {
           const destination = new File(temporaryInputs, `frame-${String(index).padStart(2, '0')}.img`)
-          const downloaded = await File.downloadFileAsync(frame.imageUri, destination, { idempotent: true })
-          prepared.push({ ...frame, imageUri: downloaded.uri })
+          const response = await fetch(frame.imageUri, {
+            headers: { 'Cache-Control': 'no-store' },
+            cache: 'no-store',
+          })
+          if (!response.ok) throw new Error(`Image request failed (${response.status})`)
+          destination.write(new Uint8Array(await response.arrayBuffer()))
+          prepared.push({ ...frame, imageUri: destination.uri })
         } else {
           prepared.push(frame)
         }
