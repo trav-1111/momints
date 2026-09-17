@@ -1,5 +1,6 @@
 import { useCallback } from 'react'
-import { View, Text, Pressable, FlatList, Image, Linking, Alert } from 'react-native'
+import { View, Text, Pressable, FlatList, Linking, Alert } from 'react-native'
+import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import { useMintQueue, MintHistoryItem } from '../store/mintQueue'
 import { getSolscanUrl, getSolscanNftUrl } from '../services/mint'
@@ -26,7 +27,7 @@ export default function PastMintsScreen() {
     ])
   }, [clearHistory])
 
-  const formatDate = (ts: number) => {
+  const formatDate = (ts: string) => {
     const d = new Date(ts)
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
   }
@@ -46,7 +47,12 @@ export default function PastMintsScreen() {
           marginBottom: 10,
         }}
       >
-        <Image source={{ uri: item.photoUri }} style={{ width: 52, height: 52, borderRadius: 9 }} resizeMode="cover" />
+        <Image
+          source={{ uri: item.imageUri }}
+          cachePolicy={'none'}
+          contentFit={'cover'}
+          style={{ width: 52, height: 52, borderRadius: 9 }}
+        />
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text numberOfLines={1} style={{ fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.text }}>
             {item.title}
@@ -78,7 +84,7 @@ export default function PastMintsScreen() {
             </Pressable>
           )}
           <Pressable
-            onPress={() => handleViewTx(item.txSignature)}
+            onPress={() => handleViewTx(item.transactionSignature)}
             style={{
               paddingVertical: 5,
               paddingHorizontal: 10,

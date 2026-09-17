@@ -26,9 +26,9 @@ import {
   PinchGestureHandlerEventPayload,
 } from 'react-native-gesture-handler'
 import { LinearGradient } from 'expo-linear-gradient'
-import { Paths, File, Directory } from 'expo-file-system'
 import { usePhotoStore } from '../store/photos'
 import { captureMetadata } from '../services/captureMetadata'
+import { adoptTemporaryCapture, deleteCapture } from '../services/imagePrivacy'
 import { applyFilm } from '../services/filmProcessor'
 import { cropToAspect } from '../services/cropImage'
 import { ensureUnderCeiling } from '../services/compressImage'
@@ -247,6 +247,7 @@ export default function CameraScreen() {
       // under it before the still capture reads the sensor.
       await new Promise((resolve) => setTimeout(resolve, 300))
     }
+    let captureUri: string | null = null
     try {
       const photo: PhotoFile = await cameraRef.current.takePhoto({
         flash: usingTorchForFlash ? 'off' : supportsFlash ? flash : 'off',
@@ -262,22 +263,13 @@ export default function CameraScreen() {
         useNativeDriver: true,
       }).start()
 
-      const photosDir = new Directory(Paths.document, 'photos')
-      if (!photosDir.exists) {
-        photosDir.create()
-      }
-
-      const fileName = `photo_${Date.now()}.jpg`
-      const sourceFile = new File(`file://${photo.path}`)
-      const destFile = new File(photosDir, fileName)
-
-      sourceFile.move(destFile)
+      captureUri = adoptTemporaryCapture(`file://${photo.path}`)
 
       // Stamp roll membership at creation so it outlives the session's
       // activeRoll — completeRoll() clears that, and frames must stay grouped
       // as a roll (and out of the quick-photo flows) forever after.
       const photoId = addPhoto(
-        destFile.uri,
+        captureUri,
         activeMode === 'roll' && activeRoll !== null ? { id: activeRoll.id, name: activeRoll.name } : undefined,
         effectiveAspect,
       )
@@ -286,7 +278,7 @@ export default function CameraScreen() {
       // roll's film emulation (B&W), then fit quick shots under the upload
       // ceiling. Each no-ops where not needed and falls back to the original on
       // failure, so a capture is never lost.
-      let processedUri = destFile.uri
+      let processedUri = captureUri
       if (effectiveAspect !== 'full') {
         processedUri = await cropToAspect(processedUri, effectiveAspect)
       }
@@ -303,7 +295,8 @@ export default function CameraScreen() {
       if (activeMode !== 'roll' || activeRoll === null) {
         processedUri = await ensureUnderCeiling(processedUri)
       }
-      if (processedUri !== destFile.uri) updatePhotoUri(photoId, processedUri)
+      captureUri = processedUri
+      updatePhotoUri(photoId, processedUri)
 
       // Best-effort location — fire-and-forget, never blocks capture. 'off'
       // short-circuits inside captureMetadata before touching GPS at all.
@@ -330,6 +323,7 @@ export default function CameraScreen() {
         }
       }
     } catch (error) {
+      deleteCapture(captureUri)
       console.error('Failed to capture photo:', error)
       Alert.alert('Error', 'Failed to capture photo. Please try again.')
     } finally {

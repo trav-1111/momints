@@ -69,7 +69,7 @@ export function useMintRoll() {
     // Frame numbers reflect the reviewed roll — a culled 8-frame roll reads
     // "Frame 3 of 8", not "3 of 36". Numbered over ALL surviving frames (minted
     // ones included) so a partial re-mint keeps its original numbering.
-    const totalFrames = frames.length
+    const totalFrames = activeRoll.size
 
     // Prepaid rolls carry their creation-time artist name; older rolls fall
     // back to the resolved domain / truncated address.
@@ -80,7 +80,7 @@ export function useMintRoll() {
 
     frames.forEach((photo, i) => {
       if (isMinted(photo)) return
-      const frameNumber = i + 1
+      const frameNumber = (registryRecord?.framesMinted ?? 0) + i + 1
       addToQueue({
         photoId: photo.id,
         photoUri: photo.uri,

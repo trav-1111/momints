@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { View, Text, Pressable, Image, ScrollView, ActivityIndicator, Linking, Alert } from 'react-native'
+import { View, Text, Pressable, ScrollView, ActivityIndicator, Linking, Alert } from 'react-native'
+import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore } from '../../store/photos'
@@ -12,6 +13,7 @@ import { completeWorkerRoll } from '../../services/rollApi'
 import { getSolscanUrl } from '../../services/mint'
 import { colors, fonts, tracking } from '../../theme'
 import { IconBack } from '../../components/icons'
+import { deleteCapture } from '../../services/imagePrivacy'
 
 type MintStatus = 'pending' | 'uploading' | 'signing' | 'confirming' | 'success' | 'failed'
 
@@ -61,7 +63,7 @@ export default function MintProgressScreen() {
   const router = useRouter()
   const { account } = useMobileWallet()
 
-  const setAction = usePhotoStore((state) => state.setAction)
+  const removePhoto = usePhotoStore((state) => state.removePhoto)
 
   const queue = useMintQueue((state) => state.queue)
   const clearQueue = useMintQueue((state) => state.clearQueue)
@@ -111,33 +113,36 @@ export default function MintProgressScreen() {
     (photoId: string, update: BatchItemUpdate) => {
       if (update.status === 'success') {
         const queueItem = useMintQueue.getState().queue.find((q) => q.photoId === photoId)
-        updateProgress(photoId, { status: 'success', txSignature: update.signature })
-        addToHistory({
-          id: photoId,
-          photoUri: queueItem?.photoUri ?? '',
-          title: queueItem?.title ?? 'Untitled',
-          artist: queueItem?.artist ?? '',
-          txSignature: update.signature,
-          mintAddress: update.mintAddress,
-          mintedAt: Date.now(),
-          capturedAt: queueItem?.capturedAt,
-          rollContext: queueItem?.rollContext,
-          filmUsed: queueItem?.filmUsed ?? 'Color',
-          aspect: queueItem?.aspect,
-        })
-        // Terminal state — the photo can never re-enter a mint flow
-        setAction(photoId, 'minted')
-        if (queueItem?.rollContext?.collectionAddress) {
-          useRollRegistry.getState().incrementFramesMinted(queueItem.rollContext.collectionAddress)
+        updateProgress(photoId, { status: 'success', txSignature: update.signature, photoUri: update.imageUri })
+        try {
+          addToHistory({
+            id: photoId,
+            imageUri: update.imageUri,
+            title: queueItem?.title ?? 'Untitled',
+            artist: queueItem?.artist ?? '',
+            transactionSignature: update.signature,
+            mintAddress: update.mintAddress,
+            mintedAt: new Date().toISOString(),
+            capturedAt: queueItem?.capturedAt,
+            rollContext: queueItem?.rollContext,
+            filmUsed: queueItem?.filmUsed ?? 'Color',
+            aspect: queueItem?.aspect,
+          })
+          if (queueItem?.rollContext?.collectionAddress) {
+            useRollRegistry.getState().incrementFramesMinted(queueItem.rollContext.collectionAddress)
+          }
+        } finally {
+          deleteCapture(queueItem?.photoUri)
+          removePhoto(photoId)
+          removeFromQueue(photoId)
         }
-        removeFromQueue(photoId)
       } else if (update.status === 'failed') {
         updateProgress(photoId, { status: 'failed', error: update.error })
       } else {
         updateProgress(photoId, { status: update.status, note: update.note })
       }
     },
-    [updateProgress, addToHistory, setAction, removeFromQueue],
+    [updateProgress, addToHistory, removePhoto, removeFromQueue],
   )
 
   // Mint everything still pending, in chunks with one wallet approval per
@@ -166,6 +171,9 @@ export default function MintProgressScreen() {
           capturedAt: q.capturedAt,
           rollContext: q.rollContext,
           captureMeta: q.captureMeta,
+          filmUsed: q.filmUsed,
+          aspect: q.aspect,
+          paymentCurrency: q.paymentCurrency,
         },
       ]
     })
@@ -199,6 +207,17 @@ export default function MintProgressScreen() {
     Linking.openURL(getSolscanUrl(signature))
   }, [])
 
+  const cleanupUnfinishedSession = useCallback(() => {
+    const { queue: currentQueue } = useMintQueue.getState()
+    for (const item of progress) {
+      if (item.status === 'success') continue
+      const queueItem = currentQueue.find((queued) => queued.photoId === item.photoId)
+      deleteCapture(queueItem?.photoUri ?? item.photoUri)
+      removeFromQueue(item.photoId)
+      removePhoto(item.photoId)
+    }
+  }, [progress, removeFromQueue, removePhoto])
+
   // Drop a frame from the mint queue before it's minted: remove its queue
   // item, unmark it for minting, and take it out of this session's list.
   const handleRemoveFromQueue = useCallback(
@@ -209,17 +228,34 @@ export default function MintProgressScreen() {
           text: 'Remove',
           style: 'destructive',
           onPress: () => {
+            const queueItem = useMintQueue.getState().queue.find((item) => item.photoId === photoId)
+            deleteCapture(queueItem?.photoUri)
             removeFromQueue(photoId)
-            setAction(photoId, 'pending')
+            removePhoto(photoId)
             setProgress((prev) => prev.filter((p) => p.photoId !== photoId))
           },
         },
       ])
     },
-    [removeFromQueue, setAction],
+    [removeFromQueue, removePhoto],
   )
 
+  const closeIncompleteRoll = useCallback(() => {
+    const { activeRoll: roll, completeRoll } = useSessionStore.getState()
+    if (!roll) return
+    if (roll.collectionAddress) {
+      useRollRegistry.getState().closeRoll(roll.collectionAddress)
+      if (isWorkerRollEnabled()) {
+        completeWorkerRoll(roll.collectionAddress).catch((err) => {
+          console.warn('[roll] terminal mint session: failed to close roll on the backend', err)
+        })
+      }
+    }
+    completeRoll()
+  }, [])
+
   const handleFinish = useCallback(() => {
+    cleanupUnfinishedSession()
     // If every frame of the roll has minted (this session or a previous one —
     // history ids are photo ids), the roll is complete and clears.
     const { activeRoll: roll, completeRoll } = useSessionStore.getState()
@@ -242,18 +278,32 @@ export default function MintProgressScreen() {
         }
       }
       completeRoll()
+    } else if (roll) {
+      closeIncompleteRoll()
     }
     clearQueue()
     router.replace('/camera')
-  }, [clearQueue, router, progress])
+  }, [clearQueue, router, progress, cleanupUnfinishedSession, closeIncompleteRoll])
 
   const handleBack = useCallback(() => {
     if (isProcessing) {
       Alert.alert('Minting in Progress', 'Please wait for the current mint to complete.', [{ text: 'OK' }])
       return
     }
-    router.back()
-  }, [isProcessing, router])
+    Alert.alert('End mint session?', 'Unminted temporary captures will be deleted from this device.', [
+      { text: 'Keep Minting', style: 'cancel' },
+      {
+        text: 'End Session',
+        style: 'destructive',
+        onPress: () => {
+          cleanupUnfinishedSession()
+          closeIncompleteRoll()
+          clearQueue()
+          router.replace('/camera')
+        },
+      },
+    ])
+  }, [isProcessing, cleanupUnfinishedSession, closeIncompleteRoll, clearQueue, router])
 
   const successCount = progress.filter((p) => p.status === 'success').length
   const failedCount = progress.filter((p) => p.status === 'failed').length
@@ -421,8 +471,9 @@ export default function MintProgressScreen() {
             >
               <Image
                 source={{ uri: item.photoUri }}
+                cachePolicy={'none'}
+                contentFit={'cover'}
                 style={{ width: 42, height: 42, borderRadius: 9 }}
-                resizeMode="cover"
               />
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text numberOfLines={1} style={{ fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.text }}>

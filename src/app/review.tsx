@@ -3,11 +3,11 @@ import { View, Text, Pressable, FlatList, Image, Dimensions, Alert, StatusBar, V
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as MediaLibrary from 'expo-media-library'
-import { File } from 'expo-file-system'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore, Photo } from '../store/photos'
 import { colors, fonts, tracking } from '../theme'
 import { IconArrowRight, IconBack, IconMint, IconSave, IconTrash } from '../components/icons'
+import { deleteCapture } from '../services/imagePrivacy'
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window')
 
@@ -31,10 +31,7 @@ export default function ReviewScreen() {
   //    off the photo's own rollId so finished rolls stay excluded too)
   //  - minted photos are terminal; showing them offered a "Mint" button that
   //    would mint a duplicate NFT of a frame already on-chain
-  const photos = useMemo(
-    () => allPhotos.filter((p) => !p.rollId && p.action !== 'minted'),
-    [allPhotos],
-  )
+  const photos = useMemo(() => allPhotos.filter((p) => !p.rollId && p.action !== 'minted'), [allPhotos])
 
   // Opening from the gallery lands on the tapped photo. Resolved by id rather
   // than a passed index, since this list and the gallery grid filter differently.
@@ -119,10 +116,7 @@ export default function ReviewScreen() {
 
       try {
         if (action === 'delete') {
-          const photoFile = new File(currentPhoto.uri)
-          if (photoFile.exists) {
-            photoFile.delete()
-          }
+          deleteCapture(currentPhoto.uri)
           removePhoto(currentPhoto.id)
 
           if (currentIndex >= photos.length - 1 && photos.length > 1) {
@@ -131,7 +125,8 @@ export default function ReviewScreen() {
         } else if (action === 'save') {
           const saved = await saveToGallery(currentPhoto.uri)
           if (saved) {
-            setAction(currentPhoto.id, action)
+            deleteCapture(currentPhoto.uri)
+            removePhoto(currentPhoto.id)
             Alert.alert('Saved', 'Photo saved to your camera roll!')
           } else {
             setIsProcessing(false)

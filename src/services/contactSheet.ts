@@ -1,5 +1,11 @@
 import { ImageFormat, PaintStyle, Skia, matchFont, type SkFont } from '@shopify/react-native-skia'
-import { File, Paths } from 'expo-file-system'
+import { File } from 'expo-file-system'
+import {
+  createContactSheetInputDirectory,
+  createContactSheetOutputFile,
+  deleteContactSheetRenderDirectory,
+} from './imagePrivacy'
+import { runWithCleanup } from './privacyPathGuard.cjs'
 
 export type ContactSheetFilm = 'Color' | 'B&W' | 'Mixed'
 export type ContactSheetAspect = '1:1' | '4:3' | '16:9' | 'Original' | 'Mixed'
@@ -45,7 +51,7 @@ export function getContactSheetColumns(frameCount: number): 3 | 4 {
 
 async function readImageBytes(uri: string): Promise<Uint8Array> {
   if (/^https?:\/\//i.test(uri)) {
-    const response = await fetch(uri)
+    const response = await fetch(uri, { headers: { 'Cache-Control': 'no-store' }, cache: 'no-store' })
     if (!response.ok) throw new Error(`Image request failed (${response.status})`)
     return new Uint8Array(await response.arrayBuffer())
   }
@@ -96,7 +102,7 @@ function ellipsize(text: string, font: SkFont, maxWidth: number): string {
  * Render the already-stored frame images into a clean contact sheet. This is a
  * compositor only: it never applies film processing, colour changes, or crops.
  */
-export async function renderContactSheet(
+async function renderPreparedContactSheet(
   frames: ContactSheetFrame[],
   metadata: ContactSheetMetadata,
 ): Promise<ContactSheetRenderResult> {
@@ -248,7 +254,7 @@ export async function renderContactSheet(
   surface.flush()
   const snapshot = surface.makeImageSnapshot()
   const png = snapshot.encodeToBytes(ImageFormat.PNG)
-  const output = new File(Paths.cache, `momints-contact-sheet-${Date.now()}.png`)
+  const output = createContactSheetOutputFile()
   output.write(png)
 
   return {
@@ -259,4 +265,30 @@ export async function renderContactSheet(
     frameCount: frames.length,
     aspectUsed,
   }
+}
+
+export async function renderContactSheet(
+  frames: ContactSheetFrame[],
+  metadata: ContactSheetMetadata,
+): Promise<ContactSheetRenderResult> {
+  const temporaryInputs = createContactSheetInputDirectory()
+  return runWithCleanup(
+    async () => {
+      const prepared: ContactSheetFrame[] = []
+      for (let index = 0; index < frames.length; index++) {
+        const frame = frames[index]
+        if (/^https?:\/\//i.test(frame.imageUri)) {
+          const destination = new File(temporaryInputs, `frame-${String(index).padStart(2, '0')}.img`)
+          const downloaded = await File.downloadFileAsync(frame.imageUri, destination, { idempotent: true })
+          prepared.push({ ...frame, imageUri: downloaded.uri })
+        } else {
+          prepared.push(frame)
+        }
+      }
+      return renderPreparedContactSheet(prepared, metadata)
+    },
+    () => {
+      deleteContactSheetRenderDirectory(temporaryInputs)
+    },
+  )
 }

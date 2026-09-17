@@ -1,15 +1,15 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Image,
   Pressable,
   ScrollView,
   Text,
   View,
   useWindowDimensions,
 } from 'react-native'
+import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import * as MediaLibrary from 'expo-media-library'
 import * as Sharing from 'expo-sharing'
@@ -29,6 +29,7 @@ import { useRollRegistry } from '../store/rollRegistry'
 import { useSessionStore } from '../store/session'
 import type { AspectRatio } from '../store/session'
 import { colors, fonts, tracking } from '../theme'
+import { deleteAppOwnedImage } from '../services/imagePrivacy'
 
 type SelectionPath = 'roll' | 'quick'
 
@@ -103,7 +104,7 @@ async function momintsLogoUri(): Promise<string> {
 
 function asFrame(item: MintHistoryItem, order: number, filmUsed: MintFilmUsed, aspect?: AspectRatio): SheetFrame {
   return {
-    imageUri: item.photoUri,
+    imageUri: item.imageUri,
     name: item.title,
     order,
     artist: item.artist,
@@ -150,6 +151,12 @@ export default function ContactSheetScreen() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
+  useEffect(() => {
+    return () => {
+      if (preview) deleteAppOwnedImage(preview.render.uri)
+    }
+  }, [preview])
+
   const photoById = useMemo(() => new Map(photos.map((photo) => [photo.id, photo])), [photos])
   const registryByCollection = useMemo(
     () => new Map(registry.map((roll) => [roll.collectionAddress, roll])),
@@ -159,7 +166,7 @@ export default function ContactSheetScreen() {
 
   const rollChoices = useMemo(() => {
     const groups = new Map<string, RollChoice>()
-    const sortedHistory = [...mintHistory].sort((a, b) => a.mintedAt - b.mintedAt)
+    const sortedHistory = [...mintHistory].sort((a, b) => Date.parse(a.mintedAt) - Date.parse(b.mintedAt))
 
     for (const item of sortedHistory) {
       const photo = photoById.get(item.id)
@@ -177,7 +184,8 @@ export default function ContactSheetScreen() {
         photo?.aspect ??
         registryRoll?.aspect ??
         (activeRoll?.id === rollId ? activeRoll.aspect : undefined)
-      const order = photo?.capturedAt ?? item.rollContext?.frameNumber ?? item.capturedAt ?? item.mintedAt
+      const mintedAt = Date.parse(item.mintedAt)
+      const order = photo?.capturedAt ?? item.rollContext?.frameNumber ?? item.capturedAt ?? mintedAt
       const expectedFrames =
         item.rollContext?.totalFrames ?? photos.filter((candidate) => candidate.rollId === rollId).length
       const existing = groups.get(rollId) ?? {
@@ -185,14 +193,14 @@ export default function ContactSheetScreen() {
         name,
         frames: [],
         expectedFrames,
-        mintedAt: item.mintedAt,
+        mintedAt,
         artist: item.artist,
         filmUsed,
         aspect: undefined,
       }
       existing.frames.push(asFrame(item, order, filmUsed, frameAspect))
       existing.expectedFrames = Math.max(existing.expectedFrames, expectedFrames, existing.frames.length)
-      existing.mintedAt = Math.max(existing.mintedAt, item.mintedAt)
+      existing.mintedAt = Math.max(existing.mintedAt, mintedAt)
       groups.set(rollId, existing)
     }
 
@@ -218,7 +226,7 @@ export default function ContactSheetScreen() {
     () =>
       [...mintHistory]
         .filter((item) => !item.rollContext && !photoById.get(item.id)?.rollId)
-        .sort((a, b) => a.mintedAt - b.mintedAt),
+        .sort((a, b) => Date.parse(a.mintedAt) - Date.parse(b.mintedAt)),
     [mintHistory, photoById],
   )
   const quickMintsForDisplay = useMemo(() => [...quickMintsInMintOrder].reverse(), [quickMintsInMintOrder])
@@ -304,6 +312,7 @@ export default function ContactSheetScreen() {
 
   const handleShare = useCallback(async () => {
     if (!preview) return
+    let shared = false
     try {
       if (!(await Sharing.isAvailableAsync())) {
         Alert.alert('Sharing unavailable', 'Save the image to your photo library instead.')
@@ -314,14 +323,21 @@ export default function ContactSheetScreen() {
         dialogTitle: 'Share contact sheet',
         UTI: 'public.png',
       })
+      shared = true
     } catch (error) {
       Alert.alert('Couldn’t share', error instanceof Error ? error.message : 'The share sheet could not be opened.')
+    } finally {
+      if (shared) {
+        deleteAppOwnedImage(preview.render.uri)
+        setPreview(null)
+      }
     }
   }, [preview])
 
   const handleSave = useCallback(async () => {
     if (!preview || isSaving) return
     setIsSaving(true)
+    let saved = false
     try {
       const permission = await MediaLibrary.requestPermissionsAsync()
       if (permission.status !== 'granted') {
@@ -329,10 +345,15 @@ export default function ContactSheetScreen() {
         return
       }
       await MediaLibrary.saveToLibraryAsync(preview.render.uri)
+      saved = true
       Alert.alert('Saved', 'The contact sheet was saved to your photo library.')
     } catch (error) {
       Alert.alert('Couldn’t save', error instanceof Error ? error.message : 'The image could not be saved.')
     } finally {
+      if (saved) {
+        deleteAppOwnedImage(preview.render.uri)
+        setPreview(null)
+      }
       setIsSaving(false)
     }
   }, [isSaving, preview])
@@ -405,7 +426,8 @@ export default function ContactSheetScreen() {
           >
             <Image
               source={{ uri: preview.render.uri }}
-              resizeMode="contain"
+              cachePolicy={'none'}
+              contentFit={'contain'}
               style={{ width: '100%', aspectRatio: preview.render.width / preview.render.height, borderRadius: 9 }}
               accessibilityLabel={`Contact sheet preview with ${preview.render.frameCount} frames`}
             />
@@ -607,8 +629,9 @@ export default function ContactSheetScreen() {
                     <Image
                       key={`${item.id}-${frame.order}`}
                       source={{ uri: frame.imageUri }}
+                      cachePolicy={'none'}
+                      contentFit={'cover'}
                       style={{ flex: 1, aspectRatio: 1, borderRadius: 7, backgroundColor: colors.bg }}
-                      resizeMode="cover"
                     />
                   ))}
                 </View>
@@ -671,7 +694,12 @@ export default function ContactSheetScreen() {
                     backgroundColor: colors.surface,
                   }}
                 >
-                  <Image source={{ uri: item.photoUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                  <Image
+                    source={{ uri: item.imageUri }}
+                    cachePolicy={'none'}
+                    contentFit={'cover'}
+                    style={{ width: '100%', height: '100%' }}
+                  />
                   {selected && <SelectionTick />}
                 </View>
                 <Text

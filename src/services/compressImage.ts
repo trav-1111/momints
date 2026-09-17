@@ -1,5 +1,5 @@
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator'
-import { Paths, File, Directory } from 'expo-file-system'
+import { File } from 'expo-file-system'
 
 // Sits deliberately under the Worker's quick-mint ceiling of 3,145,728 bytes
 // (MAX_QUICK_IMAGE_BYTES in worker/src/quick/config.ts). The gap is margin: a
@@ -97,10 +97,8 @@ export async function ensureUnderCeiling(uri: string): Promise<string> {
       return uri
     }
 
-    // saveAsync writes to the cache dir — move it into the persistent photos dir.
-    const photosDir = new Directory(Paths.document, 'photos')
-    if (!photosDir.exists) photosDir.create()
-    const dest = new File(photosDir, `photo_${Date.now()}_fit.jpg`)
+    // Keep every replacement beside its temporary input.
+    const dest = new File(new File(uri).parentDirectory, `photo_${Date.now()}_fit.jpg`)
     new File(fitted).move(dest)
 
     if (__DEV__) console.log(`[compress] ${originalBytes}B -> ${dest.size}B`)

@@ -1,0 +1,51 @@
+'use strict'
+
+const test = require('node:test')
+const assert = require('node:assert/strict')
+const {
+  canonicalFilePath,
+  isFileUriInsideDirectory,
+  isPermanentArweaveUri,
+  runWithCleanup,
+} = require('../src/services/privacyPathGuard.cjs')
+
+const captureRoot = 'file:///data/user/0/com.momints.app/cache/momints-captures'
+
+test('only files strictly inside an app-owned directory are deletable', () => {
+  assert.equal(isFileUriInsideDirectory(captureRoot + '/capture-1.jpg', captureRoot), true)
+  assert.equal(isFileUriInsideDirectory(captureRoot, captureRoot), false)
+  assert.equal(isFileUriInsideDirectory(captureRoot + '-backup/capture.jpg', captureRoot), false)
+  assert.equal(isFileUriInsideDirectory('content://media/external/images/1', captureRoot), false)
+  assert.equal(isFileUriInsideDirectory('file:///storage/emulated/0/DCIM/photo.jpg', captureRoot), false)
+})
+
+test('encoded traversal cannot escape an app-owned directory guard', () => {
+  const escaped = captureRoot + '/%2e%2e/%2e%2e/files/private.jpg'
+  assert.equal(canonicalFilePath(escaped), '/data/user/0/com.momints.app/files/private.jpg')
+  assert.equal(isFileUriInsideDirectory(escaped, captureRoot), false)
+})
+
+test('durable history accepts only HTTPS Arweave image references', () => {
+  assert.equal(isPermanentArweaveUri('https://arweave.net/abc123'), true)
+  assert.equal(isPermanentArweaveUri('ar://abc123'), true)
+  assert.equal(isPermanentArweaveUri('http://arweave.net/abc123'), false)
+  assert.equal(isPermanentArweaveUri('https://example.com/abc123'), false)
+  assert.equal(isPermanentArweaveUri('file:///data/user/0/app/cache/photo.jpg'), false)
+  assert.equal(isPermanentArweaveUri('data:image/jpeg;base64,AAAA'), false)
+})
+
+test('contact-sheet cleanup runs when rendering throws', async () => {
+  let cleanups = 0
+  await assert.rejects(
+    runWithCleanup(
+      async () => {
+        throw new Error('forced renderer failure')
+      },
+      async () => {
+        cleanups++
+      },
+    ),
+    /forced renderer failure/,
+  )
+  assert.equal(cleanups, 1)
+})

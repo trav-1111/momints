@@ -17,6 +17,9 @@ import { isWorkerRollEnabled } from '../config/rollApi'
 import { getClusterRpc } from '../store/network'
 import { drainPendingFinalizes } from '../store/quickFinalize'
 import { colors } from '../theme'
+import { runPrivacyStartupSweep } from '../services/imagePrivacy'
+import { sessionHydrated, useSessionStore } from '../store/session'
+import { usePhotoStore } from '../store/photos'
 
 const identity = {
   name: 'Momints',
@@ -49,9 +52,19 @@ function useQuickFinalizeDrain(): void {
   }, [])
 }
 
+function usePrivacyStartupCleanup(): void {
+  useEffect(() => {
+    void Promise.all([sessionHydrated, runPrivacyStartupSweep()]).then(() => {
+      usePhotoStore.getState().clearSession()
+      useSessionStore.getState().resetTransientFrames()
+    })
+  }, [])
+}
+
 const solanaCluster = createSolanaMainnet({ url: getClusterRpc() })
 
 export default function Layout() {
+  usePrivacyStartupCleanup()
   useQuickFinalizeDrain()
 
   const [fontsLoaded] = useFonts({

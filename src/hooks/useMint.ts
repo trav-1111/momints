@@ -9,10 +9,13 @@ import { isSkrQuoteUnavailable, quoteSkrFee } from '../services/skrApi'
 import { formatSkr } from '../config/skr'
 import { checkPriorAttempt, clearPendingFinalize, recordPendingFinalize } from '../store/quickFinalize'
 import { getClusterRpc } from '../store/network'
-import type { RollContext } from '../store/mintQueue'
+import type { MintFilmUsed, RollContext } from '../store/mintQueue'
 import type { CaptureMeta } from '../store/photos'
+import type { AspectRatio } from '../store/session'
+import { waitForPermanentQuickImage } from '../services/permanentAsset'
+import { verifyPermanentImage } from '../services/imagePrivacy'
 
-const SKR_UNAVAILABLE_NOTE = "$SKR unavailable — paying with SOL instead"
+const SKR_UNAVAILABLE_NOTE = '$SKR unavailable — paying with SOL instead'
 
 /** Frames per wallet approval. MWA signs a whole chunk in one prompt; kept
  * small so the shared blockhash never expires before send, and so parallel
@@ -27,13 +30,15 @@ export interface BatchItemInput {
   capturedAt: number
   rollContext?: RollContext
   captureMeta?: CaptureMeta
+  filmUsed?: MintFilmUsed
+  aspect?: AspectRatio
   /** Quick mint only. Defaults 'SOL'. A Worker quote failure falls back to SOL automatically. */
   paymentCurrency?: 'SOL' | 'SKR'
 }
 
 export type BatchItemUpdate =
   | { status: 'uploading' | 'signing' | 'confirming'; note?: string }
-  | { status: 'success'; signature: string; mintAddress?: string }
+  | { status: 'success'; signature: string; mintAddress: string; imageUri: string }
   | { status: 'failed'; error: string }
 
 export interface BatchSummary {
@@ -150,12 +155,20 @@ async function stageAndRecord(params: {
  * placeholder. A failure here is NOT a failed mint — the asset exists and is
  * paid for — so it never fails the item; the persisted queue retries.
  */
-async function finalizeAndClear(entry: { stagingKey: string; signature: string; assetAddress: string }): Promise<void> {
+async function finalizeAndResolve(entry: {
+  stagingKey: string
+  signature: string
+  assetAddress: string
+}): Promise<string> {
   try {
-    await finalizeQuickMint(entry)
-    await clearPendingFinalize(entry.stagingKey)
+    const finalized = await finalizeQuickMint(entry)
+    const imageUri = finalized.imageUri
+      ? await verifyPermanentImage(finalized.imageUri)
+      : await waitForPermanentQuickImage(entry.assetAddress)
+    return imageUri
   } catch (err) {
     console.warn(`[mint] finalize deferred for ${entry.assetAddress}:`, err instanceof Error ? err.message : err)
+    throw err
   }
 }
 
@@ -194,7 +207,10 @@ export function useMint() {
    * stay pending for a retry.
    */
   const mintBatch = useCallback(
-    async (items: BatchItemInput[], onItem: (photoId: string, update: BatchItemUpdate) => void): Promise<BatchSummary> => {
+    async (
+      items: BatchItemInput[],
+      onItem: (photoId: string, update: BatchItemUpdate) => void,
+    ): Promise<BatchSummary> => {
       const summary: BatchSummary = { succeeded: 0, failed: 0, aborted: false }
 
       if (!account) {
@@ -234,6 +250,7 @@ export function useMint() {
             description: `Shot on Seeker by ${item.artist}`,
             attributes: workerFrameAttributes(item),
           })
+          const imageUri = await verifyPermanentImage(res.imageUri)
           summary.succeeded++
           onItem(item.photoId, {
             status: 'success',
@@ -241,6 +258,7 @@ export function useMint() {
             // the asset address is what identifies the mint either way.
             signature: res.signature ?? '',
             mintAddress: res.assetAddress,
+            imageUri,
           })
         } catch (err) {
           summary.failed++
@@ -260,8 +278,19 @@ export function useMint() {
       for (const item of clientItems) {
         const check = await checkPriorAttempt(item.photoId)
         if (check.action === 'resolved') {
-          summary.succeeded++
-          onItem(item.photoId, { status: 'success', signature: check.signature, mintAddress: check.assetAddress })
+          try {
+            summary.succeeded++
+            onItem(item.photoId, {
+              status: 'success',
+              signature: check.signature,
+              mintAddress: check.assetAddress,
+              imageUri: check.imageUri,
+            })
+            await clearPendingFinalize(check.stagingKey)
+          } catch (err) {
+            summary.failed++
+            onItem(item.photoId, { status: 'failed', error: categorizeError(err) })
+          }
         } else if (check.action === 'wait') {
           // A prior attempt may still land. Do not mint again yet — the
           // background drain, or the next retry (which re-checks), resolves it.
@@ -304,6 +333,7 @@ export function useMint() {
         if (ready.length === 0) continue
 
         const quickByPhotoId = new Map(ready.map((r) => [r.item.photoId, r.quick] as const))
+        const itemByPhotoId = new Map(ready.map((r) => [r.item.photoId, r.item] as const))
         // Which quick items got as far as a signature. Anything NOT in here on
         // failure was never paid for, so its stage can safely be given back.
         const signedPhotoIds = new Set<string>()
@@ -340,7 +370,8 @@ export function useMint() {
               // before the transaction that spends the fee goes out.
               onItemSigned: async (photoId, { signature, mintAddress }) => {
                 const quick = quickByPhotoId.get(photoId)
-                if (quick) {
+                const sourceItem = itemByPhotoId.get(photoId)
+                if (quick && sourceItem) {
                   signedPhotoIds.add(photoId)
                   signedInfo.set(photoId, { signature, mintAddress })
                   await recordPendingFinalize({
@@ -348,6 +379,13 @@ export function useMint() {
                     signature,
                     assetAddress: mintAddress,
                     photoId,
+                    history: {
+                      title: sourceItem.title,
+                      artist: sourceItem.artist,
+                      capturedAt: sourceItem.capturedAt,
+                      filmUsed: sourceItem.filmUsed,
+                      aspect: sourceItem.aspect,
+                    },
                   })
                 }
               },
@@ -363,9 +401,8 @@ export function useMint() {
             },
             (result) => {
               if (result.success && result.signature) {
-                summary.succeeded++
-                onItem(result.id, { status: 'success', signature: result.signature, mintAddress: result.mintAddress })
-              } else {
+                onItem(result.id, { status: 'confirming' })
+              } else if (!signedInfo.has(result.id)) {
                 summary.failed++
                 onItem(result.id, {
                   status: 'failed',
@@ -375,9 +412,8 @@ export function useMint() {
             },
           )
 
-          // Finalize after the chunk, not per item: the mints are already
-          // reported as successful, and a finalize failure must not turn a paid
-          // mint into a failed one — the persisted queue retries it instead.
+          // Finalize after the chunk. A mint is not reported as successful
+          // until its permanent Arweave image is returned and retrievable.
           //
           // Driven by signedInfo (captured at signing time), NOT by
           // result.success/result.signature — a confirmation TIMEOUT in
@@ -392,11 +428,24 @@ export function useMint() {
           for (const [photoId, quick] of quickByPhotoId) {
             const info = signedInfo.get(photoId)
             if (info) {
-              await finalizeAndClear({
-                stagingKey: quick.stagingKey,
-                signature: info.signature,
-                assetAddress: info.mintAddress,
-              })
+              try {
+                const imageUri = await finalizeAndResolve({
+                  stagingKey: quick.stagingKey,
+                  signature: info.signature,
+                  assetAddress: info.mintAddress,
+                })
+                summary.succeeded++
+                onItem(photoId, {
+                  status: 'success',
+                  signature: info.signature,
+                  mintAddress: info.mintAddress,
+                  imageUri,
+                })
+                await clearPendingFinalize(quick.stagingKey)
+              } catch (err) {
+                summary.failed++
+                onItem(photoId, { status: 'failed', error: categorizeError(err) })
+              }
             }
           }
         } catch (err) {
