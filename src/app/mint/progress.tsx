@@ -25,6 +25,7 @@ interface MintProgress {
   title?: string
   status: MintStatus
   txSignature?: string
+  mintAddress?: string
   error?: string
   /** The quoted $SKR amount ("Paying 12.50 $SKR") or a fallback notice, when this item requested $SKR payment. See useMint.ts's stageAndRecord. */
   note?: string
@@ -66,6 +67,7 @@ export default function MintProgressScreen() {
   const removePhoto = usePhotoStore((state) => state.removePhoto)
 
   const queue = useMintQueue((state) => state.queue)
+  const mintHistory = useMintQueue((state) => state.mintHistory)
   const clearQueue = useMintQueue((state) => state.clearQueue)
   const removeFromQueue = useMintQueue((state) => state.removeFromQueue)
   const addToHistory = useMintQueue((state) => state.addToHistory)
@@ -138,12 +140,57 @@ export default function MintProgressScreen() {
         }
       } else if (update.status === 'failed') {
         updateProgress(photoId, { status: 'failed', error: update.error })
+      } else if (update.status === 'confirming') {
+        updateProgress(photoId, {
+          status: 'confirming',
+          note: update.note,
+          txSignature: update.signature,
+          mintAddress: update.mintAddress,
+          error: undefined,
+        })
       } else {
         updateProgress(photoId, { status: update.status, note: update.note })
       }
     },
     [updateProgress, addToHistory, removePhoto, removeFromQueue],
   )
+
+  // Background reconciliation owns paid mints while Arweave propagates. If
+  // one completes while this screen is still open, reflect the durable history
+  // record immediately and release its temporary capture.
+  useEffect(() => {
+    const completed = progress.flatMap((item) => {
+      if (item.status !== 'confirming') return []
+      const historyItem = mintHistory.find(
+        (history) => history.id === item.photoId || history.mintAddress === item.mintAddress,
+      )
+      return historyItem ? [{ photoId: item.photoId, historyItem }] : []
+    })
+    if (completed.length === 0) return
+
+    const currentQueue = useMintQueue.getState().queue
+    for (const { photoId } of completed) {
+      const queueItem = currentQueue.find((item) => item.photoId === photoId)
+      deleteCapture(queueItem?.photoUri)
+      removePhoto(photoId)
+      removeFromQueue(photoId)
+    }
+    setProgress((current) =>
+      current.map((item) => {
+        const match = completed.find(({ photoId }) => photoId === item.photoId)
+        return match
+          ? {
+              ...item,
+              status: 'success',
+              photoUri: match.historyItem.imageUri,
+              txSignature: match.historyItem.transactionSignature,
+              mintAddress: match.historyItem.mintAddress,
+              note: undefined,
+            }
+          : item
+      }),
+    )
+  }, [mintHistory, progress, removeFromQueue, removePhoto])
 
   // Mint everything still pending, in chunks with one wallet approval per
   // MINT_CHUNK_SIZE frames. Photos missing their metadata are handled by
@@ -307,8 +354,11 @@ export default function MintProgressScreen() {
 
   const successCount = progress.filter((p) => p.status === 'success').length
   const failedCount = progress.filter((p) => p.status === 'failed').length
-  const pendingCount = progress.filter((p) => p.status === 'pending').length
+  const queuedCount = progress.filter((p) => p.status === 'pending').length
+  const confirmingCount = progress.filter((p) => p.status === 'confirming').length
+  const pendingCount = progress.filter((p) => p.status !== 'success' && p.status !== 'failed').length
   const allComplete = pendingCount === 0 && !isProcessing
+  const canLeaveWhileFinalizing = queuedCount === 0 && confirmingCount > 0 && !isProcessing
   // Only frames that still mint on-device need a signature — roll frames going
   // through the Worker are signed by its key, not the user's wallet.
   const pendingIds = new Set(progress.filter((p) => p.status === 'pending').map((p) => p.photoId))
@@ -340,7 +390,7 @@ export default function MintProgressScreen() {
       case 'signing':
         return 'Sign in your wallet…'
       case 'confirming':
-        return 'Confirming on-chain…'
+        return 'Confirming payment on-chain…'
       case 'success':
         return 'Minted!'
       case 'failed':
@@ -486,10 +536,10 @@ export default function MintProgressScreen() {
                     <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: getDotColor(item.status) }} />
                   )}
                   <Text
-                    numberOfLines={1}
                     style={{
                       fontFamily: fonts.mono,
                       fontSize: 10.5,
+                      lineHeight: 15,
                       color: needsDetails ? colors.accentSoft : getStatusColor(item.status),
                     }}
                   >
@@ -498,7 +548,7 @@ export default function MintProgressScreen() {
                 </View>
               </View>
 
-              {item.status === 'success' && item.txSignature && (
+              {(item.status === 'success' || item.status === 'confirming') && item.txSignature && (
                 <Pressable
                   onPress={() => handleViewOnSolscan(item.txSignature!)}
                   style={{
@@ -549,18 +599,35 @@ export default function MintProgressScreen() {
 
       {/* Action Button */}
       <View style={{ padding: 22, paddingBottom: 26 }}>
-        {allComplete ? (
-          <Pressable
-            onPress={handleFinish}
-            style={{
-              alignItems: 'center',
-              paddingVertical: 15,
-              borderRadius: 14,
-              backgroundColor: colors.accent,
-            }}
-          >
-            <Text style={{ fontFamily: fonts.sansBold, fontSize: 14, color: colors.white }}>Return to Camera</Text>
-          </Pressable>
+        {allComplete || canLeaveWhileFinalizing ? (
+          <>
+            {canLeaveWhileFinalizing && (
+              <Text
+                style={{
+                  fontFamily: fonts.mono,
+                  fontSize: 10.5,
+                  lineHeight: 16,
+                  color: colors.textSecondary,
+                  textAlign: 'center',
+                  marginBottom: 12,
+                }}
+              >
+                Your mint is finalizing in the background. Arweave usually takes 8–12 minutes. It will appear in history
+                automatically.
+              </Text>
+            )}
+            <Pressable
+              onPress={handleFinish}
+              style={{
+                alignItems: 'center',
+                paddingVertical: 15,
+                borderRadius: 14,
+                backgroundColor: colors.accent,
+              }}
+            >
+              <Text style={{ fontFamily: fonts.sansBold, fontSize: 14, color: colors.white }}>Return to Camera</Text>
+            </Pressable>
+          </>
         ) : (
           <>
             {/* Held back until every photo has details: the approval count is

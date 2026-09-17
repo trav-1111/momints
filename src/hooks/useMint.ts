@@ -7,12 +7,17 @@ import { finalizeQuickMint, releaseQuickStage, stageQuickMint } from '../service
 import { mintWorkerFrame, RollApiError } from '../services/rollApi'
 import { isSkrQuoteUnavailable, quoteSkrFee } from '../services/skrApi'
 import { formatSkr } from '../config/skr'
-import { checkPriorAttempt, clearPendingFinalize, recordPendingFinalize } from '../store/quickFinalize'
+import {
+  checkPriorAttempt,
+  clearPendingFinalize,
+  recordPendingFinalize,
+  startPendingFinalizePolling,
+} from '../store/quickFinalize'
 import { getClusterRpc } from '../store/network'
 import type { MintFilmUsed, RollContext } from '../store/mintQueue'
 import type { CaptureMeta } from '../store/photos'
 import type { AspectRatio } from '../store/session'
-import { waitForPermanentQuickImage } from '../services/permanentAsset'
+import { tryPermanentQuickImage } from '../services/permanentAsset'
 import { verifyPermanentImage } from '../services/imagePrivacy'
 
 const SKR_UNAVAILABLE_NOTE = '$SKR unavailable — paying with SOL instead'
@@ -37,7 +42,8 @@ export interface BatchItemInput {
 }
 
 export type BatchItemUpdate =
-  | { status: 'uploading' | 'signing' | 'confirming'; note?: string }
+  | { status: 'uploading' | 'signing'; note?: string }
+  | { status: 'confirming'; note?: string; signature?: string; mintAddress?: string }
   | { status: 'success'; signature: string; mintAddress: string; imageUri: string }
   | { status: 'failed'; error: string }
 
@@ -155,17 +161,14 @@ async function stageAndRecord(params: {
  * placeholder. A failure here is NOT a failed mint — the asset exists and is
  * paid for — so it never fails the item; the persisted queue retries.
  */
-async function finalizeAndResolve(entry: {
+async function finalizeAndCheck(entry: {
   stagingKey: string
   signature: string
   assetAddress: string
-}): Promise<string> {
+}): Promise<string | null> {
   try {
     const finalized = await finalizeQuickMint(entry)
-    const imageUri = finalized.imageUri
-      ? await verifyPermanentImage(finalized.imageUri)
-      : await waitForPermanentQuickImage(entry.assetAddress)
-    return imageUri
+    return tryPermanentQuickImage(entry.assetAddress, finalized.imageUri)
   } catch (err) {
     console.warn(`[mint] finalize deferred for ${entry.assetAddress}:`, err instanceof Error ? err.message : err)
     throw err
@@ -294,11 +297,13 @@ export function useMint() {
         } else if (check.action === 'wait') {
           // A prior attempt may still land. Do not mint again yet — the
           // background drain, or the next retry (which re-checks), resolves it.
-          summary.failed++
           onItem(item.photoId, {
-            status: 'failed',
-            error: 'Still confirming a previous attempt — wait a moment before retrying',
+            status: 'confirming',
+            signature: check.signature,
+            mintAddress: check.assetAddress,
+            note: 'Mint submitted · finalizing on Arweave (usually 8–12 min)',
           })
+          void startPendingFinalizePolling().catch(() => {})
         } else {
           // 'none' (no prior attempt) or 'clear' (a prior attempt is
           // confirmed dead) — a fresh mint is safe.
@@ -429,22 +434,39 @@ export function useMint() {
             const info = signedInfo.get(photoId)
             if (info) {
               try {
-                const imageUri = await finalizeAndResolve({
+                const imageUri = await finalizeAndCheck({
                   stagingKey: quick.stagingKey,
                   signature: info.signature,
                   assetAddress: info.mintAddress,
                 })
-                summary.succeeded++
+                if (imageUri) {
+                  summary.succeeded++
+                  onItem(photoId, {
+                    status: 'success',
+                    signature: info.signature,
+                    mintAddress: info.mintAddress,
+                    imageUri,
+                  })
+                  await clearPendingFinalize(quick.stagingKey)
+                } else {
+                  onItem(photoId, {
+                    status: 'confirming',
+                    signature: info.signature,
+                    mintAddress: info.mintAddress,
+                    note: 'Paid · finalizing on Arweave (usually 8–12 min)',
+                  })
+                  void startPendingFinalizePolling().catch(() => {})
+                }
+              } catch {
+                // A signed mint may already have landed. Keep it in recovery
+                // instead of offering a second paid transaction.
                 onItem(photoId, {
-                  status: 'success',
+                  status: 'confirming',
                   signature: info.signature,
                   mintAddress: info.mintAddress,
-                  imageUri,
+                  note: 'Mint submitted · confirming payment and permanent storage',
                 })
-                await clearPendingFinalize(quick.stagingKey)
-              } catch (err) {
-                summary.failed++
-                onItem(photoId, { status: 'failed', error: categorizeError(err) })
+                void startPendingFinalizePolling().catch(() => {})
               }
             }
           }

@@ -4,7 +4,12 @@ import { getClusterRpc } from '../store/network'
 import { createMintUmi } from './mint'
 import { getQuickMintStatus } from './quickMintApi'
 import { getWorkerRoll } from './rollApi'
-import { isPermanentArweaveUri, normalizeArweaveUri, verifyPermanentImage } from './imagePrivacy'
+import {
+  isPermanentArweaveUri,
+  isPermanentImagePending,
+  normalizeArweaveUri,
+  verifyPermanentImage,
+} from './imagePrivacy'
 
 interface MetadataDocument {
   image?: unknown
@@ -87,17 +92,23 @@ export async function resolvePermanentImageUri(item: PermanentImageLookup): Prom
   return null
 }
 
-const QUICK_IMAGE_ATTEMPTS = 20
-const QUICK_IMAGE_POLL_MS = 1_000
-
-export async function waitForPermanentQuickImage(assetAddress: string): Promise<string> {
-  for (let attempt = 0; attempt < QUICK_IMAGE_ATTEMPTS; attempt++) {
-    const status = await getQuickMintStatus(assetAddress)
-    if (status.status === 'DEAD') throw new Error('Permanent upload failed.')
-    if (status.imageUri) return verifyPermanentImage(status.imageUri)
-    if (attempt + 1 < QUICK_IMAGE_ATTEMPTS) {
-      await new Promise((resolve) => setTimeout(resolve, QUICK_IMAGE_POLL_MS))
-    }
+async function verifyIfReady(uri: string): Promise<string | null> {
+  try {
+    return await verifyPermanentImage(uri)
+  } catch (error) {
+    if (isPermanentImagePending(error)) return null
+    throw error
   }
-  throw new Error('Permanent image is still finalizing. Retry shortly.')
+}
+
+/** One non-blocking reconciliation pass for the background finalize poller. */
+export async function tryPermanentQuickImage(
+  assetAddress: string,
+  hintedImageUri?: string | null,
+): Promise<string | null> {
+  if (hintedImageUri) return verifyIfReady(hintedImageUri)
+
+  const status = await getQuickMintStatus(assetAddress)
+  if (status.status === 'DEAD') throw new Error('Permanent upload failed.')
+  return status.imageUri ? verifyIfReady(status.imageUri) : null
 }

@@ -145,6 +145,28 @@ export function normalizeArweaveUri(uri: string): string {
   return uri.startsWith('ar://') ? `https://arweave.net/${uri.slice(5)}` : uri
 }
 
+export class PermanentImageUnavailableError extends Error {
+  constructor(public readonly status: number) {
+    super(`Permanent image is not retrievable yet (${status}).`)
+    this.name = 'PermanentImageUnavailableError'
+  }
+}
+
+/**
+ * Arweave gateways can return 404 for several minutes after the upload has
+ * completed. That is a propagation state, not a failed mint. Network and
+ * gateway errors are equally retryable once the URI has passed the strict
+ * Arweave-host check below.
+ */
+export function isPermanentImagePending(error: unknown): boolean {
+  if (error instanceof PermanentImageUnavailableError) return true
+  if (!(error instanceof Error)) return false
+  const message = error.message.toLowerCase()
+  return (
+    message.includes('network request failed') || message.includes('failed to fetch') || message.includes('timeout')
+  )
+}
+
 export async function verifyPermanentImage(uri: string): Promise<string> {
   const normalized = normalizeArweaveUri(uri)
   if (!isPermanentArweaveUri(normalized)) throw new Error('The mint did not return a permanent Arweave image URI.')
@@ -153,6 +175,6 @@ export async function verifyPermanentImage(uri: string): Promise<string> {
     headers: { Range: 'bytes=0-0', 'Cache-Control': 'no-store' },
     cache: 'no-store',
   })
-  if (!response.ok) throw new Error(`Permanent image is not retrievable yet (${response.status}).`)
+  if (!response.ok) throw new PermanentImageUnavailableError(response.status)
   return normalized
 }

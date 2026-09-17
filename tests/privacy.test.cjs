@@ -8,6 +8,7 @@ const {
   isPermanentArweaveUri,
   runWithCleanup,
 } = require('../src/services/privacyPathGuard.cjs')
+const { mergePendingDrain } = require('../src/store/pendingFinalizeGuard.cjs')
 
 const captureRoot = 'file:///data/user/0/com.momints.app/cache/momints-captures'
 
@@ -48,4 +49,20 @@ test('contact-sheet cleanup runs when rendering throws', async () => {
     /forced renderer failure/,
   )
   assert.equal(cleanups, 1)
+})
+
+test('finalize drain preserves a mint recorded after its snapshot', () => {
+  const first = { stagingKey: 'first', attempts: 0 }
+  const retry = { stagingKey: 'first', attempts: 1 }
+  const addedDuringDrain = { stagingKey: 'second', attempts: 0 }
+
+  assert.deepEqual(mergePendingDrain([first, addedDuringDrain], [first], [retry]), [retry, addedDuringDrain])
+})
+
+test('finalize drain removes only snapshot entries that resolved', () => {
+  const resolved = { stagingKey: 'resolved', attempts: 0 }
+  const waiting = { stagingKey: 'waiting', attempts: 0 }
+  const retried = { stagingKey: 'waiting', attempts: 1 }
+
+  assert.deepEqual(mergePendingDrain([resolved, waiting], [resolved, waiting], [retried]), [retried])
 })

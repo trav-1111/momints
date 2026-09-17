@@ -15,7 +15,7 @@ import { MobileWalletProvider, createSolanaMainnet } from '@wallet-ui/react-nati
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { isWorkerRollEnabled } from '../config/rollApi'
 import { getClusterRpc } from '../store/network'
-import { drainPendingFinalizes } from '../store/quickFinalize'
+import { startPendingFinalizePolling } from '../store/quickFinalize'
 import { colors } from '../theme'
 import { runPrivacyStartupSweep } from '../services/imagePrivacy'
 import { sessionHydrated, useSessionStore } from '../store/session'
@@ -39,7 +39,7 @@ function useQuickFinalizeDrain(): void {
     if (!isWorkerRollEnabled()) return
 
     const drain = () => {
-      drainPendingFinalizes().catch(() => {
+      startPendingFinalizePolling().catch(() => {
         // Offline or Worker down — entries persist for the next foreground.
       })
     }

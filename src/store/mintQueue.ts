@@ -280,7 +280,10 @@ export const useMintQueue = create<MintQueueStore>((set, get) => ({
 
   addToHistory: (item) => {
     set((state) => {
-      const next = [item, ...state.mintHistory].slice(0, 100)
+      const next = [
+        item,
+        ...state.mintHistory.filter((existing) => existing.id !== item.id && existing.mintAddress !== item.mintAddress),
+      ].slice(0, 100)
       persistHistory(next)
       return { mintHistory: next }
     })
