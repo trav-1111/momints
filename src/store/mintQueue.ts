@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import { Paths, File } from 'expo-file-system'
 import type { CaptureMeta } from './photos'
+import type { AspectRatio } from './session'
 
 export interface RollContext {
   rollId: string
@@ -30,6 +31,7 @@ export interface MintQueueItem {
   captureMeta?: CaptureMeta
   /** App-side display metadata for contact sheets; not sent to mint rails. */
   filmUsed?: MintFilmUsed
+  aspect?: AspectRatio
   /** Quick mint only — which currency should pay the fee. Defaults 'SOL'. A Worker quote failure falls back to SOL. */
   paymentCurrency?: 'SOL' | 'SKR'
 }
@@ -45,6 +47,7 @@ export interface MintHistoryItem {
   capturedAt?: number
   rollContext?: RollContext
   filmUsed?: MintFilmUsed
+  aspect?: AspectRatio
 }
 
 interface MintQueueStore {
@@ -104,6 +107,8 @@ function parseHistoryItem(raw: unknown): MintHistoryItem | null {
     capturedAt: typeof h.capturedAt === 'number' ? h.capturedAt : undefined,
     rollContext,
     filmUsed: h.filmUsed === 'B&W' ? 'B&W' : h.filmUsed === 'Color' ? 'Color' : undefined,
+    aspect:
+      h.aspect === '1:1' || h.aspect === '4:3' || h.aspect === '16:9' || h.aspect === 'full' ? h.aspect : undefined,
   }
 }
 

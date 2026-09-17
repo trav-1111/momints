@@ -123,6 +123,7 @@ export default function MintProgressScreen() {
           capturedAt: queueItem?.capturedAt,
           rollContext: queueItem?.rollContext,
           filmUsed: queueItem?.filmUsed ?? 'Color',
+          aspect: queueItem?.aspect,
         })
         // Terminal state — the photo can never re-enter a mint flow
         setAction(photoId, 'minted')

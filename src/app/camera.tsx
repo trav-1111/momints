@@ -279,6 +279,7 @@ export default function CameraScreen() {
       const photoId = addPhoto(
         destFile.uri,
         activeMode === 'roll' && activeRoll !== null ? { id: activeRoll.id, name: activeRoll.name } : undefined,
+        effectiveAspect,
       )
 
       // Post-capture processing: crop to the aspect ratio first, then apply the

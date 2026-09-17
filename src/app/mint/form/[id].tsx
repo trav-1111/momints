@@ -147,6 +147,7 @@ export default function MintFormScreen() {
         capturedAt: photo.capturedAt,
         rollContext: rollContext ?? undefined,
         captureMeta: photo.meta,
+        aspect: photo.aspect,
         paymentCurrency: !rollContext && payWithSkr ? 'SKR' : 'SOL',
       })
 

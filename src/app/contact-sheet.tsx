@@ -13,10 +13,12 @@ import {
 import { useRouter } from 'expo-router'
 import * as MediaLibrary from 'expo-media-library'
 import * as Sharing from 'expo-sharing'
+import { Asset } from 'expo-asset'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { IconBack, IconCheck, IconFilm, IconGallery, IconSave } from '../components/icons'
 import {
   renderContactSheet,
+  type ContactSheetAspect,
   type ContactSheetFilm,
   type ContactSheetFrame,
   type ContactSheetRenderResult,
@@ -25,6 +27,7 @@ import { useMintQueue, type MintFilmUsed, type MintHistoryItem } from '../store/
 import { usePhotoStore } from '../store/photos'
 import { useRollRegistry } from '../store/rollRegistry'
 import { useSessionStore } from '../store/session'
+import type { AspectRatio } from '../store/session'
 import { colors, fonts, tracking } from '../theme'
 
 type SelectionPath = 'roll' | 'quick'
@@ -33,6 +36,7 @@ interface SheetFrame extends ContactSheetFrame {
   order: number
   artist: string
   filmUsed: MintFilmUsed
+  aspect?: AspectRatio
 }
 
 interface RollChoice {
@@ -43,6 +47,7 @@ interface RollChoice {
   mintedAt: number
   artist: string
   filmUsed: ContactSheetFilm
+  aspect?: ContactSheetAspect
 }
 
 interface PreviewState {
@@ -50,10 +55,13 @@ interface PreviewState {
   artist: string
   date: string
   filmUsed: ContactSheetFilm
+  aspect: ContactSheetAspect
 }
 
 const MIN_QUICK_MINTS = 6
 const MAX_FRAMES = 24
+const MOMINTS_LOGO = require('../../assets/adaptive-icon.png')
+let logoUriPromise: Promise<string> | null = null
 
 function uniqueOrMixed(values: string[], mixed: string): string {
   const unique = [...new Set(values.filter(Boolean))]
@@ -72,13 +80,35 @@ function generationDate(): string {
   return new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' })
 }
 
-function asFrame(item: MintHistoryItem, order: number, filmUsed: MintFilmUsed): SheetFrame {
+function dateFromRollName(rollName: string, frames: SheetFrame[]): string {
+  for (const value of [frames[0]?.name, rollName]) {
+    const match = value?.match(/^(\d{4}-\d{2}-\d{2})/)
+    if (match) return match[1]
+  }
+  return generationDate()
+}
+
+function aspectFor(frames: SheetFrame[]): ContactSheetAspect | undefined {
+  if (frames.some((frame) => frame.aspect === undefined)) return undefined
+  const labels = new Set(frames.map((frame) => (frame.aspect === 'full' ? 'Original' : frame.aspect)))
+  return labels.size === 1 ? ([...labels][0] as ContactSheetAspect) : 'Mixed'
+}
+
+async function momintsLogoUri(): Promise<string> {
+  if (!logoUriPromise) {
+    logoUriPromise = Asset.loadAsync(MOMINTS_LOGO).then(([asset]) => asset.localUri ?? asset.uri)
+  }
+  return logoUriPromise
+}
+
+function asFrame(item: MintHistoryItem, order: number, filmUsed: MintFilmUsed, aspect?: AspectRatio): SheetFrame {
   return {
     imageUri: item.photoUri,
     name: item.title,
     order,
     artist: item.artist,
     filmUsed,
+    aspect,
   }
 }
 
@@ -142,6 +172,11 @@ export default function ContactSheetScreen() {
         : registryByName.get(name)
       const activeFilm = activeRoll?.id === rollId ? activeRoll.film.mode : undefined
       const filmUsed = item.filmUsed ?? (registryRoll?.film === 'bw' || activeFilm === 'bw' ? 'B&W' : 'Color')
+      const frameAspect =
+        item.aspect ??
+        photo?.aspect ??
+        registryRoll?.aspect ??
+        (activeRoll?.id === rollId ? activeRoll.aspect : undefined)
       const order = photo?.capturedAt ?? item.rollContext?.frameNumber ?? item.capturedAt ?? item.mintedAt
       const expectedFrames =
         item.rollContext?.totalFrames ?? photos.filter((candidate) => candidate.rollId === rollId).length
@@ -153,8 +188,9 @@ export default function ContactSheetScreen() {
         mintedAt: item.mintedAt,
         artist: item.artist,
         filmUsed,
+        aspect: undefined,
       }
-      existing.frames.push(asFrame(item, order, filmUsed))
+      existing.frames.push(asFrame(item, order, filmUsed, frameAspect))
       existing.expectedFrames = Math.max(existing.expectedFrames, expectedFrames, existing.frames.length)
       existing.mintedAt = Math.max(existing.mintedAt, item.mintedAt)
       groups.set(rollId, existing)
@@ -171,6 +207,7 @@ export default function ContactSheetScreen() {
             'Various Artists',
           ),
           filmUsed: filmFor(frames),
+          aspect: aspectFor(frames),
         }
       })
       .filter((roll) => roll.frames.length === roll.expectedFrames && roll.frames.length <= MAX_FRAMES)
@@ -220,13 +257,19 @@ export default function ContactSheetScreen() {
 
   const handleGenerate = useCallback(async () => {
     let frames: SheetFrame[] = []
+    let title = 'Quick Shot Momints'
     let artist = 'Unknown'
     let filmUsed: ContactSheetFilm = 'Color'
+    let aspect: ContactSheetAspect | undefined
+    let date = generationDate()
 
     if (path === 'roll' && selectedRoll) {
       frames = selectedRoll.frames
+      title = selectedRoll.name
       artist = selectedRoll.artist
       filmUsed = selectedRoll.filmUsed
+      aspect = selectedRoll.aspect
+      date = dateFromRollName(selectedRoll.name, frames)
     } else if (path === 'quick') {
       if (!quickCanGenerate) {
         Alert.alert('Choose 6–24 quick mints', 'Select at least 6 and no more than 24 minted shots.')
@@ -234,27 +277,30 @@ export default function ContactSheetScreen() {
       }
       frames = quickMintsInMintOrder
         .filter((item) => selectedQuickIds.has(item.id))
-        .map((item, index) => asFrame(item, index, item.filmUsed ?? 'Color'))
+        .map((item, index) =>
+          asFrame(item, index, item.filmUsed ?? 'Color', item.aspect ?? photoById.get(item.id)?.aspect),
+        )
       artist = uniqueOrMixed(
         frames.map((frame) => frame.artist),
         'Various Artists',
       )
       filmUsed = filmFor(frames)
+      aspect = aspectFor(frames)
     } else {
       return
     }
 
-    const date = generationDate()
     setIsGenerating(true)
     try {
-      const render = await renderContactSheet(frames, { artist, date, filmUsed })
-      setPreview({ render, artist, date, filmUsed })
+      const logoUri = await momintsLogoUri()
+      const render = await renderContactSheet(frames, { title, artist, date, filmUsed, aspect, logoUri })
+      setPreview({ render, artist, date, filmUsed, aspect: render.aspectUsed })
     } catch (error) {
       Alert.alert('Couldn’t create sheet', error instanceof Error ? error.message : 'The image could not be rendered.')
     } finally {
       setIsGenerating(false)
     }
-  }, [path, quickCanGenerate, quickMintsInMintOrder, selectedQuickIds, selectedRoll])
+  }, [path, photoById, quickCanGenerate, quickMintsInMintOrder, selectedQuickIds, selectedRoll])
 
   const handleShare = useCallback(async () => {
     if (!preview) return
@@ -375,12 +421,12 @@ export default function ContactSheetScreen() {
               </Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textMuted }}>DATE · FILM</Text>
+              <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textMuted }}>DATE · FILM · ASPECT</Text>
               <Text
                 numberOfLines={1}
                 style={{ fontFamily: fonts.sansMedium, fontSize: 13, color: colors.text, marginTop: 3 }}
               >
-                {preview.date} · {preview.filmUsed}
+                {preview.date} · {preview.filmUsed} · {preview.aspect}
               </Text>
             </View>
           </View>
@@ -537,7 +583,8 @@ export default function ContactSheetScreen() {
                       {item.name}
                     </Text>
                     <Text style={{ fontFamily: fonts.mono, fontSize: 9.5, color: colors.textMuted, marginTop: 3 }}>
-                      {item.frames.length} FRAMES · {item.filmUsed.toUpperCase()}
+                      {item.frames.length} FRAMES · {item.filmUsed.toUpperCase()} ·{' '}
+                      {(item.aspect ?? 'FROM IMAGE').toUpperCase()}
                     </Text>
                   </View>
                   {selected && (

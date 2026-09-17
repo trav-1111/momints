@@ -2,6 +2,7 @@ import { ImageFormat, PaintStyle, Skia, matchFont, type SkFont } from '@shopify/
 import { File, Paths } from 'expo-file-system'
 
 export type ContactSheetFilm = 'Color' | 'B&W' | 'Mixed'
+export type ContactSheetAspect = '1:1' | '4:3' | '16:9' | 'Original' | 'Mixed'
 
 export interface ContactSheetFrame {
   imageUri: string
@@ -9,9 +10,12 @@ export interface ContactSheetFrame {
 }
 
 export interface ContactSheetMetadata {
+  title: string
   artist: string
   date: string
   filmUsed: ContactSheetFilm
+  aspect?: ContactSheetAspect
+  logoUri: string
 }
 
 export interface ContactSheetRenderResult {
@@ -20,11 +24,12 @@ export interface ContactSheetRenderResult {
   height: number
   columns: 3 | 4
   frameCount: number
+  aspectUsed: ContactSheetAspect
 }
 
 const OUTPUT_WIDTH = 1600
 const OUTER_MARGIN = 72
-const HEADER_HEIGHT = 198
+const HEADER_HEIGHT = 236
 const COLUMN_GAP = 22
 const ROW_GAP = 30
 const LABEL_HEIGHT = 58
@@ -45,6 +50,32 @@ async function readImageBytes(uri: string): Promise<Uint8Array> {
     return new Uint8Array(await response.arrayBuffer())
   }
   return new File(uri).bytes()
+}
+
+async function imageDimensions(uri: string, name: string): Promise<{ width: number; height: number }> {
+  try {
+    const data = Skia.Data.fromBytes(await readImageBytes(uri))
+    const image = Skia.Image.MakeImageFromEncoded(data)
+    if (!image) throw new Error('Image could not be decoded')
+    const dimensions = { width: image.width(), height: image.height() }
+    image.dispose()
+    return dimensions
+  } catch (error) {
+    throw new Error(`Could not load “${name}”.`, { cause: error instanceof Error ? error : undefined })
+  }
+}
+
+function classifyAspect(width: number, height: number): Exclude<ContactSheetAspect, 'Mixed'> {
+  const ratio = Math.max(width, height) / Math.min(width, height)
+  if (Math.abs(ratio - 1) < 0.025) return '1:1'
+  if (Math.abs(ratio - 4 / 3) < 0.04) return '4:3'
+  if (Math.abs(ratio - 16 / 9) < 0.05) return '16:9'
+  return 'Original'
+}
+
+function detectedAspect(dimensions: { width: number; height: number }[]): ContactSheetAspect {
+  const values = new Set(dimensions.map((item) => classifyAspect(item.width, item.height)))
+  return values.size === 1 ? [...values][0] : 'Mixed'
 }
 
 function containRect(sourceWidth: number, sourceHeight: number, x: number, y: number, width: number, height: number) {
@@ -76,9 +107,21 @@ export async function renderContactSheet(
   const columns = getContactSheetColumns(frames.length)
   const rows = Math.ceil(frames.length / columns)
   const cellWidth = Math.floor((OUTPUT_WIDTH - OUTER_MARGIN * 2 - COLUMN_GAP * (columns - 1)) / columns)
-  const imageHeight = Math.round(cellWidth * 0.82)
-  const rowHeight = imageHeight + LABEL_HEIGHT
-  const outputHeight = OUTER_MARGIN + HEADER_HEIGHT + rows * rowHeight + (rows - 1) * ROW_GAP + OUTER_MARGIN
+  // First pass reads only dimensions. The border for every frame then uses its
+  // stored pixel ratio exactly, rather than forcing a square or landscape crop.
+  const frameDimensions: { width: number; height: number }[] = []
+  for (const frame of frames) frameDimensions.push(await imageDimensions(frame.imageUri, frame.name))
+  const frameHeights = frameDimensions.map(({ width, height }) => Math.round((cellWidth * height) / width))
+  const rowImageHeights = Array.from({ length: rows }, (_, row) =>
+    Math.max(...frameHeights.slice(row * columns, (row + 1) * columns)),
+  )
+  const aspectUsed = metadata.aspect ?? detectedAspect(frameDimensions)
+  const outputHeight =
+    OUTER_MARGIN +
+    HEADER_HEIGHT +
+    rowImageHeights.reduce((total, height) => total + height + LABEL_HEIGHT, 0) +
+    (rows - 1) * ROW_GAP +
+    OUTER_MARGIN
 
   const surface = Skia.Surface.MakeOffscreen(OUTPUT_WIDTH, outputHeight)
   if (!surface) throw new Error('Could not create the contact-sheet canvas.')
@@ -89,7 +132,7 @@ export async function renderContactSheet(
   fillPaint.setColor(Skia.Color(SHEET_BG))
   canvas.drawRect(Skia.XYWHRect(0, 0, OUTPUT_WIDTH, outputHeight), fillPaint)
 
-  const titleFont = matchFont({ fontFamily: 'sans-serif', fontSize: 42, fontWeight: '700' })
+  const titleFont = matchFont({ fontFamily: 'sans-serif', fontSize: 46, fontWeight: '700' })
   const metaFont = matchFont({ fontFamily: 'monospace', fontSize: 24, fontWeight: '500' })
   const labelFont = matchFont({ fontFamily: 'monospace', fontSize: 23, fontWeight: '500' })
   const textPaint = Skia.Paint()
@@ -100,13 +143,39 @@ export async function renderContactSheet(
   mutedPaint.setColor(Skia.Color(MUTED))
 
   const headerTop = OUTER_MARGIN
-  canvas.drawText('CONTACT SHEET', OUTER_MARGIN, headerTop + 42, textPaint, titleFont)
-  const metaY = headerTop + 104
-  const metaColumn = (OUTPUT_WIDTH - OUTER_MARGIN * 2) / 3
+  const logoSize = 94
+  const titleMaxWidth = OUTPUT_WIDTH - OUTER_MARGIN * 2 - logoSize - 38
+  canvas.drawText(
+    ellipsize(metadata.title, titleFont, titleMaxWidth),
+    OUTER_MARGIN,
+    headerTop + 50,
+    textPaint,
+    titleFont,
+  )
+  try {
+    const logoData = Skia.Data.fromBytes(await readImageBytes(metadata.logoUri))
+    const logo = Skia.Image.MakeImageFromEncoded(logoData)
+    if (!logo) throw new Error('Logo could not be decoded')
+    const logoX = OUTPUT_WIDTH - OUTER_MARGIN - logoSize
+    const logoY = headerTop - 18
+    canvas.drawImageRect(
+      logo,
+      Skia.XYWHRect(0, 0, logo.width(), logo.height()),
+      containRect(logo.width(), logo.height(), logoX, logoY, logoSize, logoSize),
+      textPaint,
+    )
+    logo.dispose()
+  } catch (error) {
+    throw new Error('Could not load the Momints logo.', { cause: error instanceof Error ? error : undefined })
+  }
+
+  const metaY = headerTop + 132
+  const metaColumn = (OUTPUT_WIDTH - OUTER_MARGIN * 2) / 4
   const headerValues = [
     ['ARTIST', metadata.artist || 'Unknown'],
     ['DATE', metadata.date],
     ['FILM', metadata.filmUsed],
+    ['ASPECT', aspectUsed],
   ] as const
   headerValues.forEach(([label, value], index) => {
     const x = OUTER_MARGIN + index * metaColumn
@@ -136,12 +205,19 @@ export async function renderContactSheet(
   borderPaint.setStrokeWidth(2)
 
   const gridTop = OUTER_MARGIN + HEADER_HEIGHT
+  const rowOffsets: number[] = []
+  let nextRowY = gridTop
+  rowImageHeights.forEach((height) => {
+    rowOffsets.push(nextRowY)
+    nextRowY += height + LABEL_HEIGHT + ROW_GAP
+  })
   for (let index = 0; index < frames.length; index++) {
     const frame = frames[index]
     const column = index % columns
     const row = Math.floor(index / columns)
     const x = OUTER_MARGIN + column * (cellWidth + COLUMN_GAP)
-    const y = gridTop + row * (rowHeight + ROW_GAP)
+    const imageHeight = frameHeights[index]
+    const y = rowOffsets[row] + rowImageHeights[row] - imageHeight
     const destination = Skia.XYWHRect(x, y, cellWidth, imageHeight)
 
     canvas.drawRect(destination, imageBackgroundPaint)
@@ -160,7 +236,13 @@ export async function renderContactSheet(
       throw new Error(`Could not load “${frame.name}”.`, { cause: error instanceof Error ? error : undefined })
     }
     canvas.drawRect(destination, borderPaint)
-    canvas.drawText(ellipsize(frame.name, labelFont, cellWidth), x, y + imageHeight + 37, textPaint, labelFont)
+    canvas.drawText(
+      ellipsize(frame.name, labelFont, cellWidth),
+      x,
+      rowOffsets[row] + rowImageHeights[row] + 37,
+      textPaint,
+      labelFont,
+    )
   }
 
   surface.flush()
@@ -169,5 +251,12 @@ export async function renderContactSheet(
   const output = new File(Paths.cache, `momints-contact-sheet-${Date.now()}.png`)
   output.write(png)
 
-  return { uri: output.uri, width: OUTPUT_WIDTH, height: outputHeight, columns, frameCount: frames.length }
+  return {
+    uri: output.uri,
+    width: OUTPUT_WIDTH,
+    height: outputHeight,
+    columns,
+    frameCount: frames.length,
+    aspectUsed,
+  }
 }
