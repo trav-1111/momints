@@ -51,7 +51,8 @@
         }
       ],
       "expo-font",
-      "./plugins/withRemoveFineLocationPermission.js"
+      "./plugins/withRemoveFineLocationPermission.js",
+      "expo-asset"
     ],
     "extra": {
       "eas": {

@@ -41,6 +41,7 @@ import { useSessionStore } from '../store/session'
 import type { AspectRatio } from '../store/session'
 import { useLocationSettingsStore } from '../store/locationSettings'
 import type { LocationGranularity } from '../store/locationSettings'
+import { useContactSheetDiscovery } from '../store/contactSheetDiscovery'
 import { colors, fonts, tracking } from '../theme'
 import {
   IconBolt,
@@ -49,6 +50,7 @@ import {
   IconCheck,
   IconFilm,
   IconFlip,
+  IconGallery,
   IconMint,
   IconPin,
 } from '../components/icons'
@@ -108,6 +110,8 @@ export default function CameraScreen() {
   const shutterFlashAnim = useRef(new Animated.Value(0)).current
   const [walletMenuVisible, setWalletMenuVisible] = useState(false)
   const [locationMenuVisible, setLocationMenuVisible] = useState(false)
+  const showContactSheetNudge = useContactSheetDiscovery((state) => state.hydrated && !state.acknowledged)
+  const acknowledgeContactSheet = useContactSheetDiscovery((state) => state.acknowledge)
 
   // Pro mode — Tier 1 (EV bias, metering) is always available here; Tier 2
   // (manual ISO/shutter/focus/WB) mounts underneath, gated by TIER2_ENABLED.
@@ -275,6 +279,7 @@ export default function CameraScreen() {
       const photoId = addPhoto(
         destFile.uri,
         activeMode === 'roll' && activeRoll !== null ? { id: activeRoll.id, name: activeRoll.name } : undefined,
+        effectiveAspect,
       )
 
       // Post-capture processing: crop to the aspect ratio first, then apply the
@@ -426,6 +431,23 @@ export default function CameraScreen() {
       console.error('Failed to connect wallet:', error)
     }
   }, [connect])
+
+  // Opening the dropdown is the acknowledgement: the feature is visible in
+  // the menu at that point, so the ambient dot clears immediately and forever.
+  const handleOpenWalletMenu = useCallback(() => {
+    setWalletMenuVisible(true)
+    acknowledgeContactSheet()
+  }, [acknowledgeContactSheet])
+
+  const handleOpenHistory = useCallback(() => {
+    setWalletMenuVisible(false)
+    router.push('/past-mints')
+  }, [router])
+
+  const handleOpenContactSheet = useCallback(() => {
+    setWalletMenuVisible(false)
+    router.push('/contact-sheet')
+  }, [router])
 
   const handleDisconnect = useCallback(async () => {
     setWalletMenuVisible(false)
@@ -646,7 +668,9 @@ export default function CameraScreen() {
 
         {account && walletAddress ? (
           <Pressable
-            onPress={() => setWalletMenuVisible(true)}
+            onPress={handleOpenWalletMenu}
+            accessibilityRole="button"
+            accessibilityLabel={showContactSheetNudge ? 'Wallet menu, new contact sheet feature' : 'Wallet menu'}
             style={[
               chip,
               {
@@ -663,6 +687,22 @@ export default function CameraScreen() {
             <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.text }}>
               {formatWalletDisplay(walletAddress, domain)}
             </Text>
+            {showContactSheetNudge && (
+              <View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  top: -3,
+                  right: -3,
+                  width: 11,
+                  height: 11,
+                  borderRadius: 6,
+                  backgroundColor: colors.yellow,
+                  borderWidth: 2,
+                  borderColor: colors.bg,
+                }}
+              />
+            )}
           </Pressable>
         ) : (
           <Pressable
@@ -961,6 +1001,60 @@ export default function CameraScreen() {
               {walletAddress ? formatWalletDisplay(walletAddress, domain) : ''}
             </Text>
           </View>
+
+          <Pressable
+            onPress={handleOpenHistory}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              minHeight: 56,
+              paddingHorizontal: 20,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              backgroundColor: pressed ? colors.accentTint : colors.surface,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            })}
+          >
+            <IconGallery size={18} color={colors.textSecondary} />
+            <Text style={{ flex: 1, fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>History</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleOpenContactSheet}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              minHeight: 62,
+              paddingHorizontal: 20,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              backgroundColor: pressed ? colors.accentTint : colors.surface,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            })}
+          >
+            <View
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 9,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: colors.accentTint,
+              }}
+            >
+              <IconFilm size={18} color={colors.accentSoft} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>
+                Create Contact Sheet
+              </Text>
+              <Text style={{ fontFamily: fonts.sans, fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                Export minted frames as an image
+              </Text>
+            </View>
+          </Pressable>
 
           {/* Disconnect */}
           <Pressable

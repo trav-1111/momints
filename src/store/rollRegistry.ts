@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { Paths, File } from 'expo-file-system'
 import type { PrepaidRollSize } from '../config/roll'
+import type { AspectRatio, FilmMode } from './session'
 
 /**
  * Every prepaid roll this device has created, keyed by its on-chain
@@ -19,6 +20,10 @@ export interface RollRecord {
   artist: string
   /** Verified SKR handle or wallet address — immutable provenance. */
   skrIdentity: string
+  /** App-side display metadata for contact sheets; never affects the mint. */
+  film: FilmMode
+  /** Capture crop applied to every frame; absent on legacy records. */
+  aspect?: AspectRatio
   framesMinted: number
   status: 'open' | 'closed'
   createdAt: number
@@ -55,6 +60,9 @@ function parseRecord(raw: unknown): RollRecord | null {
     size: r.size as PrepaidRollSize,
     artist: r.artist,
     skrIdentity: r.skrIdentity,
+    film: r.film === 'bw' ? 'bw' : 'color',
+    aspect:
+      r.aspect === '1:1' || r.aspect === '4:3' || r.aspect === '16:9' || r.aspect === 'full' ? r.aspect : undefined,
     framesMinted: typeof r.framesMinted === 'number' ? r.framesMinted : 0,
     status: r.status === 'closed' ? 'closed' : 'open',
     createdAt: r.createdAt,

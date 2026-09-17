@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import { Paths, File } from 'expo-file-system'
+import type { AspectRatio } from './session'
 // Value import, but not a runtime cycle: mintQueue imports only a *type* from
 // this module, which erases at compile time.
 import { useMintQueue, historyHydrated } from './mintQueue'
@@ -17,6 +18,8 @@ export interface Photo {
   // photo can never re-enter a mint flow. Enforced in setAction/setBulkAction,
   // not just by convention.
   action: 'pending' | 'delete' | 'save' | 'mint' | 'minted'
+  /** Capture crop applied to the stored image; absent on legacy records. */
+  aspect?: AspectRatio
   meta?: CaptureMeta
   // Roll membership, stamped at capture. Deliberately stored on the photo
   // rather than read from session.activeRoll.frameIds: completeRoll() nulls
@@ -34,7 +37,7 @@ export interface PhotoRollRef {
 
 interface PhotoStore {
   photos: Photo[]
-  addPhoto: (uri: string, roll?: PhotoRollRef) => string
+  addPhoto: (uri: string, roll?: PhotoRollRef, aspect?: AspectRatio) => string
   setAction: (id: string, action: Photo['action']) => void
   setBulkAction: (ids: string[], action: Photo['action']) => void
   setPhotoMeta: (id: string, meta: CaptureMeta) => void
@@ -80,6 +83,8 @@ function parsePhoto(raw: unknown): Photo | null {
     uri: p.uri,
     capturedAt: p.capturedAt,
     action: p.action,
+    aspect:
+      p.aspect === '1:1' || p.aspect === '4:3' || p.aspect === '16:9' || p.aspect === 'full' ? p.aspect : undefined,
     meta,
     rollId: typeof p.rollId === 'string' ? p.rollId : undefined,
     rollName: typeof p.rollName === 'string' ? p.rollName : undefined,
@@ -111,12 +116,13 @@ function persistPhotos(photos: Photo[]): void {
 export const usePhotoStore = create<PhotoStore>((set, get) => ({
   photos: [],
 
-  addPhoto: (uri: string, roll?: PhotoRollRef): string => {
+  addPhoto: (uri: string, roll?: PhotoRollRef, aspect?: AspectRatio): string => {
     const newPhoto: Photo = {
       id: uuidv4(),
       uri,
       capturedAt: Date.now(),
       action: 'pending',
+      aspect,
       rollId: roll?.id,
       rollName: roll?.name,
     }
@@ -134,7 +140,7 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
   setAction: (id: string, action: Photo['action']) => {
     set((state) => {
       const photos = state.photos.map((photo) =>
-        photo.id === id && photo.action !== 'minted' ? { ...photo, action } : photo
+        photo.id === id && photo.action !== 'minted' ? { ...photo, action } : photo,
       )
       persistPhotos(photos)
       return { photos }
@@ -144,7 +150,7 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
   setBulkAction: (ids: string[], action: Photo['action']) => {
     set((state) => {
       const photos = state.photos.map((photo) =>
-        ids.includes(photo.id) && photo.action !== 'minted' ? { ...photo, action } : photo
+        ids.includes(photo.id) && photo.action !== 'minted' ? { ...photo, action } : photo,
       )
       persistPhotos(photos)
       return { photos }
@@ -153,9 +159,7 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
 
   setPhotoMeta: (id: string, meta: CaptureMeta) => {
     set((state) => {
-      const photos = state.photos.map((photo) =>
-        photo.id === id ? { ...photo, meta } : photo
-      )
+      const photos = state.photos.map((photo) => (photo.id === id ? { ...photo, meta } : photo))
       persistPhotos(photos)
       return { photos }
     })
@@ -163,9 +167,7 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
 
   updatePhotoUri: (id: string, newUri: string) => {
     set((state) => {
-      const photos = state.photos.map((photo) =>
-        photo.id === id ? { ...photo, uri: newUri } : photo
-      )
+      const photos = state.photos.map((photo) => (photo.id === id ? { ...photo, uri: newUri } : photo))
       persistPhotos(photos)
       return { photos }
     })
