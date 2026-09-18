@@ -23,12 +23,15 @@ export interface Photo {
   // un-hid all of them the moment a roll finished minting.
   rollId?: string
   rollName?: string
+  /** Stable 1-based position within a prepaid roll, retained across retries. */
+  rollFrameNumber?: number
 }
 
 /** Roll a frame belongs to, passed at capture so membership is stamped atomically. */
 export interface PhotoRollRef {
   id: string
   name: string
+  frameNumber: number
 }
 
 interface PhotoStore {
@@ -43,6 +46,7 @@ interface PhotoStore {
   getPhotosForMint: () => Photo[]
   getPhotosByAction: (action: Photo['action']) => Photo[]
   clearSession: () => void
+  restoreRollPhotos: (photos: Photo[]) => void
   clearMintedPhotos: () => void
 }
 
@@ -58,6 +62,7 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
       aspect,
       rollId: roll?.id,
       rollName: roll?.name,
+      rollFrameNumber: roll?.frameNumber,
     }
     set((state) => {
       const photos = [...state.photos, newPhoto]
@@ -125,6 +130,12 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
 
   clearSession: () => {
     set({ photos: [] })
+  },
+
+  restoreRollPhotos: (photos) => {
+    set((state) => ({
+      photos: [...state.photos.filter((photo) => !photo.rollId), ...photos],
+    }))
   },
 
   clearMintedPhotos: () => {

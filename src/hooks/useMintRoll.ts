@@ -7,6 +7,7 @@ import { useSessionStore } from '../store/session'
 import { useMintQueue } from '../store/mintQueue'
 import { useRollRegistry } from '../store/rollRegistry'
 import { useWalletDomain } from './useWalletDomain'
+import { acknowledgeVerifiedRollCompletion, verifyAndDiscardCompletedRollVault } from '../services/rollVault'
 
 /**
  * Mint the active (developed) roll: auto-queue every remaining frame with
@@ -22,7 +23,7 @@ export function useMintRoll() {
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
 
-  const mintRoll = useCallback((): boolean => {
+  const mintRoll = useCallback(async (): Promise<boolean> => {
     const { activeRoll } = useSessionStore.getState()
     if (!activeRoll || activeRoll.frameIds.length === 0) {
       Alert.alert('Empty Roll', 'Shoot at least one frame before minting.')
@@ -58,11 +59,18 @@ export function useMintRoll() {
 
     if (framesToMint.length === 0) {
       const { completeRoll } = useSessionStore.getState()
-      if (activeRoll.collectionAddress) {
-        useRollRegistry.getState().closeRoll(activeRoll.collectionAddress)
+      try {
+        await verifyAndDiscardCompletedRollVault(activeRoll, walletAddress)
+        if (activeRoll.collectionAddress) {
+          useRollRegistry.getState().closeRoll(activeRoll.collectionAddress)
+        }
+        completeRoll()
+        acknowledgeVerifiedRollCompletion()
+        Alert.alert('Roll Verified', 'Every frame is permanent and the encrypted recovery copy has been removed.')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Independent verification is not complete yet.'
+        Alert.alert('Roll Safely Retained', `${message} The encrypted roll will remain on this device.`)
       }
-      completeRoll()
-      Alert.alert('Roll Minted', 'Every frame on this roll is already minted — the roll is complete.')
       return false
     }
 
@@ -78,9 +86,9 @@ export function useMintRoll() {
       : undefined
     const artist = registryRecord?.artist ?? domain ?? `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`
 
-    frames.forEach((photo, i) => {
+    frames.forEach((photo) => {
       if (isMinted(photo)) return
-      const frameNumber = (registryRecord?.framesMinted ?? 0) + i + 1
+      const frameNumber = photo.rollFrameNumber ?? activeRoll.frameIds.indexOf(photo.id) + 1
       addToQueue({
         photoId: photo.id,
         photoUri: photo.uri,

@@ -29,6 +29,7 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { usePhotoStore } from '../store/photos'
 import { captureMetadata } from '../services/captureMetadata'
 import { adoptTemporaryCapture, deleteCapture } from '../services/imagePrivacy'
+import { persistRollFrame, updateStoredRollFrameMeta } from '../services/rollVault'
 import { applyFilm } from '../services/filmProcessor'
 import { cropToAspect } from '../services/cropImage'
 import { ensureUnderCeiling } from '../services/compressImage'
@@ -132,6 +133,7 @@ export default function CameraScreen() {
   const setAction = usePhotoStore((state) => state.setAction)
   const setPhotoMeta = usePhotoStore((state) => state.setPhotoMeta)
   const updatePhotoUri = usePhotoStore((state) => state.updatePhotoUri)
+  const removePhoto = usePhotoStore((state) => state.removePhoto)
 
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
@@ -248,6 +250,7 @@ export default function CameraScreen() {
       await new Promise((resolve) => setTimeout(resolve, 300))
     }
     let captureUri: string | null = null
+    let createdPhotoId: string | null = null
     try {
       const photo: PhotoFile = await cameraRef.current.takePhoto({
         flash: usingTorchForFlash ? 'off' : supportsFlash ? flash : 'off',
@@ -270,9 +273,12 @@ export default function CameraScreen() {
       // as a roll (and out of the quick-photo flows) forever after.
       const photoId = addPhoto(
         captureUri,
-        activeMode === 'roll' && activeRoll !== null ? { id: activeRoll.id, name: activeRoll.name } : undefined,
+        activeMode === 'roll' && activeRoll !== null
+          ? { id: activeRoll.id, name: activeRoll.name, frameNumber: activeRoll.frameIds.length + 1 }
+          : undefined,
         effectiveAspect,
       )
+      createdPhotoId = photoId
 
       // Post-capture processing: crop to the aspect ratio first, then apply the
       // roll's film emulation (B&W), then fit quick shots under the upload
@@ -300,16 +306,17 @@ export default function CameraScreen() {
 
       // Best-effort location — fire-and-forget, never blocks capture. 'off'
       // short-circuits inside captureMetadata before touching GPS at all.
-      captureMetadata(locationGranularity)
-        .then((meta) => {
-          if (meta.location) setPhotoMeta(photoId, meta)
-        })
-        .catch(() => {})
-
       // In roll mode: register frame and auto-mark for minting
       if (activeMode === 'roll' && activeRoll !== null) {
-        addFrameToRoll(photoId)
         setAction(photoId, 'mint')
+        const storedPhoto = usePhotoStore.getState().photos.find((candidate) => candidate.id === photoId)
+        if (!storedPhoto) throw new Error('The captured roll frame could not be registered.')
+
+        // Commit the encrypted durable copy before advancing the roll counter.
+        // A crash between these operations remains recoverable from the vault
+        // manifest; the opposite order could lose a prepaid exposure.
+        await persistRollFrame(storedPhoto, activeRoll.frameIds.length + 1)
+        addFrameToRoll(photoId)
 
         // That capture finished the roll. A roll is always shot to the end, so
         // it develops itself here — there is no manual develop action — and
@@ -322,8 +329,19 @@ export default function CameraScreen() {
           ])
         }
       }
+
+      captureMetadata(locationGranularity)
+        .then(async (meta) => {
+          if (!meta.location) return
+          setPhotoMeta(photoId, meta)
+          if (activeMode === 'roll' && activeRoll !== null) {
+            await updateStoredRollFrameMeta(activeRoll.id, photoId, meta)
+          }
+        })
+        .catch(() => {})
     } catch (error) {
       deleteCapture(captureUri)
+      if (createdPhotoId) removePhoto(createdPhotoId)
       console.error('Failed to capture photo:', error)
       Alert.alert('Error', 'Failed to capture photo. Please try again.')
     } finally {
@@ -342,6 +360,7 @@ export default function CameraScreen() {
     setAction,
     setPhotoMeta,
     updatePhotoUri,
+    removePhoto,
     effectiveAspect,
     shutterFlashAnim,
     rollIsFull,
@@ -857,7 +876,13 @@ export default function CameraScreen() {
           made from it for this camera's real (coupled) exposure model. */}
       {proOpen && TIER2_ENABLED && (
         <View style={{ position: 'absolute', left: 0, right: 0, bottom: 150 }}>
-          <ManualControls controls={manualCamera} ev={ev} setEv={setEv} minExposure={minExposure} maxExposure={maxExposure} />
+          <ManualControls
+            controls={manualCamera}
+            ev={ev}
+            setEv={setEv}
+            minExposure={minExposure}
+            maxExposure={maxExposure}
+          />
         </View>
       )}
 
