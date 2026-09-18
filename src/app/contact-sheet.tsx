@@ -23,20 +23,21 @@ import {
   type ContactSheetFrame,
   type ContactSheetRenderResult,
 } from '../services/contactSheet'
-import { useMintQueue, type MintFilmUsed, type MintHistoryItem } from '../store/mintQueue'
+import { useMintQueue, type MintHistoryItem } from '../store/mintQueue'
 import { usePhotoStore } from '../store/photos'
 import { useRollRegistry } from '../store/rollRegistry'
 import { useSessionStore } from '../store/session'
 import type { AspectRatio } from '../store/session'
 import { colors, fonts, tracking } from '../theme'
 import { deleteAppOwnedImage } from '../services/imagePrivacy'
+import { useFilmStockStore } from '../store/filmstocks'
 
 type SelectionPath = 'roll' | 'quick'
 
 interface SheetFrame extends ContactSheetFrame {
   order: number
   artist: string
-  filmUsed: MintFilmUsed
+  filmUsed: string
   aspect?: AspectRatio
 }
 
@@ -74,7 +75,7 @@ function filmFor(frames: SheetFrame[]): ContactSheetFilm {
   return uniqueOrMixed(
     frames.map((frame) => frame.filmUsed),
     'Mixed',
-  ) as ContactSheetFilm
+  )
 }
 
 function generationDate(): string {
@@ -102,7 +103,7 @@ async function momintsLogoUri(): Promise<string> {
   return logoUriPromise
 }
 
-function asFrame(item: MintHistoryItem, order: number, filmUsed: MintFilmUsed, aspect?: AspectRatio): SheetFrame {
+function asFrame(item: MintHistoryItem, order: number, filmUsed: string, aspect?: AspectRatio): SheetFrame {
   return {
     imageUri: item.imageUri,
     name: item.title,
@@ -143,6 +144,7 @@ export default function ContactSheetScreen() {
   const photos = usePhotoStore((state) => state.photos)
   const registry = useRollRegistry((state) => state.rolls)
   const activeRoll = useSessionStore((state) => state.activeRoll)
+  const filmCatalogue = useFilmStockStore((state) => state.catalogue)
 
   const [path, setPath] = useState<SelectionPath | null>(null)
   const [selectedRollId, setSelectedRollId] = useState<string | null>(null)
@@ -163,6 +165,10 @@ export default function ContactSheetScreen() {
     [registry],
   )
   const registryByName = useMemo(() => new Map(registry.map((roll) => [roll.name, roll])), [registry])
+  const filmNameById = useMemo(
+    () => new Map(filmCatalogue.map((stock) => [stock.filmStockId, stock.displayName])),
+    [filmCatalogue],
+  )
 
   const rollChoices = useMemo(() => {
     const groups = new Map<string, RollChoice>()
@@ -177,8 +183,12 @@ export default function ContactSheetScreen() {
       const registryRoll = item.rollContext?.collectionAddress
         ? registryByCollection.get(item.rollContext.collectionAddress)
         : registryByName.get(name)
-      const activeFilm = activeRoll?.id === rollId ? activeRoll.film.mode : undefined
-      const filmUsed = item.filmUsed ?? (registryRoll?.film === 'bw' || activeFilm === 'bw' ? 'B&W' : 'Color')
+      const activeFilm = activeRoll?.id === rollId ? activeRoll.film : undefined
+      const filmStockId = registryRoll?.filmStockId ?? activeFilm?.filmStockId
+      const filmUsed =
+        (filmStockId ? filmNameById.get(filmStockId) : undefined) ??
+        item.filmUsed ??
+        (registryRoll?.film === 'bw' || activeFilm?.mode === 'bw' ? 'B&W' : 'Color')
       const frameAspect =
         item.aspect ??
         photo?.aspect ??
@@ -220,7 +230,7 @@ export default function ContactSheetScreen() {
       })
       .filter((roll) => roll.frames.length === roll.expectedFrames && roll.frames.length <= MAX_FRAMES)
       .sort((a, b) => b.mintedAt - a.mintedAt)
-  }, [activeRoll, mintHistory, photoById, photos, registryByCollection, registryByName])
+  }, [activeRoll, filmNameById, mintHistory, photoById, photos, registryByCollection, registryByName])
 
   const quickMintsInMintOrder = useMemo(
     () =>

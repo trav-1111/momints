@@ -12,10 +12,11 @@ export type RollSize = 12 | 24 | 36
 export type FilmMode = 'color' | 'bw'
 export interface FilmSettings {
   mode: FilmMode
-  // future: iso?: number; stock?: string
+  /** Immutable, versioned recipe identity pinned for the life of a roll. */
+  filmStockId: string
 }
 
-export const DEFAULT_FILM: FilmSettings = { mode: 'color' }
+export const DEFAULT_FILM: FilmSettings = { mode: 'color', filmStockId: 'momints-color-v1' }
 
 // Capture aspect ratio. 'full' keeps the sensor's native frame (no crop);
 // the others center-crop the photo. In roll mode this is fixed at creation.
@@ -98,7 +99,12 @@ function parseActiveRoll(raw: unknown): ActiveRoll | null {
 function parseFilmSettings(raw: unknown): FilmSettings {
   if (raw === null || typeof raw !== 'object') return { ...DEFAULT_FILM }
   const f = raw as Record<string, unknown>
-  return { mode: f.mode === 'bw' ? 'bw' : 'color' }
+  const mode: FilmMode = f.mode === 'bw' ? 'bw' : 'color'
+  return {
+    mode,
+    filmStockId:
+      typeof f.filmStockId === 'string' ? f.filmStockId : mode === 'bw' ? 'momints-bw-v1' : 'momints-color-v1',
+  }
 }
 
 // Defaults to full-frame for rolls persisted before aspect ratios existed.

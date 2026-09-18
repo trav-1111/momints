@@ -44,6 +44,8 @@ import { useLocationSettingsStore } from '../store/locationSettings'
 import type { LocationGranularity } from '../store/locationSettings'
 import { useContactSheetDiscovery } from '../store/contactSheetDiscovery'
 import { colors, fonts, tracking } from '../theme'
+import { DEFAULT_COLOR_FILM_ID, ensureFilmStockRecipe, isFilmStockDownloaded } from '../services/filmstocks'
+import { useFilmStockStore } from '../store/filmstocks'
 import {
   IconBolt,
   IconBoltOff,
@@ -158,6 +160,22 @@ export default function CameraScreen() {
 
   // The roll the camera shoots into — only relevant while in roll mode.
   const activeRoll = activeMode === 'roll' ? rollInProgress : null
+  const quickFilmStockId = useFilmStockStore((state) => state.quickFilmStockId)
+  const filmCatalogue = useFilmStockStore((state) => state.catalogue)
+  const quickFilmStock = filmCatalogue.find((stock) => stock.filmStockId === quickFilmStockId)
+  const effectiveFilm = useMemo(
+    () =>
+      activeMode === 'roll' && activeRoll
+        ? activeRoll.film
+        : {
+            mode: quickFilmStock?.baseMode ?? ('color' as const),
+            filmStockId: quickFilmStock?.filmStockId ?? DEFAULT_COLOR_FILM_ID,
+          },
+    [activeMode, activeRoll, quickFilmStock],
+  )
+  const effectiveFilmName =
+    filmCatalogue.find((stock) => stock.filmStockId === effectiveFilm.filmStockId)?.displayName ??
+    (effectiveFilm.mode === 'bw' ? 'B&W' : 'Color')
 
   // Quick mode picks aspect live on the camera; roll mode uses the roll's fixed aspect.
   const [quickAspect, setQuickAspect] = useState<AspectRatio>('full')
@@ -222,6 +240,20 @@ export default function CameraScreen() {
   const handleCapture = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return
 
+    if (!isFilmStockDownloaded(effectiveFilm.filmStockId)) {
+      const stock = filmCatalogue.find((item) => item.filmStockId === effectiveFilm.filmStockId)
+      if (!stock) {
+        Alert.alert('Film recipe missing', 'Reconnect and refresh the Film Shelf before shooting this film.')
+        return
+      }
+      try {
+        await ensureFilmStockRecipe(stock)
+      } catch {
+        Alert.alert('Connect to download', `${stock.displayName} must be downloaded before this shot can be processed.`)
+        return
+      }
+    }
+
     // A fully shot roll is closed to further frames — the only way on is to
     // mint it (or discard it from the gallery).
     if (activeRoll?.developed || rollIsFull) {
@@ -277,6 +309,7 @@ export default function CameraScreen() {
           ? { id: activeRoll.id, name: activeRoll.name, frameNumber: activeRoll.frameIds.length + 1 }
           : undefined,
         effectiveAspect,
+        effectiveFilm.filmStockId,
       )
       createdPhotoId = photoId
 
@@ -288,9 +321,7 @@ export default function CameraScreen() {
       if (effectiveAspect !== 'full') {
         processedUri = await cropToAspect(processedUri, effectiveAspect)
       }
-      if (activeMode === 'roll' && activeRoll !== null && activeRoll.film.mode !== 'color') {
-        processedUri = await applyFilm(processedUri, activeRoll.film)
-      }
+      processedUri = await applyFilm(processedUri, effectiveFilm)
       // Quick shots only. Roll frames have no server-side size ceiling, so they
       // keep full capture quality. This is the same predicate addPhoto uses to
       // stamp rollId above, which is exactly what the gallery filters on to
@@ -367,6 +398,8 @@ export default function CameraScreen() {
     developRoll,
     mintRoll,
     locationGranularity,
+    effectiveFilm,
+    filmCatalogue,
   ])
 
   const toggleFlash = useCallback(() => {
@@ -773,15 +806,20 @@ export default function CameraScreen() {
         {activeMode === 'roll' && activeRoll !== null && (
           <>
             <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-            {activeRoll.film.mode === 'bw' && (
-              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>B&W</Text>
-            )}
+            <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
+              {effectiveFilmName.toUpperCase()}
+            </Text>
             {activeRoll.aspect !== 'full' && (
               <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>{activeRoll.aspect}</Text>
             )}
-            {activeRoll.film.mode !== 'bw' && activeRoll.aspect === 'full' && (
-              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>COLOR</Text>
-            )}
+          </>
+        )}
+        {activeMode === 'quick' && (
+          <>
+            <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+            <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
+              {effectiveFilmName.toUpperCase()}
+            </Text>
           </>
         )}
       </Pressable>

@@ -11,7 +11,7 @@ import {
   SpaceGrotesk_700Bold,
 } from '@expo-google-fonts/space-grotesk'
 import { SpaceMono_400Regular, SpaceMono_700Bold } from '@expo-google-fonts/space-mono'
-import { MobileWalletProvider, createSolanaMainnet } from '@wallet-ui/react-native-kit'
+import { MobileWalletProvider, createSolanaMainnet, useMobileWallet } from '@wallet-ui/react-native-kit'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { isWorkerRollEnabled } from '../config/rollApi'
 import { getClusterRpc } from '../store/network'
@@ -22,6 +22,7 @@ import { sessionHydrated, useSessionStore } from '../store/session'
 import { usePhotoStore } from '../store/photos'
 import { consumeVerifiedRollReceipt, restoreRollVault } from '../services/rollVault'
 import { useRollRegistry } from '../store/rollRegistry'
+import { filmStockHydrated, useFilmStockStore } from '../store/filmstocks'
 
 const identity = {
   name: 'Momints',
@@ -58,7 +59,7 @@ function usePrivacyStartupCleanup(): boolean {
   const [ready, setReady] = useState(false)
   useEffect(() => {
     void (async () => {
-      await sessionHydrated
+      await Promise.all([sessionHydrated, filmStockHydrated])
       await runPrivacyStartupSweep()
       usePhotoStore.getState().clearSession()
       const roll = useSessionStore.getState().activeRoll
@@ -90,6 +91,20 @@ function usePrivacyStartupCleanup(): boolean {
 
 const solanaCluster = createSolanaMainnet({ url: getClusterRpc() })
 
+function FilmStockWalletSync() {
+  const { account } = useMobileWallet()
+  const wallet = account?.address?.toString() ?? null
+  useEffect(() => {
+    const refresh = () => void useFilmStockStore.getState().refresh(wallet)
+    refresh()
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh()
+    })
+    return () => subscription.remove()
+  }, [wallet])
+  return null
+}
+
 export default function Layout() {
   const storageReady = usePrivacyStartupCleanup()
   useQuickFinalizeDrain()
@@ -111,6 +126,7 @@ export default function Layout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <MobileWalletProvider cluster={solanaCluster} identity={identity}>
+        <FilmStockWalletSync />
         <Slot />
       </MobileWalletProvider>
     </GestureHandlerRootView>

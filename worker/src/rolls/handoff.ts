@@ -3,6 +3,7 @@ import type { Umi } from '@metaplex-foundation/umi'
 import type { RollDb, RollRow } from '../db'
 import { withBackoff } from '../lib/retry'
 import { sendAndConfirm } from '../solana/confirm'
+import { markRollDeveloped } from '../filmstocks/developed'
 
 export interface RollHandoffDeps {
   db: RollDb
@@ -35,6 +36,15 @@ export async function revokeRollDelegate(deps: RollHandoffDeps, roll: RollRow): 
 
   const { db, rpcUrl, getUmi } = deps
   const umi = await getUmi()
+
+  // COMPLETE also covers a user-abandoned partial roll. Only a roll whose
+  // full prepaid frame count landed is development evidence and receives the
+  // verified Momints marker used by the stateless unlock scan. This must run
+  // before delegate revocation; if it fails, the sweep retries with authority
+  // still intact instead of destroying the only route to the proof.
+  if (roll.minted_count >= roll.size) {
+    await markRollDeveloped(umi, rpcUrl, roll.collection_address)
+  }
   const { safeFetchCollectionV1, revokeCollectionPluginAuthority } = await import('@metaplex-foundation/mpl-core')
 
   const collection = await withBackoff('fetchCollection', () =>
@@ -58,7 +68,9 @@ export async function revokeRollDelegate(deps: RollHandoffDeps, roll: RollRow): 
   // (address stays optional regardless of type), hence the explicit check.
   const delegate = collection.updateDelegate?.authority
   const stillDelegated =
-    delegate?.type === 'Address' && delegate.address !== undefined && delegate.address.toString() === umi.identity.publicKey.toString()
+    delegate?.type === 'Address' &&
+    delegate.address !== undefined &&
+    delegate.address.toString() === umi.identity.publicKey.toString()
   if (!stillDelegated) {
     await db.markRollHandoff(roll.collection_address, 'already-revoked')
     return
@@ -89,9 +101,6 @@ export async function revokeRollDelegateSafely(deps: RollHandoffDeps, collection
     if (!roll) return
     await revokeRollDelegate(deps, roll)
   } catch (err) {
-    console.error(
-      `[handoff] revoke failed for ${collectionAddress}:`,
-      err instanceof Error ? err.message : String(err),
-    )
+    console.error(`[handoff] revoke failed for ${collectionAddress}:`, err instanceof Error ? err.message : String(err))
   }
 }

@@ -19,6 +19,7 @@ import { useSessionStore } from '../../../store/session'
 import { useWalletDomain, formatWalletDisplay } from '../../../hooks/useWalletDomain'
 import { resolveLocation } from '../../../services/captureMetadata'
 import { colors, fonts, tracking } from '../../../theme'
+import { useFilmStockStore } from '../../../store/filmstocks'
 import { IconBack, IconFilm, IconMint, IconPhone, IconPin } from '../../../components/icons'
 
 function FieldLabel({ children }: { children: string }) {
@@ -139,6 +140,9 @@ export default function MintFormScreen() {
 
     setIsSubmitting(true)
     try {
+      const filmUsed = photo.filmStockId
+        ? useFilmStockStore.getState().catalogue.find((stock) => stock.filmStockId === photo.filmStockId)?.displayName
+        : undefined
       addToQueue({
         photoId: photo.id,
         photoUri: photo.uri,
@@ -148,6 +152,7 @@ export default function MintFormScreen() {
         rollContext: rollContext ?? undefined,
         captureMeta: photo.meta,
         aspect: photo.aspect,
+        filmUsed,
         paymentCurrency: !rollContext && payWithSkr ? 'SKR' : 'SOL',
       })
 

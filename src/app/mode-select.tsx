@@ -3,7 +3,7 @@ import { View, Text, Pressable, TextInput, ScrollView, ActivityIndicator, Alert 
 import { useRouter } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useSessionStore } from '../store/session'
-import type { AppMode, FilmMode, AspectRatio } from '../store/session'
+import type { AppMode, AspectRatio } from '../store/session'
 import { useWalletDomain } from '../hooks/useWalletDomain'
 import { useCreateRoll, SKR_UNAVAILABLE_MESSAGE, type CreateRollPhase } from '../hooks/useCreateRoll'
 import { useMintRoll } from '../hooks/useMintRoll'
@@ -15,6 +15,9 @@ import { isSkrQuoteUnavailable, quoteSkrFee } from '../services/skrApi'
 import { ARTIST_NAME_MAX_LENGTH } from '../services/rollIdentity'
 import { colors, fonts, tracking } from '../theme'
 import { IconCamera, IconFilm } from '../components/icons'
+import { FilmStockPicker } from '../components/FilmStockPicker'
+import { DEFAULT_COLOR_FILM_ID, ensureFilmStockRecipe, type FilmStockCatalogueItem } from '../services/filmstocks'
+import { quickEligible, useFilmStockStore } from '../store/filmstocks'
 
 const CREATE_PHASE_LABEL: Record<CreateRollPhase, string> = {
   cover: 'Rendering cover…',
@@ -23,10 +26,6 @@ const CREATE_PHASE_LABEL: Record<CreateRollPhase, string> = {
   confirming: 'Confirming on-chain…',
   creating: 'Creating roll…',
 }
-const FILM_MODES: { value: FilmMode; label: string }[] = [
-  { value: 'color', label: 'Color' },
-  { value: 'bw', label: 'B&W' },
-]
 const ASPECTS: { value: AspectRatio; label: string }[] = [
   { value: 'full', label: 'Full' },
   { value: '1:1', label: '1:1' },
@@ -99,8 +98,19 @@ export default function ModeSelectScreen() {
   const [selectedMode, setSelectedMode] = useState<AppMode>('quick')
   const [artist, setArtist] = useState('')
   const [rollSize, setRollSize] = useState<PrepaidRollSize>(12)
-  const [filmMode, setFilmMode] = useState<FilmMode>('color')
+  const [rollFilmStockId, setRollFilmStockId] = useState(DEFAULT_COLOR_FILM_ID)
   const [aspect, setAspect] = useState<AspectRatio>('full')
+  const filmState = useFilmStockStore()
+
+  const selectFilm = useCallback(async (stock: FilmStockCatalogueItem, purpose: 'roll' | 'quick') => {
+    try {
+      await ensureFilmStockRecipe(stock)
+      if (purpose === 'roll') setRollFilmStockId(stock.filmStockId)
+      else useFilmStockStore.getState().selectQuickFilm(stock.filmStockId)
+    } catch (err) {
+      Alert.alert('Film unavailable', err instanceof Error ? err.message : String(err))
+    }
+  }, [])
 
   // Prefill artist from the resolved SKR handle as soon as it lands — the
   // field stays editable (vanity name); provenance uses the handle itself.
@@ -228,6 +238,18 @@ export default function ModeSelectScreen() {
 
   const handleLoadCamera = useCallback(async () => {
     if (selectedMode === 'quick') {
+      const currentFilmState = useFilmStockStore.getState()
+      const stock = currentFilmState.catalogue.find((item) => item.filmStockId === currentFilmState.quickFilmStockId)
+      if (!stock || !quickEligible(stock, currentFilmState)) {
+        Alert.alert('Choose a film', 'Choose a House film or an unlocked film from your cabinet.')
+        return
+      }
+      try {
+        await ensureFilmStockRecipe(stock)
+      } catch (err) {
+        Alert.alert('Film unavailable', err instanceof Error ? err.message : String(err))
+        return
+      }
       selectQuickMode()
       router.replace('/camera')
       return
@@ -242,11 +264,16 @@ export default function ModeSelectScreen() {
       return
     }
 
+    const stock = useFilmStockStore.getState().catalogue.find((item) => item.filmStockId === rollFilmStockId)
+    if (!stock) {
+      Alert.alert('Choose a film', 'Refresh the Film Shelf and choose a stock before loading this roll.')
+      return
+    }
     const created = await createRoll({
       size: rollSize,
       artist,
       skrHandle: domain,
-      film: { mode: filmMode },
+      film: { mode: stock.baseMode, filmStockId: stock.filmStockId },
       aspect,
       payment: payWithSkr && skrQuoteAmount !== null ? 'SKR' : 'SOL',
     })
@@ -260,7 +287,7 @@ export default function ModeSelectScreen() {
     rollSize,
     artist,
     domain,
-    filmMode,
+    rollFilmStockId,
     aspect,
     payWithSkr,
     skrQuoteAmount,
@@ -499,6 +526,17 @@ export default function ModeSelectScreen() {
       </View>
 
       {/* Roll options — revealed when New Roll is selected */}
+      {selectedMode === 'quick' && (
+        <View style={{ marginTop: 20 }}>
+          <FieldLabel>QUICK SHOOT FILM</FieldLabel>
+          <FilmStockPicker
+            purpose="quick"
+            selectedId={filmState.quickFilmStockId}
+            onSelect={(stock) => void selectFilm(stock, 'quick')}
+          />
+        </View>
+      )}
+
       {selectedMode === 'roll' && !hasRoll && (
         <View>
           <FieldLabel>EXPOSURES</FieldLabel>
@@ -537,11 +575,11 @@ export default function ModeSelectScreen() {
           />
 
           <FieldLabel>FILM</FieldLabel>
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-            {FILM_MODES.map(({ value, label }) => (
-              <Pill key={value} label={label} selected={filmMode === value} onPress={() => setFilmMode(value)} />
-            ))}
-          </View>
+          <FilmStockPicker
+            purpose="roll"
+            selectedId={rollFilmStockId}
+            onSelect={(stock) => void selectFilm(stock, 'roll')}
+          />
 
           <FieldLabel>ASPECT RATIO</FieldLabel>
           <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>

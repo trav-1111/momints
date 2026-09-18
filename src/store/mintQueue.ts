@@ -15,7 +15,8 @@ export interface RollContext {
   collectionAddress?: string
 }
 
-export type MintFilmUsed = 'Color' | 'B&W'
+/** Display name of the exact immutable film recipe applied to the capture. */
+export type MintFilmUsed = string
 
 export interface MintQueueItem {
   id: string
@@ -176,7 +177,7 @@ async function parseHistoryItem(raw: unknown): Promise<MintHistoryItem | null> {
     mintedAt,
     capturedAt: typeof h.capturedAt === 'number' ? h.capturedAt : undefined,
     rollContext,
-    filmUsed: h.filmUsed === 'B&W' ? 'B&W' : h.filmUsed === 'Color' ? 'Color' : undefined,
+    filmUsed: typeof h.filmUsed === 'string' && h.filmUsed.trim() ? h.filmUsed : undefined,
     aspect:
       h.aspect === '1:1' || h.aspect === '4:3' || h.aspect === '16:9' || h.aspect === 'full' ? h.aspect : undefined,
   }

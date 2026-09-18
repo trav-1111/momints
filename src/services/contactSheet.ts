@@ -7,7 +7,7 @@ import {
 } from './imagePrivacy'
 import { runWithCleanup } from './privacyPathGuard.cjs'
 
-export type ContactSheetFilm = 'Color' | 'B&W' | 'Mixed'
+export type ContactSheetFilm = string
 export type ContactSheetAspect = '1:1' | '4:3' | '16:9' | 'Original' | 'Mixed'
 
 export interface ContactSheetFrame {

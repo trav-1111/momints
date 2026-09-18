@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --local",
-    "deploy": "wrangler deploy",
+    "deploy": "npm run validate:filmstocks && wrangler deploy",
+    "validate:filmstocks": "node scripts/validate-filmstocks.mjs",
     "typecheck": "tsc --noEmit",
     "bundle-size": "wrangler deploy --dry-run --outdir .bundle-check",
     "db:migrate:local": "wrangler d1 migrations apply momints-rolls --local",

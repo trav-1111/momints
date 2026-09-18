@@ -1,6 +1,8 @@
 # Momints Lomo filmstocks — research and development plan
 
-Prepared 12 September 2026. Planning document; the feature is not implemented or device-tested.
+> Superseded for access and backend architecture by [`FILMSTOCKS.md`](FILMSTOCKS.md). In particular, there is no film purchase or D1 entitlement table; developed-roll evidence is reconstructed through DAS.
+
+Prepared 12 September 2026. Historical planning document; do not use its entitlement model for implementation.
 
 ## 1. Product decisions
 

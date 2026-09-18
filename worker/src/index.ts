@@ -45,6 +45,8 @@ import { revokeRollDelegate, revokeRollDelegateSafely } from './rolls/handoff'
 import { issueSkrQuote, type SkrQuoteRequest } from './skr/quote'
 import { createWorkerUmi, getWorkerPublicKey } from './solana/client'
 import { resolveSkrNames } from './skr/resolve'
+import { FILMSTOCK_CATALOGUE, FILMSTOCK_CATALOGUE_UPDATED_AT, catalogueItem } from './filmstocks/catalogue'
+import { deriveUnlockedFilmStocks } from './filmstocks/das'
 
 // Must equal one of the strings in wrangler.toml [triggers] crons exactly —
 // scheduled() below uses it to tell the two registered cron schedules apart.
@@ -76,6 +78,9 @@ const USAGE = `Momints roll backend.
   DEL  /quick/stage/<stagingKey>        give back an unminted stage (user declined the wallet prompt)
   GET  /quick/<asset>                   quick-mint finalize status
   POST /skr/quote                       Worker-issued $SKR fee quote (JSON: {context:'quick',stagingKey} or {context:'roll',wallet,size})
+  GET  /v1/filmstocks                   public filmstock catalogue (server-time availability)
+  POST /v1/filmstocks/unlocked          stateless developed-roll unlock scan ({creatorAddress})
+  GET  /v1/filmstocks/assets/<path>     immutable recipe/preview/texture asset from R2
   GET  /ops/dashboard/wallets           signer + treasury balances (SOL, $SKR, Turbo credits) — operator dashboard
                                          requires: Authorization: Bearer <OPS_AUTH_TOKEN>
   GET  /ops/dashboard/health            cron last-run, stuck/DEAD counts, current fees — operator dashboard
@@ -136,7 +141,7 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
   } catch {
     throw new HttpError(
       400,
-      'Body must be JSON: { wallet, size, feeSignature, artist?, skrIdentity?, localDate?, payment? }',
+      'Body must be JSON: { wallet, size, filmStockId, feeSignature, artist?, skrIdentity?, localDate?, payment? }',
     )
   }
   // Not folded into validateEnv: a half-configured quick flow (missing
@@ -225,6 +230,7 @@ async function handleGetRoll(ctx: WorkerContext, collectionAddress: string): Pro
     metadataUri: roll.metadata_uri,
     mintedCount: roll.minted_count,
     status: roll.status,
+    developedOnChain: roll.minted_count === roll.size && roll.handoff_signature !== null,
     createdAt: roll.created_at,
     frames: summarizeFrames(frames),
   })
@@ -655,6 +661,9 @@ async function handleOpsDashboardMetrics(ctx: WorkerContext, url: URL): Promise<
 }
 
 type Route =
+  | { kind: 'filmstock-catalogue' }
+  | { kind: 'filmstock-unlocked' }
+  | { kind: 'filmstock-asset'; key: string }
   | { kind: 'funding-status' }
   | { kind: 'treasury-status' }
   | { kind: 'fees' }
@@ -679,6 +688,10 @@ type Route =
 
 /** Match secret-requiring routes. Unknown paths 404 before env validation. */
 function matchRoute(method: string, path: string): Route | null {
+  if (method === 'GET' && path === '/v1/filmstocks') return { kind: 'filmstock-catalogue' }
+  if (method === 'POST' && path === '/v1/filmstocks/unlocked') return { kind: 'filmstock-unlocked' }
+  const filmstockAssetMatch = path.match(/^\/v1\/filmstocks\/assets\/(.+)$/)
+  if (filmstockAssetMatch && method === 'GET') return { kind: 'filmstock-asset', key: filmstockAssetMatch[1] }
   if (method === 'GET' && path === '/funding/status') return { kind: 'funding-status' }
   if (method === 'GET' && path === '/treasury/status') return { kind: 'treasury-status' }
   if (method === 'GET' && path === '/fees') return { kind: 'fees' }
@@ -739,11 +752,56 @@ export default {
           return json({ error: `No route: ${request.method} ${path}. GET / for usage.` }, 404)
         }
 
+        if (route.kind === 'filmstock-catalogue') {
+          const serverTime = new Date()
+          return json(
+            {
+              serverTime: serverTime.toISOString(),
+              catalogueUpdatedAt: FILMSTOCK_CATALOGUE_UPDATED_AT,
+              filmstocks: FILMSTOCK_CATALOGUE.map((stock) => catalogueItem(stock, url)),
+            },
+            200,
+            { 'cache-control': 'public, max-age=300, s-maxage=300, stale-while-revalidate=86400' },
+          )
+        }
+        if (route.kind === 'filmstock-asset') {
+          const key = decodeURIComponent(route.key)
+          if (key.includes('..') || key.startsWith('/')) throw new HttpError(400, 'Invalid filmstock asset path')
+          const object = await env.FILMSTOCK_ASSETS.get(key)
+          if (!object) throw new HttpError(404, 'Filmstock asset not found')
+          const headers = new Headers()
+          object.writeHttpMetadata(headers)
+          headers.set('etag', object.httpEtag)
+          headers.set('cache-control', 'public, max-age=31536000, immutable')
+          return new Response(object.body, { headers })
+        }
+
         // Fail fast, operator-facing, before any work: required secrets present
         // and not pointing at a public RPC (no public fallback exists).
         const ctx = new WorkerContext(validateEnv(env))
 
         switch (route.kind) {
+          case 'filmstock-unlocked': {
+            let body: { creatorAddress?: unknown }
+            try {
+              body = (await request.json()) as { creatorAddress?: unknown }
+            } catch {
+              throw new HttpError(400, 'Body must be JSON: { creatorAddress }')
+            }
+            if (typeof body.creatorAddress !== 'string') {
+              throw new HttpError(400, 'creatorAddress must be a Solana wallet address')
+            }
+            const limit = await ctx.env.FILMSTOCK_UNLOCK_LIMITER.limit({ key: body.creatorAddress })
+            if (!limit.success) throw new HttpError(429, 'Film cabinet refresh rate limit exceeded')
+            const ids = await deriveUnlockedFilmStocks(
+              ctx.env.SOLANA_RPC_URL,
+              body.creatorAddress,
+              getWorkerPublicKey(ctx.env),
+            )
+            return json({ creatorAddress: body.creatorAddress, unlockedFilmStockIds: ids }, 200, {
+              'cache-control': 'private, no-store',
+            })
+          }
           case 'funding-status': {
             const { funding } = await ctx.storageSeams()
             // Same single balance read the cron uses (ops/monitor.ts). Response

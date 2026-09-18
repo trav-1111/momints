@@ -16,6 +16,8 @@ export interface Photo {
   action: 'pending' | 'delete' | 'save' | 'mint' | 'minted'
   /** Capture crop applied to the stored image; absent on legacy records. */
   aspect?: AspectRatio
+  /** Exact recipe already applied to this capture. */
+  filmStockId?: string
   meta?: CaptureMeta
   // Roll membership, stamped at capture. Deliberately stored on the photo
   // rather than read from session.activeRoll.frameIds: completeRoll() nulls
@@ -36,7 +38,7 @@ export interface PhotoRollRef {
 
 interface PhotoStore {
   photos: Photo[]
-  addPhoto: (uri: string, roll?: PhotoRollRef, aspect?: AspectRatio) => string
+  addPhoto: (uri: string, roll?: PhotoRollRef, aspect?: AspectRatio, filmStockId?: string) => string
   setAction: (id: string, action: Photo['action']) => void
   setBulkAction: (ids: string[], action: Photo['action']) => void
   setPhotoMeta: (id: string, meta: CaptureMeta) => void
@@ -53,13 +55,14 @@ interface PhotoStore {
 export const usePhotoStore = create<PhotoStore>((set, get) => ({
   photos: [],
 
-  addPhoto: (uri: string, roll?: PhotoRollRef, aspect?: AspectRatio): string => {
+  addPhoto: (uri: string, roll?: PhotoRollRef, aspect?: AspectRatio, filmStockId?: string): string => {
     const newPhoto: Photo = {
       id: uuidv4(),
       uri,
       capturedAt: Date.now(),
       action: 'pending',
       aspect,
+      filmStockId,
       rollId: roll?.id,
       rollName: roll?.name,
       rollFrameNumber: roll?.frameNumber,

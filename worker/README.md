@@ -1,5 +1,7 @@
 # Momints roll backend — Cloudflare Worker + D1 + Turbo/Arweave
 
+Filmstock catalogue, immutable recipe delivery, and stateless developed-roll unlock reconstruction are documented in [`../docs/FILMSTOCKS.md`](../docs/FILMSTOCKS.md). The filmstock subsystem adds no D1 user or entitlement records.
+
 Single Cloudflare Worker backing the Momints roll feature: prepaid rolls of 12
 or 24 exposures, each roll an immutable Metaplex Core collection, each frame a
 Core asset minted into it, all media on permanent Arweave storage via Turbo.

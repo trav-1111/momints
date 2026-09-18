@@ -11,6 +11,7 @@ import { useMint, MINT_CHUNK_SIZE, type BatchItemUpdate } from '../../hooks/useM
 import { isWorkerRollEnabled } from '../../config/rollApi'
 import { getSolscanUrl } from '../../services/mint'
 import { acknowledgeVerifiedRollCompletion, verifyAndDiscardCompletedRollVault } from '../../services/rollVault'
+import { useFilmStockStore } from '../../store/filmstocks'
 import { colors, fonts, tracking } from '../../theme'
 import { IconBack } from '../../components/icons'
 import { deleteCapture } from '../../services/imagePrivacy'
@@ -330,6 +331,7 @@ export default function MintProgressScreen() {
         setIsProcessing(true)
         try {
           await verifyAndDiscardCompletedRollVault(roll, wallet)
+          useFilmStockStore.getState().unlockLocally(wallet, roll.film.filmStockId)
           if (roll.collectionAddress) useRollRegistry.getState().closeRoll(roll.collectionAddress)
           completeRoll()
           acknowledgeVerifiedRollCompletion()
