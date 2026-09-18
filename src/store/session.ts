@@ -52,7 +52,7 @@ interface SessionStore extends PersistedSession {
   abandonRoll: () => void
   completeRoll: () => void
   setCollectionAddress: (address: string) => void
-  resetTransientFrames: () => void
+  restoreRollFrames: (frameIds: string[]) => void
 }
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -223,13 +223,18 @@ export const useSessionStore = create<SessionStore>()((set, get) => {
       commit({ hasSetMode: true, activeMode, activeRoll: { ...activeRoll, collectionAddress: address } })
     },
 
-    resetTransientFrames: () => {
+    restoreRollFrames: (frameIds) => {
       const { hasSetMode, activeMode, activeRoll } = get()
-      if (!activeRoll || activeRoll.frameIds.length === 0) return
+      if (!activeRoll) return
+      const restored = frameIds.slice(0, activeRoll.size)
       commit({
         hasSetMode,
         activeMode,
-        activeRoll: { ...activeRoll, frameIds: [], developed: false },
+        activeRoll: {
+          ...activeRoll,
+          frameIds: restored,
+          developed: activeRoll.developed || restored.length >= activeRoll.size,
+        },
       })
     },
   }

@@ -4,6 +4,7 @@ import { useSessionStore } from '../store/session'
 import { completeWorkerRoll } from '../services/rollApi'
 import { isWorkerRollEnabled } from '../config/rollApi'
 import { deleteCapture } from '../services/imagePrivacy'
+import { discardRollVault } from '../services/rollVault'
 
 /**
  * Discarding a roll touches the session store, the photo store / filesystem,
@@ -34,6 +35,7 @@ export function useRollActions() {
           console.warn('[roll] discard: failed to close roll on the backend', err)
         }
       }
+      await discardRollVault(roll.id)
     }
     abandonRoll()
   }, [abandonRoll])

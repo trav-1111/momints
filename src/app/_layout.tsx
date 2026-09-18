@@ -1,7 +1,7 @@
 import '../global.css'
 
 import { Slot } from 'expo-router'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { AppState, View } from 'react-native'
 import { useFonts } from 'expo-font'
 import {
@@ -20,6 +20,8 @@ import { colors } from '../theme'
 import { runPrivacyStartupSweep } from '../services/imagePrivacy'
 import { sessionHydrated, useSessionStore } from '../store/session'
 import { usePhotoStore } from '../store/photos'
+import { consumeVerifiedRollReceipt, restoreRollVault } from '../services/rollVault'
+import { useRollRegistry } from '../store/rollRegistry'
 
 const identity = {
   name: 'Momints',
@@ -52,19 +54,44 @@ function useQuickFinalizeDrain(): void {
   }, [])
 }
 
-function usePrivacyStartupCleanup(): void {
+function usePrivacyStartupCleanup(): boolean {
+  const [ready, setReady] = useState(false)
   useEffect(() => {
-    void Promise.all([sessionHydrated, runPrivacyStartupSweep()]).then(() => {
+    void (async () => {
+      await sessionHydrated
+      await runPrivacyStartupSweep()
       usePhotoStore.getState().clearSession()
-      useSessionStore.getState().resetTransientFrames()
-    })
+      const roll = useSessionStore.getState().activeRoll
+      if (roll) {
+        try {
+          if (await consumeVerifiedRollReceipt(roll)) {
+            if (roll.collectionAddress) useRollRegistry.getState().closeRoll(roll.collectionAddress)
+            useSessionStore.getState().completeRoll()
+          } else {
+            const restored = await restoreRollVault(roll.id)
+            if (restored.frameIds.length < roll.frameIds.length) {
+              throw new Error('The encrypted roll vault is missing one or more recorded frames.')
+            }
+            usePhotoStore.getState().restoreRollPhotos(restored.photos)
+            useSessionStore.getState().restoreRollFrames(restored.frameIds)
+          }
+        } catch (error) {
+          // Never reset or overwrite a paid roll after a vault error. Keeping
+          // its durable frame ids blocks accidental replacement; a later
+          // launch can retry hydration once the underlying issue is resolved.
+          console.error('[roll-vault] Failed to restore encrypted roll:', error)
+        }
+      }
+      setReady(true)
+    })()
   }, [])
+  return ready
 }
 
 const solanaCluster = createSolanaMainnet({ url: getClusterRpc() })
 
 export default function Layout() {
-  usePrivacyStartupCleanup()
+  const storageReady = usePrivacyStartupCleanup()
   useQuickFinalizeDrain()
 
   const [fontsLoaded] = useFonts({
@@ -77,7 +104,7 @@ export default function Layout() {
   })
 
   // Hold on a blank brand-dark frame for the moment fonts decode
-  if (!fontsLoaded) {
+  if (!fontsLoaded || !storageReady) {
     return <View style={{ flex: 1, backgroundColor: colors.bg }} />
   }
 
