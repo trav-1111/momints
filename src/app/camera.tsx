@@ -850,7 +850,7 @@ export default function CameraScreen() {
       {activeMode === 'quick' && (
         <View
           pointerEvents="box-none"
-          style={{ position: 'absolute', top: 74, left: 0, right: 0, alignItems: 'center' }}
+          style={{ position: 'absolute', top: 74, right: 18, alignItems: 'flex-end' }}
         >
           <Pressable
             onPress={() => setAspectMenuOpen((o) => !o)}
