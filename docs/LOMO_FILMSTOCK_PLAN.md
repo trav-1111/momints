@@ -2,6 +2,8 @@
 
 Prepared 12 September 2026. Planning document; the feature is not implemented or device-tested.
 
+> Historical-plan status (20 September 2026): a narrower post-capture prototype now exists in the working tree and is documented in `docs/FILM_STOCK_EMULATION.md`. The remaining sections are product and architecture proposals, not claims about the prototype's current behavior.
+
 ## 1. Product decisions
 
 Confirmed by Travis:
@@ -376,4 +378,3 @@ Measure free-stock adoption, first-to-second-roll return, reuse of paid stocks, 
 Use aggregate or opt-in telemetry consistent with the app's privacy policy. Photos, precise location and signed wallet messages are not needed for these measurements.
 
 Next development action: complete Stage A with Momints Everyday and approve its real-device results before committing to a larger paid collection.
-

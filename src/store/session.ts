@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import { Paths, File } from 'expo-file-system'
+import type { FilmStockId } from '../config/filmStocks'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -10,12 +11,15 @@ export type RollSize = 12 | 24 | 36
 // Per-roll film emulation settings. Applied to every frame captured on the roll.
 // Extensible toward the roadmap (film stock, ISO grain) without another migration.
 export type FilmMode = 'color' | 'bw'
+export type { FilmStockId }
+
 export interface FilmSettings {
   mode: FilmMode
-  // future: iso?: number; stock?: string
+  stockId?: FilmStockId
+  iso?: number
 }
 
-export const DEFAULT_FILM: FilmSettings = { mode: 'color' }
+export const DEFAULT_FILM: FilmSettings = { mode: 'color', stockId: 'momints-aura-400', iso: 400 }
 
 // Capture aspect ratio. 'full' keeps the sensor's native frame (no crop);
 // the others center-crop the photo. In roll mode this is fixed at creation.
@@ -41,10 +45,12 @@ interface PersistedSession {
   hasSetMode: boolean
   activeMode: AppMode
   activeRoll: ActiveRoll | null
+  quickFilm: FilmSettings
 }
 
 interface SessionStore extends PersistedSession {
   selectQuickMode: () => void
+  setQuickFilm: (film: FilmSettings) => void
   startRoll: (name: string, size: RollSize, film: FilmSettings, aspect: AspectRatio) => boolean
   resumeRoll: () => void
   addFrameToRoll: (photoId: string) => void
@@ -61,6 +67,7 @@ const DEFAULT: PersistedSession = {
   hasSetMode: false,
   activeMode: 'quick',
   activeRoll: null,
+  quickFilm: DEFAULT_FILM,
 }
 
 const STORAGE_KEY = 'session-store'
@@ -98,7 +105,10 @@ function parseActiveRoll(raw: unknown): ActiveRoll | null {
 function parseFilmSettings(raw: unknown): FilmSettings {
   if (raw === null || typeof raw !== 'object') return { ...DEFAULT_FILM }
   const f = raw as Record<string, unknown>
-  return { mode: f.mode === 'bw' ? 'bw' : 'color' }
+  const mode: FilmMode = f.mode === 'bw' ? 'bw' : 'color'
+  const stockId = typeof f.stockId === 'string' ? (f.stockId as FilmStockId) : undefined
+  const iso = typeof f.iso === 'number' ? f.iso : undefined
+  return { mode, stockId, iso }
 }
 
 // Defaults to full-frame for rolls persisted before aspect ratios existed.
@@ -128,6 +138,7 @@ async function readPersistedSession(): Promise<PersistedSession> {
       hasSetMode: typeof d.hasSetMode === 'boolean' ? d.hasSetMode : DEFAULT.hasSetMode,
       activeMode: d.activeMode === 'roll' ? 'roll' : 'quick',
       activeRoll,
+      quickFilm: parseFilmSettings(d.quickFilm),
     }
   } catch {
     return DEFAULT
@@ -142,6 +153,7 @@ function persistSession(state: PersistedSession): void {
         hasSetMode: state.hasSetMode,
         activeMode: state.activeMode,
         activeRoll: state.activeRoll,
+        quickFilm: state.quickFilm,
       }),
     )
   } catch {
@@ -153,9 +165,17 @@ function persistSession(state: PersistedSession): void {
 
 export const useSessionStore = create<SessionStore>()((set, get) => {
   // Persist the current state and apply the same object to the store.
-  const commit = (next: PersistedSession) => {
-    persistSession(next)
-    set(next)
+  const commit = (
+    next: Partial<PersistedSession> & Pick<PersistedSession, 'hasSetMode' | 'activeMode' | 'activeRoll'>,
+  ) => {
+    const full: PersistedSession = {
+      hasSetMode: next.hasSetMode,
+      activeMode: next.activeMode,
+      activeRoll: next.activeRoll,
+      quickFilm: next.quickFilm ?? get().quickFilm ?? DEFAULT_FILM,
+    }
+    persistSession(full)
+    set(full)
   }
 
   return {
@@ -165,6 +185,15 @@ export const useSessionStore = create<SessionStore>()((set, get) => {
     // and minted, or discarded, so you can pop out for single shots.
     selectQuickMode: () => {
       commit({ hasSetMode: true, activeMode: 'quick', activeRoll: get().activeRoll })
+    },
+
+    setQuickFilm: (film: FilmSettings) => {
+      commit({
+        hasSetMode: get().hasSetMode,
+        activeMode: get().activeMode,
+        activeRoll: get().activeRoll,
+        quickFilm: film,
+      })
     },
 
     // One roll at a time — refuse a new roll while one is in progress.

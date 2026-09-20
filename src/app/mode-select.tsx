@@ -3,7 +3,7 @@ import { View, Text, Pressable, TextInput, ScrollView, ActivityIndicator, Alert 
 import { useRouter } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useSessionStore } from '../store/session'
-import type { AppMode, FilmMode, AspectRatio } from '../store/session'
+import type { AppMode, AspectRatio } from '../store/session'
 import { useWalletDomain } from '../hooks/useWalletDomain'
 import { useCreateRoll, SKR_UNAVAILABLE_MESSAGE, type CreateRollPhase } from '../hooks/useCreateRoll'
 import { useMintRoll } from '../hooks/useMintRoll'
@@ -13,6 +13,7 @@ import { isWorkerRollEnabled } from '../config/rollApi'
 import { completeWorkerRoll, getOpenWorkerRoll, getWorkerFees, type OpenRollSummary } from '../services/rollApi'
 import { isSkrQuoteUnavailable, quoteSkrFee } from '../services/skrApi'
 import { ARTIST_NAME_MAX_LENGTH } from '../services/rollIdentity'
+import { FILM_STOCKS, getFilmStock, type FilmStockId } from '../config/filmStocks'
 import { colors, fonts, tracking } from '../theme'
 import { IconCamera, IconFilm } from '../components/icons'
 
@@ -23,10 +24,6 @@ const CREATE_PHASE_LABEL: Record<CreateRollPhase, string> = {
   confirming: 'Confirming on-chain…',
   creating: 'Creating roll…',
 }
-const FILM_MODES: { value: FilmMode; label: string }[] = [
-  { value: 'color', label: 'Color' },
-  { value: 'bw', label: 'B&W' },
-]
 const ASPECTS: { value: AspectRatio; label: string }[] = [
   { value: 'full', label: 'Full' },
   { value: '1:1', label: '1:1' },
@@ -84,9 +81,96 @@ function Pill({ label, selected, onPress, mono = false }: PillProps) {
   )
 }
 
+function FilmStockSelector({
+  selectedStockId,
+  onSelect,
+}: {
+  selectedStockId: FilmStockId
+  onSelect: (stock: (typeof FILM_STOCKS)[number]) => void
+}) {
+  return (
+    <View style={{ gap: 8, marginBottom: 18 }}>
+      {FILM_STOCKS.map((stock) => {
+        const selected = selectedStockId === stock.id
+        return (
+          <Pressable
+            key={stock.id}
+            onPress={() => onSelect(stock)}
+            style={{
+              paddingVertical: 10,
+              paddingHorizontal: 14,
+              borderRadius: 12,
+              backgroundColor: selected ? colors.accentTint : colors.surface,
+              borderWidth: 1,
+              borderColor: selected ? colors.accent : colors.border,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <View style={{ flex: 1, marginRight: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                <Text
+                  style={{
+                    fontFamily: selected ? fonts.sansBold : fonts.sansSemiBold,
+                    fontSize: 13,
+                    color: selected ? colors.white : colors.text,
+                  }}
+                >
+                  {stock.name}
+                </Text>
+                <View
+                  style={{
+                    paddingHorizontal: 6,
+                    paddingVertical: 1.5,
+                    borderRadius: 4,
+                    backgroundColor: selected ? colors.accent : 'rgba(255,255,255,0.08)',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: fonts.monoBold,
+                      fontSize: 9,
+                      color: selected ? colors.white : colors.textSecondary,
+                    }}
+                  >
+                    ISO {stock.iso}
+                  </Text>
+                </View>
+              </View>
+              <Text
+                style={{
+                  fontFamily: fonts.sans,
+                  fontSize: 11,
+                  color: selected ? colors.textSoft : colors.textMuted,
+                }}
+                numberOfLines={1}
+              >
+                {stock.tagline}
+              </Text>
+            </View>
+            <Text
+              style={{
+                fontFamily: fonts.mono,
+                fontSize: 10,
+                letterSpacing: tracking(0.08, 10),
+                color: selected ? colors.accentSoft : colors.textMuted,
+              }}
+            >
+              {stock.mode.toUpperCase()}
+            </Text>
+          </Pressable>
+        )
+      })}
+    </View>
+  )
+}
+
 export default function ModeSelectScreen() {
   const router = useRouter()
   const selectQuickMode = useSessionStore((s) => s.selectQuickMode)
+  const setQuickFilm = useSessionStore((s) => s.setQuickFilm)
+  const quickFilm = useSessionStore((s) => s.quickFilm)
   const resumeRoll = useSessionStore((s) => s.resumeRoll)
   const activeRoll = useSessionStore((s) => s.activeRoll)
 
@@ -99,7 +183,7 @@ export default function ModeSelectScreen() {
   const [selectedMode, setSelectedMode] = useState<AppMode>('quick')
   const [artist, setArtist] = useState('')
   const [rollSize, setRollSize] = useState<PrepaidRollSize>(12)
-  const [filmMode, setFilmMode] = useState<FilmMode>('color')
+  const [selectedStockId, setSelectedStockId] = useState<FilmStockId>(quickFilm?.stockId ?? 'momints-aura-400')
   const [aspect, setAspect] = useState<AspectRatio>('full')
 
   // Prefill artist from the resolved SKR handle as soon as it lands — the
@@ -227,7 +311,9 @@ export default function ModeSelectScreen() {
   }, [strandedRoll, isClosingStranded])
 
   const handleLoadCamera = useCallback(async () => {
+    const stock = getFilmStock(selectedStockId)
     if (selectedMode === 'quick') {
+      setQuickFilm({ mode: stock.mode, stockId: stock.id, iso: stock.iso })
       selectQuickMode()
       router.replace('/camera')
       return
@@ -246,7 +332,7 @@ export default function ModeSelectScreen() {
       size: rollSize,
       artist,
       skrHandle: domain,
-      film: { mode: filmMode },
+      film: { mode: stock.mode, stockId: stock.id, iso: stock.iso },
       aspect,
       payment: payWithSkr && skrQuoteAmount !== null ? 'SKR' : 'SOL',
     })
@@ -260,10 +346,11 @@ export default function ModeSelectScreen() {
     rollSize,
     artist,
     domain,
-    filmMode,
+    selectedStockId,
     aspect,
     payWithSkr,
     skrQuoteAmount,
+    setQuickFilm,
     selectQuickMode,
     router,
   ])
@@ -498,6 +585,19 @@ export default function ModeSelectScreen() {
         </Pressable>
       </View>
 
+      {/* Quick mode options — choose your active film stock */}
+      {selectedMode === 'quick' && (
+        <View style={{ marginBottom: 8 }}>
+          <FieldLabel>FILM STOCK</FieldLabel>
+          <FilmStockSelector
+            selectedStockId={selectedStockId}
+            onSelect={(stock) => {
+              setSelectedStockId(stock.id)
+            }}
+          />
+        </View>
+      )}
+
       {/* Roll options — revealed when New Roll is selected */}
       {selectedMode === 'roll' && !hasRoll && (
         <View>
@@ -536,12 +636,13 @@ export default function ModeSelectScreen() {
             }}
           />
 
-          <FieldLabel>FILM</FieldLabel>
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-            {FILM_MODES.map(({ value, label }) => (
-              <Pill key={value} label={label} selected={filmMode === value} onPress={() => setFilmMode(value)} />
-            ))}
-          </View>
+          <FieldLabel>FILM STOCK</FieldLabel>
+          <FilmStockSelector
+            selectedStockId={selectedStockId}
+            onSelect={(stock) => {
+              setSelectedStockId(stock.id)
+            }}
+          />
 
           <FieldLabel>ASPECT RATIO</FieldLabel>
           <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
