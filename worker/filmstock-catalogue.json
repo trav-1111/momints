@@ -1,0 +1,31 @@
+{
+  "catalogueUpdatedAt": "2026-09-20T00:00:00.000Z",
+  "filmstocks": [
+    {
+      "filmStockId": "momints-color-v1",
+      "displayName": "Momints Color",
+      "shortDescription": "Clean colour with a restrained, neutral response.",
+      "characteristics": ["natural colour", "clean contrast", "house film"],
+      "previewPaths": [],
+      "recipePath": "recipes/momints-color-v1.json",
+      "availableFrom": null,
+      "availableUntil": null,
+      "evergreen": true,
+      "minimumEngineVersion": 1,
+      "baseMode": "color"
+    },
+    {
+      "filmStockId": "momints-bw-v1",
+      "displayName": "Momints B&W",
+      "shortDescription": "Neutral monochrome with a classic luminance response.",
+      "characteristics": ["monochrome", "neutral", "house film"],
+      "previewPaths": [],
+      "recipePath": "recipes/momints-bw-v1.json",
+      "availableFrom": null,
+      "availableUntil": null,
+      "evergreen": true,
+      "minimumEngineVersion": 1,
+      "baseMode": "bw"
+    }
+  ]
+}

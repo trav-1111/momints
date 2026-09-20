@@ -2,6 +2,8 @@
 
 Filmstock catalogue, immutable recipe delivery, and stateless developed-roll unlock reconstruction are documented in [`../docs/FILMSTOCKS.md`](../docs/FILMSTOCKS.md). The filmstock subsystem adds no D1 user or entitlement records.
 
+Filmstock operators should start from `filmstock-package-template/`. `npm run publish:filmstock` validates and compiles a 33-point sRGB `.cube`; `npm run schedule:filmstock` changes a returning stock's availability; and `npm run deploy` performs immutable R2 preflight, Worker deployment, and production asset smoke tests. See the linked contract before using the lower-level `deploy:worker` command.
+
 Single Cloudflare Worker backing the Momints roll feature: prepaid rolls of 12
 or 24 exposures, each roll an immutable Metaplex Core collection, each frame a
 Core asset minted into it, all media on permanent Arweave storage via Turbo.

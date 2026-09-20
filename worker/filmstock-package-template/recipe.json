@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "filmStockId": "replace-me-v1",
+  "displayName": "Replace Me",
+  "shortDescription": "Describe the visual response in one sentence.",
+  "characteristics": ["characteristic one", "characteristic two"],
+  "inputColorSpace": "sRGB",
+  "outputColorSpace": "sRGB",
+  "baseMode": "color",
+  "lut": {
+    "format": "momints-lut",
+    "size": 33,
+    "intensity": 1
+  },
+  "exposure": { "ev": 0 },
+  "grain": { "amount": 0.18, "size": 0.35, "roughness": 0.4 },
+  "halation": { "amount": 0.08, "radius": 0.2 },
+  "bloom": { "amount": 0.04, "radius": 0.2 },
+  "sharpness": { "amount": 0 },
+  "vignette": { "amount": 0.05 },
+  "minimumEngineVersion": 2
+}

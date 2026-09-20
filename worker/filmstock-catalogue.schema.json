@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://momints.app/schemas/filmstock-catalogue.json",
+  "title": "Momints Filmstock Catalogue",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["catalogueUpdatedAt", "filmstocks"],
+  "properties": {
+    "catalogueUpdatedAt": { "type": "string", "format": "date-time" },
+    "filmstocks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "filmStockId",
+          "displayName",
+          "shortDescription",
+          "characteristics",
+          "previewPaths",
+          "recipePath",
+          "availableFrom",
+          "availableUntil",
+          "evergreen",
+          "minimumEngineVersion",
+          "baseMode"
+        ],
+        "properties": {
+          "filmStockId": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*-v[1-9][0-9]*$" },
+          "displayName": { "type": "string", "minLength": 1 },
+          "shortDescription": { "type": "string", "minLength": 1 },
+          "characteristics": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "previewPaths": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "recipePath": { "type": "string", "minLength": 1 },
+          "availableFrom": { "type": ["string", "null"], "format": "date-time" },
+          "availableUntil": { "type": ["string", "null"], "format": "date-time" },
+          "evergreen": { "type": "boolean" },
+          "minimumEngineVersion": { "type": "integer", "minimum": 1 },
+          "baseMode": { "enum": ["color", "bw"] }
+        }
+      }
+    }
+  }
+}

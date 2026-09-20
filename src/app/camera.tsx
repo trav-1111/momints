@@ -588,6 +588,7 @@ export default function CameraScreen() {
             device={activeDevice}
             isActive={isFocused && appActive}
             photo={true}
+            photoHdr={false}
             zoom={zoom}
             exposure={ev}
             torch={torchActive ? 'on' : 'off'}

@@ -1,4 +1,6 @@
-export const FILMSTOCK_ENGINE_VERSION = 1
+import catalogueJson from '../../filmstock-catalogue.json'
+
+export const FILMSTOCK_ENGINE_VERSION = 2
 
 export interface FilmStockCatalogueDefinition {
   filmStockId: string
@@ -19,38 +21,11 @@ export interface FilmStockCatalogueItem extends Omit<FilmStockCatalogueDefinitio
   recipeUrl: string
 }
 
-// This file is the version-controlled publishing surface. A published ID is
-// immutable: visually different processing must be released as a new ID.
-export const FILMSTOCK_CATALOGUE_UPDATED_AT = '2026-09-19T00:00:00.000Z'
-
-export const FILMSTOCK_CATALOGUE: readonly FilmStockCatalogueDefinition[] = [
-  {
-    filmStockId: 'momints-color-v1',
-    displayName: 'Momints Color',
-    shortDescription: 'Clean colour with a restrained, neutral response.',
-    characteristics: ['natural colour', 'clean contrast', 'house film'],
-    previewPaths: [],
-    recipePath: 'recipes/momints-color-v1.json',
-    availableFrom: null,
-    availableUntil: null,
-    evergreen: true,
-    minimumEngineVersion: 1,
-    baseMode: 'color',
-  },
-  {
-    filmStockId: 'momints-bw-v1',
-    displayName: 'Momints B&W',
-    shortDescription: 'Neutral monochrome with a classic luminance response.',
-    characteristics: ['monochrome', 'neutral', 'house film'],
-    previewPaths: [],
-    recipePath: 'recipes/momints-bw-v1.json',
-    availableFrom: null,
-    availableUntil: null,
-    evergreen: true,
-    minimumEngineVersion: 1,
-    baseMode: 'bw',
-  },
-]
+// filmstock-catalogue.json is the publishing surface updated by the package
+// compiler. It is bundled into the Worker, so rotations require a Worker
+// deploy but never a mobile release.
+export const FILMSTOCK_CATALOGUE_UPDATED_AT = catalogueJson.catalogueUpdatedAt
+export const FILMSTOCK_CATALOGUE = catalogueJson.filmstocks as readonly FilmStockCatalogueDefinition[]
 
 const ID_SHAPE = /^[a-z0-9]+(?:-[a-z0-9]+)*-v[1-9]\d*$/
 

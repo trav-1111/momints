@@ -6,7 +6,11 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --local",
-    "deploy": "npm run validate:filmstocks && wrangler deploy",
+    "deploy": "node scripts/deploy-filmstocks.mjs",
+    "deploy:worker": "npm run validate:filmstocks && wrangler deploy",
+    "publish:filmstock": "node scripts/publish-filmstock.mjs",
+    "schedule:filmstock": "node scripts/schedule-filmstock.mjs",
+    "test:filmstocks": "node --test tests/filmstock-package.test.mjs",
     "validate:filmstocks": "node scripts/validate-filmstocks.mjs",
     "typecheck": "tsc --noEmit",
     "bundle-size": "wrangler deploy --dry-run --outdir .bundle-check",
@@ -25,6 +29,9 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260721.1",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "sharp": "^0.34.5",
     "typescript": "7.0.2",
     "wrangler": "4.113.0"
   }

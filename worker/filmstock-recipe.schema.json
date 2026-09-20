@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://momints.app/schemas/filmstock-recipe-v2.json",
+  "title": "Momints Filmstock Recipe v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "filmStockId",
+    "displayName",
+    "shortDescription",
+    "characteristics",
+    "inputColorSpace",
+    "outputColorSpace",
+    "baseMode",
+    "lut",
+    "minimumEngineVersion"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "filmStockId": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*-v[1-9][0-9]*$" },
+    "displayName": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "shortDescription": { "type": "string", "minLength": 1, "maxLength": 180 },
+    "characteristics": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": { "type": "string", "minLength": 1, "maxLength": 40 }
+    },
+    "inputColorSpace": { "const": "sRGB" },
+    "outputColorSpace": { "const": "sRGB" },
+    "baseMode": { "enum": ["color", "bw"] },
+    "lut": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "size", "intensity"],
+      "properties": {
+        "format": { "const": "momints-lut" },
+        "size": { "const": 33 },
+        "intensity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "uri": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      }
+    },
+    "exposure": { "$ref": "#/$defs/exposure" },
+    "grain": { "$ref": "#/$defs/grain" },
+    "halation": { "$ref": "#/$defs/spatialEffect" },
+    "bloom": { "$ref": "#/$defs/spatialEffect" },
+    "sharpness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount"],
+      "properties": { "amount": { "type": "number", "minimum": -1, "maximum": 1 } }
+    },
+    "vignette": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount"],
+      "properties": { "amount": { "type": "number", "minimum": 0, "maximum": 1 } }
+    },
+    "minimumEngineVersion": { "type": "integer", "minimum": 2 }
+  },
+  "$defs": {
+    "exposure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ev"],
+      "properties": { "ev": { "type": "number", "minimum": -2, "maximum": 2 } }
+    },
+    "spatialEffect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "radius"],
+      "properties": {
+        "amount": { "type": "number", "minimum": 0, "maximum": 1 },
+        "radius": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "grain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["amount", "size", "roughness"],
+      "properties": {
+        "amount": { "type": "number", "minimum": 0, "maximum": 1 },
+        "size": { "type": "number", "minimum": 0, "maximum": 1 },
+        "roughness": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    }
+  }
+}
