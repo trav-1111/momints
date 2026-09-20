@@ -30,8 +30,7 @@ import { usePhotoStore } from '../store/photos'
 import { captureMetadata } from '../services/captureMetadata'
 import { adoptTemporaryCapture, deleteCapture } from '../services/imagePrivacy'
 import { persistRollFrame, updateStoredRollFrameMeta } from '../services/rollVault'
-import { applyFilm, isFilmEmulationActive } from '../services/filmProcessor'
-import { getFilmStock } from '../config/filmStocks'
+import { applyFilm } from '../services/filmProcessor'
 import { cropToAspect } from '../services/cropImage'
 import { ensureUnderCeiling } from '../services/compressImage'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
@@ -151,7 +150,6 @@ export default function CameraScreen() {
   const setLocationGranularity = useLocationSettingsStore((s) => s.setGranularity)
 
   const activeMode = useSessionStore((s) => s.activeMode)
-  const quickFilm = useSessionStore((s) => s.quickFilm)
   const rollInProgress = useSessionStore((s) => s.activeRoll)
   const addFrameToRoll = useSessionStore((s) => s.addFrameToRoll)
   const developRoll = useSessionStore((s) => s.developRoll)
@@ -290,9 +288,8 @@ export default function CameraScreen() {
       if (effectiveAspect !== 'full') {
         processedUri = await cropToAspect(processedUri, effectiveAspect)
       }
-      const filmToApply = activeMode === 'roll' && activeRoll !== null ? activeRoll.film : quickFilm
-      if (filmToApply && isFilmEmulationActive(filmToApply)) {
-        processedUri = await applyFilm(processedUri, filmToApply)
+      if (activeMode === 'roll' && activeRoll !== null && activeRoll.film.mode !== 'color') {
+        processedUri = await applyFilm(processedUri, activeRoll.film)
       }
       // Quick shots only. Roll frames have no server-side size ceiling, so they
       // keep full capture quality. This is the same predicate addPhoto uses to
@@ -370,7 +367,6 @@ export default function CameraScreen() {
     developRoll,
     mintRoll,
     locationGranularity,
-    quickFilm,
   ])
 
   const toggleFlash = useCallback(() => {
@@ -774,26 +770,20 @@ export default function CameraScreen() {
         >
           {activeMode === 'roll' ? 'FILM' : 'QUICK'}
         </Text>
-        {(() => {
-          const currentFilm = activeMode === 'roll' && activeRoll !== null ? activeRoll.film : quickFilm
-          const stock = getFilmStock(
-            currentFilm?.stockId ?? (currentFilm?.mode === 'bw' ? 'standard-bw' : 'standard-color'),
-          )
-          return (
-            <>
-              <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>{stock.shortName}</Text>
-              {effectiveAspect !== 'full' && (
-                <>
-                  <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-                  <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>
-                    {effectiveAspect}
-                  </Text>
-                </>
-              )}
-            </>
-          )
-        })()}
+        {activeMode === 'roll' && activeRoll !== null && (
+          <>
+            <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+            {activeRoll.film.mode === 'bw' && (
+              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>B&W</Text>
+            )}
+            {activeRoll.aspect !== 'full' && (
+              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>{activeRoll.aspect}</Text>
+            )}
+            {activeRoll.film.mode !== 'bw' && activeRoll.aspect === 'full' && (
+              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>COLOR</Text>
+            )}
+          </>
+        )}
       </Pressable>
 
       {/* EXP dial — frames remaining, counts down like a film counter */}
