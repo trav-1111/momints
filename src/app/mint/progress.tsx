@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
 import { View, Text, Pressable, ScrollView, ActivityIndicator, Linking, Alert } from 'react-native'
-import { Image } from 'expo-image'
 import { useRouter } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore } from '../../store/photos'
@@ -14,6 +13,7 @@ import { acknowledgeVerifiedRollCompletion, verifyAndDiscardCompletedRollVault }
 import { useFilmStockStore } from '../../store/filmstocks'
 import { colors, fonts, tracking } from '../../theme'
 import { IconBack } from '../../components/icons'
+import { PrivatePhotoImage } from '../../components/PrivatePhotoImage'
 import { deleteCapture } from '../../services/imagePrivacy'
 
 type MintStatus = 'pending' | 'uploading' | 'signing' | 'confirming' | 'success' | 'failed'
@@ -541,10 +541,12 @@ export default function MintProgressScreen() {
                       : colors.border,
               })}
             >
-              <Image
-                source={{ uri: item.photoUri }}
-                cachePolicy={'none'}
-                contentFit={'cover'}
+              <PrivatePhotoImage
+                uri={item.photoUri}
+                photoId={item.photoId}
+                displayWidth={42}
+                displayHeight={42}
+                contentFit="cover"
                 style={{ width: 42, height: 42, borderRadius: 9 }}
               />
               <View style={{ flex: 1, minWidth: 0 }}>

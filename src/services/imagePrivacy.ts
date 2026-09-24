@@ -1,6 +1,7 @@
 import { Directory, File, Paths } from 'expo-file-system'
 import { Image as ExpoImage } from 'expo-image'
 import { isFileUriInsideDirectory, isPermanentArweaveUri as isPermanentArweaveUriGuard } from './privacyPathGuard.cjs'
+import { deleteDisplayPreview, DISPLAY_PREVIEW_DIRECTORY } from './displayPreview'
 
 export const CAPTURE_TEMP_DIRECTORY = new Directory(Paths.cache, 'momints-captures')
 export const CONTACT_SHEET_INPUT_DIRECTORY = new Directory(Paths.cache, 'momints-contact-sheet-inputs')
@@ -11,6 +12,7 @@ const OWNED_DIRECTORIES = [
   CAPTURE_TEMP_DIRECTORY,
   CONTACT_SHEET_INPUT_DIRECTORY,
   CONTACT_SHEET_OUTPUT_DIRECTORY,
+  DISPLAY_PREVIEW_DIRECTORY,
   LEGACY_PHOTO_DIRECTORY,
 ]
 
@@ -35,6 +37,7 @@ export function deleteAppOwnedImage(uri: unknown): boolean {
 
 export function deleteCapture(uri: unknown): boolean {
   if (typeof uri !== 'string' || !isFileUriInsideDirectory(uri, CAPTURE_TEMP_DIRECTORY.uri)) return false
+  deleteDisplayPreview(uri)
   return deleteAppOwnedImage(uri)
 }
 
@@ -101,6 +104,7 @@ export async function runPrivacyStartupSweep(): Promise<void> {
   deleteOwnedDirectory(CAPTURE_TEMP_DIRECTORY)
   deleteOwnedDirectory(CONTACT_SHEET_INPUT_DIRECTORY)
   deleteOwnedDirectory(CONTACT_SHEET_OUTPUT_DIRECTORY)
+  deleteOwnedDirectory(DISPLAY_PREVIEW_DIRECTORY)
   deleteOwnedDirectory(LEGACY_PHOTO_DIRECTORY)
   try {
     const legacyPhotoStore = new File(Paths.document, 'photos-store.json')

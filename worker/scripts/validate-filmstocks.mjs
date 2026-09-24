@@ -1,5 +1,5 @@
 import { readFile, readdir } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, posix, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   compileRuntimeLut,
@@ -103,8 +103,9 @@ for (const stock of catalogue.filmstocks) {
     throw new Error(`${stock.filmStockId}: catalogue and recipe engine versions differ`)
   }
   if (stock.previewPaths.length === 0) throw new Error(`${stock.filmStockId}: LUT package requires a preview`)
-  const recipeDirectory = dirname(stock.recipePath)
-  const runtimeKey = resolve('/', recipeDirectory, recipe.lut.uri).slice(1).replaceAll('\\', '/')
+  const recipeDirectory = dirname(stock.recipePath).replaceAll('\\', '/')
+  // Catalogue asset keys use URL/POSIX separators even when validation runs on Windows.
+  const runtimeKey = posix.resolve('/', recipeDirectory, recipe.lut.uri).slice(1)
   if (!runtimeKey.startsWith(`${recipeDirectory}/`) || !lock[runtimeKey]) {
     throw new Error(`${stock.filmStockId}: LUT URI escapes or is not immutable-locked`)
   }

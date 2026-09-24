@@ -1,4 +1,4 @@
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator'
+import { ImageManipulator, SaveFormat, type ImageManipulatorContext, type ImageRef } from 'expo-image-manipulator'
 import { File } from 'expo-file-system'
 
 // Sits deliberately under the Worker's quick-mint ceiling of 3,145,728 bytes
@@ -46,6 +46,8 @@ function discard(uri: string): void {
  * processing error cannot be recovered. Never throws.
  */
 export async function ensureUnderCeiling(uri: string): Promise<string> {
+  let baseContext: ImageManipulatorContext | null = null
+  let base: ImageRef | null = null
   try {
     const originalBytes = new File(uri).size
     if (originalBytes <= TARGET_BYTES) {
@@ -55,7 +57,8 @@ export async function ensureUnderCeiling(uri: string): Promise<string> {
 
     // Decoded once and reused: ImageRef.saveAsync can be called repeatedly, so
     // walking the quality ladder costs one decode total, not one per step.
-    const base = await ImageManipulator.manipulate(uri).renderAsync()
+    baseContext = ImageManipulator.manipulate(uri)
+    base = await baseContext.renderAsync()
     const portrait = base.height >= base.width
 
     let fitted: string | null = null
@@ -77,15 +80,22 @@ export async function ensureUnderCeiling(uri: string): Promise<string> {
         if (edge >= longEdge) continue
         // Cap the LONGER edge and let resize derive the other, so the aspect
         // ratio the shooter framed survives.
-        const resized = await ImageManipulator.manipulate(base)
-          .resize(portrait ? { height: edge } : { width: edge })
-          .renderAsync()
-        const saved = await resized.saveAsync({ format: SaveFormat.JPEG, compress: QUALITY_FLOOR })
-        if (new File(saved.uri).size <= TARGET_BYTES) {
-          fitted = saved.uri
-          break
+        let resizeContext: ImageManipulatorContext | null = null
+        let resized: ImageRef | null = null
+        try {
+          resizeContext = ImageManipulator.manipulate(base)
+          resizeContext.resize(portrait ? { height: edge } : { width: edge })
+          resized = await resizeContext.renderAsync()
+          const saved = await resized.saveAsync({ format: SaveFormat.JPEG, compress: QUALITY_FLOOR })
+          if (new File(saved.uri).size <= TARGET_BYTES) {
+            fitted = saved.uri
+            break
+          }
+          discard(saved.uri)
+        } finally {
+          resizeContext?.release()
+          resized?.release()
         }
-        discard(saved.uri)
       }
     }
 
@@ -110,5 +120,8 @@ export async function ensureUnderCeiling(uri: string): Promise<string> {
   } catch (error) {
     console.error('ensureUnderCeiling failed, keeping original:', error)
     return uri
+  } finally {
+    baseContext?.release()
+    base?.release()
   }
 }

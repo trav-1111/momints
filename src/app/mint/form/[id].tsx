@@ -3,13 +3,13 @@ import {
   View,
   Text,
   Pressable,
-  Image,
   TextInput,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
   Alert,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
@@ -21,6 +21,9 @@ import { resolveLocation } from '../../../services/captureMetadata'
 import { colors, fonts, tracking } from '../../../theme'
 import { useFilmStockStore } from '../../../store/filmstocks'
 import { IconBack, IconFilm, IconMint, IconPhone, IconPin } from '../../../components/icons'
+import { PrivatePhotoImage } from '../../../components/PrivatePhotoImage'
+
+const { width: screenWidth } = Dimensions.get('window')
 
 function FieldLabel({ children }: { children: string }) {
   return (
@@ -217,10 +220,13 @@ export default function MintFormScreen() {
 
         {/* Image Preview */}
         <View style={{ paddingHorizontal: 22, marginBottom: 18 }}>
-          <Image
-            source={{ uri: photo.uri }}
+          <PrivatePhotoImage
+            uri={photo.uri}
+            photoId={photo.id}
+            displayWidth={screenWidth - 44}
+            displayHeight={screenWidth - 44}
             style={{ width: '100%', aspectRatio: 1, borderRadius: 16 }}
-            resizeMode="cover"
+            contentFit="cover"
           />
         </View>
 

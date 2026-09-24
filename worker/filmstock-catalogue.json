@@ -1,24 +1,35 @@
 {
-  "catalogueUpdatedAt": "2026-09-20T00:00:00.000Z",
+  "catalogueUpdatedAt": "2026-09-23T23:29:34.203Z",
   "filmstocks": [
     {
-      "filmStockId": "momints-color-v1",
-      "displayName": "Momints Color",
-      "shortDescription": "Clean colour with a restrained, neutral response.",
-      "characteristics": ["natural colour", "clean contrast", "house film"],
-      "previewPaths": [],
-      "recipePath": "recipes/momints-color-v1.json",
-      "availableFrom": null,
-      "availableUntil": null,
-      "evergreen": true,
-      "minimumEngineVersion": 1,
+      "filmStockId": "bali-400-v1",
+      "displayName": "Bali 400",
+      "shortDescription": "Warm, nostalgic colour with dense shadows and restrained highlights.",
+      "characteristics": [
+        "warm skin tones",
+        "restrained highlights",
+        "muted greens",
+        "subtle grain"
+      ],
+      "previewPaths": [
+        "filmstocks/bali-400-v1/previews/preview-01.jpg"
+      ],
+      "recipePath": "filmstocks/bali-400-v1/recipe.json",
+      "availableFrom": "2026-10-01T00:00:00.000Z",
+      "availableUntil": "2026-11-15T00:00:00.000Z",
+      "evergreen": false,
+      "minimumEngineVersion": 2,
       "baseMode": "color"
     },
     {
       "filmStockId": "momints-bw-v1",
       "displayName": "Momints B&W",
       "shortDescription": "Neutral monochrome with a classic luminance response.",
-      "characteristics": ["monochrome", "neutral", "house film"],
+      "characteristics": [
+        "monochrome",
+        "neutral",
+        "house film"
+      ],
       "previewPaths": [],
       "recipePath": "recipes/momints-bw-v1.json",
       "availableFrom": null,
@@ -26,6 +37,23 @@
       "evergreen": true,
       "minimumEngineVersion": 1,
       "baseMode": "bw"
+    },
+    {
+      "filmStockId": "momints-color-v1",
+      "displayName": "Momints Color",
+      "shortDescription": "Clean colour with a restrained, neutral response.",
+      "characteristics": [
+        "natural colour",
+        "clean contrast",
+        "house film"
+      ],
+      "previewPaths": [],
+      "recipePath": "recipes/momints-color-v1.json",
+      "availableFrom": null,
+      "availableUntil": null,
+      "evergreen": true,
+      "minimumEngineVersion": 1,
+      "baseMode": "color"
     }
   ]
 }

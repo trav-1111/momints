@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import sharp from 'sharp'
 import {
@@ -10,6 +11,7 @@ import {
   parseCube,
   parseRuntimeLut,
   sampleCubeTrilinear,
+  sha256,
   validateAttribution,
   validateLutRecipe,
 } from '../scripts/lib/filmstock-package.mjs'
@@ -84,6 +86,37 @@ test('validates the declarative LUT recipe and bounded spatial effects', () => {
   assert.equal(validateLutRecipe(recipe, recipe.filmStockId), recipe)
   assert.throws(() => validateLutRecipe({ ...recipe, grain: { ...recipe.grain, amount: 1.1 } }, recipe.filmStockId))
   assert.throws(() => assertSchema(recipeSchema, { ...recipe, executable: 'alert(1)' }, 'test recipe'))
+})
+
+test('Bali 400 production source is immutable and its deployable package excludes authoring inputs', async () => {
+  const sourceRoot = new URL('../filmstock-sources/bali-400-v1/', import.meta.url)
+  const assetRoot = new URL('../filmstock-assets/filmstocks/bali-400-v1/', import.meta.url)
+  const source = await readFile(new URL('source/bali-400-v1.cube', sourceRoot))
+  assert.equal(sha256(source), '8388b464cb668cfdcec146a1b58f1f6737335a808df97dc58b66596b4c50a03f')
+  const cube = parseCube(source.toString('utf8'))
+  const compiled = compileRuntimeLut(cube)
+  const runtime = await readFile(new URL('runtime/bali-400-v1.lut', assetRoot))
+  assert.deepEqual(runtime, compiled)
+  assert.equal(parseRuntimeLut(runtime).size, 33)
+
+  const recipe = JSON.parse(await readFile(new URL('recipe.json', sourceRoot), 'utf8'))
+  assert.doesNotThrow(() => assertSchema(recipeSchema, recipe, 'Bali 400 recipe'))
+  assert.equal(validateLutRecipe(recipe, 'bali-400-v1'), recipe)
+  assert.deepEqual(recipe.grain, { amount: 0.13, size: 0.32, roughness: 0.35 })
+  validateAttribution(await readFile(new URL('attribution.txt', sourceRoot), 'utf8'))
+  await stat(new URL('authoring-notes.md', sourceRoot))
+  const previewNames = await readdir(new URL('previews/', assetRoot))
+  assert.deepEqual(previewNames, ['preview-01.jpg'])
+  const preview = await sharp(fileURLToPath(new URL('previews/preview-01.jpg', assetRoot))).metadata()
+  assert.equal(preview.format, 'jpeg')
+  assert.ok(preview.width >= 1000 && preview.height >= 600)
+  assert.deepEqual((await readdir(sourceRoot)).sort(), [
+    'attribution.txt',
+    'authoring-notes.md',
+    'recipe.json',
+    'source',
+  ])
+  assert.deepEqual((await readdir(assetRoot)).sort(), ['attribution.txt', 'previews', 'recipe.json', 'runtime'])
 })
 
 test('third-party attribution must explicitly cover commercial redistribution', () => {

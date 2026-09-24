@@ -2,6 +2,8 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const { readFileSync } = require('node:fs')
+const { join } = require('node:path')
 const {
   canonicalFilePath,
   isFileUriInsideDirectory,
@@ -65,4 +67,41 @@ test('finalize drain removes only snapshot entries that resolved', () => {
   const retried = { stagingKey: 'waiting', attempts: 1 }
 
   assert.deepEqual(mergePendingDrain([resolved, waiting], [resolved, waiting], [retried]), [retried])
+})
+
+test('private photo views downscale without persistent or decoded-image caching', () => {
+  const source = readFileSync(join(__dirname, '../src/components/PrivatePhotoImage.tsx'), 'utf8')
+  const preview = readFileSync(join(__dirname, '../src/services/displayPreview.ts'), 'utf8')
+  const privacy = readFileSync(join(__dirname, '../src/services/imagePrivacy.ts'), 'utf8')
+
+  assert.match(source, /cachePolicy="none"/)
+  assert.match(source, /if \(!uri\.startsWith\('file:\/\/'\)\)/)
+  assert.match(source, /ensureDisplayPreview\(uri\)/)
+  assert.match(source, /width: Math\.ceil\(displayWidth \* PixelRatio\.get\(\)\)/)
+  assert.match(source, /height: Math\.ceil\(displayHeight \* PixelRatio\.get\(\)\)/)
+  assert.match(source, /allowDownscaling/)
+  assert.match(source, /enforceEarlyResizing/)
+  assert.match(source, /recyclingKey=\{photoId\}/)
+  assert.match(source, /transition=\{0\}/)
+  assert.match(source, /Image\.clearMemoryCache\(\)/)
+  assert.match(preview, /DISPLAY_LONG_EDGE = 2688/)
+  assert.match(preview, /previewQueue = queued\.then/)
+  assert.match(preview, /ref\?\.release\(\)/)
+  assert.match(preview, /release\(resizeContext\)/)
+  assert.match(preview, /release\(baseContext\)/)
+  assert.match(privacy, /deleteDisplayPreview\(uri\)/)
+  assert.match(privacy, /deleteOwnedDirectory\(DISPLAY_PREVIEW_DIRECTORY\)/)
+})
+
+test('quick-shot review keeps a bounded number of decoded pages mounted', () => {
+  const source = readFileSync(join(__dirname, '../src/app/review.tsx'), 'utf8')
+
+  assert.match(source, /<PrivatePhotoImage/)
+  assert.match(source, /initialNumToRender=\{1\}/)
+  assert.match(source, /maxToRenderPerBatch=\{1\}/)
+  assert.match(source, /windowSize=\{3\}/)
+  assert.match(source, /removeClippedSubviews/)
+  assert.equal((source.match(/<PrivatePhotoImage/g) ?? []).length, 1)
+  assert.match(source, /ensureDisplayPreview\(photo\.uri\)/)
+  assert.match(source, /clearReleasedPrivatePhotoMemory/)
 })
