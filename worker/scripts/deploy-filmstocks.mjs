@@ -6,15 +6,19 @@ import { fileURLToPath } from 'node:url'
 
 const workerRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const assetsRoot = join(workerRoot, 'filmstock-assets')
+const wranglerPath = join(workerRoot, 'node_modules', 'wrangler', 'bin', 'wrangler.js')
 const bucket = 'momints-filmstocks'
 const baseUrl = process.env.FILMSTOCK_SMOKE_BASE_URL?.replace(/\/$/, '')
 if (!baseUrl) throw new Error('FILMSTOCK_SMOKE_BASE_URL is required for immutable remote preflight and smoke tests')
 
 function run(command, args) {
-  const executable = process.platform === 'win32' && command === 'npx' ? 'npx.cmd' : command
-  const result = spawnSync(executable, args, { cwd: workerRoot, stdio: 'inherit', shell: false })
+  const result = spawnSync(command, args, { cwd: workerRoot, stdio: 'inherit', shell: false })
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed`)
+}
+
+function runWrangler(args) {
+  run(process.execPath, [wranglerPath, ...args])
 }
 
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -44,8 +48,7 @@ for (const [key, expectedHash] of Object.entries(lock)) {
     continue
   }
   if (existing.status !== 404) throw new Error(`R2 preflight failed for ${key} (${existing.status})`)
-  run('npx', [
-    'wrangler',
+  runWrangler([
     'r2',
     'object',
     'put',
@@ -58,7 +61,7 @@ for (const [key, expectedHash] of Object.entries(lock)) {
   ])
 }
 
-run('npx', ['wrangler', 'deploy'])
+runWrangler(['deploy'])
 const catalogueResponse = await fetch(`${baseUrl}/v1/filmstocks`, { cache: 'no-store' })
 if (!catalogueResponse.ok) throw new Error(`Production catalogue smoke test failed (${catalogueResponse.status})`)
 const catalogue = await catalogueResponse.json()
