@@ -11,7 +11,9 @@ const baseUrl = process.env.FILMSTOCK_SMOKE_BASE_URL?.replace(/\/$/, '')
 if (!baseUrl) throw new Error('FILMSTOCK_SMOKE_BASE_URL is required for immutable remote preflight and smoke tests')
 
 function run(command, args) {
-  const result = spawnSync(command, args, { cwd: workerRoot, stdio: 'inherit', shell: process.platform === 'win32' })
+  const executable = process.platform === 'win32' && command === 'npx' ? 'npx.cmd' : command
+  const result = spawnSync(executable, args, { cwd: workerRoot, stdio: 'inherit', shell: false })
+  if (result.error) throw result.error
   if (result.status !== 0) throw new Error(`${command} ${args.join(' ')} failed`)
 }
 
