@@ -1,5 +1,5 @@
 {
-  "catalogueUpdatedAt": "2026-09-23T23:29:34.203Z",
+  "catalogueUpdatedAt": "2026-09-24T10:33:05.592Z",
   "filmstocks": [
     {
       "filmStockId": "bali-400-v1",
@@ -15,8 +15,8 @@
         "filmstocks/bali-400-v1/previews/preview-01.jpg"
       ],
       "recipePath": "filmstocks/bali-400-v1/recipe.json",
-      "availableFrom": "2026-10-01T00:00:00.000Z",
-      "availableUntil": "2026-11-15T00:00:00.000Z",
+      "availableFrom": "2026-09-24T00:00:00.000Z",
+      "availableUntil": "2027-01-01T00:00:00.000Z",
       "evergreen": false,
       "minimumEngineVersion": 2,
       "baseMode": "color"
