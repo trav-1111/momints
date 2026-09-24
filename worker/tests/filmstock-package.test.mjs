@@ -138,8 +138,8 @@ test('Martha production source is immutable and matches its deployable runtime',
   await stat(new URL('authoring-notes.md', sourceRoot))
 
   const previewNames = await readdir(new URL('previews/', assetRoot))
-  assert.deepEqual(previewNames, ['preview-01.jpg'])
-  const preview = await sharp(fileURLToPath(new URL('previews/preview-01.jpg', assetRoot))).metadata()
+  assert.deepEqual(previewNames, ['preview-01.jpg', 'preview-02.jpg'])
+  const preview = await sharp(fileURLToPath(new URL('previews/preview-02.jpg', assetRoot))).metadata()
   assert.equal(preview.format, 'jpeg')
   assert.ok(preview.width >= 1000 && preview.height >= 600)
   assert.deepEqual((await readdir(sourceRoot)).sort(), [

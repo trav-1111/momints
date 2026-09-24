@@ -1,5 +1,5 @@
 {
-  "catalogueUpdatedAt": "2026-09-24T22:34:03.155Z",
+  "catalogueUpdatedAt": "2026-09-24T22:54:00.000Z",
   "filmstocks": [
     {
       "filmStockId": "bali-400-v1",
@@ -33,7 +33,7 @@
         "subtle grain"
       ],
       "previewPaths": [
-        "filmstocks/martha-v1/previews/preview-01.jpg"
+        "filmstocks/martha-v1/previews/preview-02.jpg"
       ],
       "recipePath": "filmstocks/martha-v1/recipe.json",
       "availableFrom": "2026-09-24T00:00:00.000Z",
