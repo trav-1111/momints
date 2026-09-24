@@ -1,5 +1,5 @@
 {
-  "catalogueUpdatedAt": "2026-09-24T10:33:05.592Z",
+  "catalogueUpdatedAt": "2026-09-24T22:34:03.155Z",
   "filmstocks": [
     {
       "filmStockId": "bali-400-v1",
@@ -15,6 +15,27 @@
         "filmstocks/bali-400-v1/previews/preview-01.jpg"
       ],
       "recipePath": "filmstocks/bali-400-v1/recipe.json",
+      "availableFrom": "2026-09-24T00:00:00.000Z",
+      "availableUntil": "2027-01-01T00:00:00.000Z",
+      "evergreen": false,
+      "minimumEngineVersion": 2,
+      "baseMode": "color"
+    },
+    {
+      "filmStockId": "martha-v1",
+      "displayName": "Martha",
+      "shortDescription": "Lush saturation, rich colors, lifted blacks, vintage tone.",
+      "characteristics": [
+        "lush saturation",
+        "rich colors",
+        "lifted blacks",
+        "vintage tone",
+        "subtle grain"
+      ],
+      "previewPaths": [
+        "filmstocks/martha-v1/previews/preview-01.jpg"
+      ],
+      "recipePath": "filmstocks/martha-v1/recipe.json",
       "availableFrom": "2026-09-24T00:00:00.000Z",
       "availableUntil": "2027-01-01T00:00:00.000Z",
       "evergreen": false,

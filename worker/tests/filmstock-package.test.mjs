@@ -119,6 +119,38 @@ test('Bali 400 production source is immutable and its deployable package exclude
   assert.deepEqual((await readdir(assetRoot)).sort(), ['attribution.txt', 'previews', 'recipe.json', 'runtime'])
 })
 
+test('Martha production source is immutable and matches its deployable runtime', async () => {
+  const sourceRoot = new URL('../filmstock-sources/martha-v1/', import.meta.url)
+  const assetRoot = new URL('../filmstock-assets/filmstocks/martha-v1/', import.meta.url)
+  const source = await readFile(new URL('source/martha-v1.cube', sourceRoot))
+  assert.equal(sha256(source), '433e0af75d815254ac4837e4de15bd5055499a93493b3389f85fd4e12a1a286d')
+
+  const cube = parseCube(source.toString('utf8'))
+  const runtime = await readFile(new URL('runtime/martha-v1.lut', assetRoot))
+  assert.deepEqual(runtime, compileRuntimeLut(cube))
+  assert.equal(parseRuntimeLut(runtime).size, 33)
+
+  const recipe = JSON.parse(await readFile(new URL('recipe.json', sourceRoot), 'utf8'))
+  assert.doesNotThrow(() => assertSchema(recipeSchema, recipe, 'Martha recipe'))
+  assert.equal(validateLutRecipe(recipe, 'martha-v1'), recipe)
+  assert.deepEqual(recipe.grain, { amount: 0.12, size: 0.3, roughness: 0.34 })
+  validateAttribution(await readFile(new URL('attribution.txt', sourceRoot), 'utf8'))
+  await stat(new URL('authoring-notes.md', sourceRoot))
+
+  const previewNames = await readdir(new URL('previews/', assetRoot))
+  assert.deepEqual(previewNames, ['preview-01.jpg'])
+  const preview = await sharp(fileURLToPath(new URL('previews/preview-01.jpg', assetRoot))).metadata()
+  assert.equal(preview.format, 'jpeg')
+  assert.ok(preview.width >= 1000 && preview.height >= 600)
+  assert.deepEqual((await readdir(sourceRoot)).sort(), [
+    'attribution.txt',
+    'authoring-notes.md',
+    'recipe.json',
+    'source',
+  ])
+  assert.deepEqual((await readdir(assetRoot)).sort(), ['attribution.txt', 'previews', 'recipe.json', 'runtime'])
+})
+
 test('third-party attribution must explicitly cover commercial redistribution', () => {
   const valid =
     'Creator: Momints\nSource: Original\nLicence: Proprietary\nCommercial use: permitted\nRedistribution: permitted\n'
