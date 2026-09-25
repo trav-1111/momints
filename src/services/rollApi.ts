@@ -85,6 +85,8 @@ export async function request<T>(path: string, init: RequestInit, timeoutMs: num
 export interface CreateRollBody {
   wallet: string
   size: 12 | 24
+  /** Immutable recipe identity selected before loading the roll. */
+  filmStockId: string
   /** User-editable vanity display name. */
   artist?: string
   /** Verified SKR handle, resolved app-side. Defaults to the wallet address. */
@@ -110,6 +112,7 @@ export interface CreateRollResponse {
   status: 'OPEN'
   mintedCount: number
   fundingWarning: string | null
+  filmStockId: string
 }
 
 export function createWorkerRoll(body: CreateRollBody): Promise<CreateRollResponse> {
@@ -256,6 +259,8 @@ export interface WorkerRollDetail extends OpenRollSummary {
   coverUri: string
   metadataUri: string
   createdAt: string
+  /** Worker added the verified developed marker before revoking its delegate. */
+  developedOnChain: boolean
   frames: WorkerFrameSummary[]
 }
 

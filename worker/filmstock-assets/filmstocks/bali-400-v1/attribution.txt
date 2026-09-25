@@ -1,0 +1,8 @@
+Creator: Momints production adaptation
+Source: 33-point SDR sRGB approximation derived from a user-supplied Adobe Camera Raw Develop preset; no preset file, private scan pixels, or user photographs are deployed
+Licence: Proprietary production package; source preset cleared by Momints for commercial use and redistribution on 2026-09-24
+Commercial use: yes
+Redistribution: yes
+
+The source photographs are private references and are not included in this licence or package.
+Preview: AI-generated original promotional scene, processed with the Bali 400 LUT. No private scans or user photographs are included.

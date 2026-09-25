@@ -5,6 +5,10 @@ export interface QuickFinalizeMessage {
 
 export interface Env {
   DB: D1Database
+  /** Public, immutable film recipes, preview images and texture assets. */
+  FILMSTOCK_ASSETS: R2Bucket
+  /** Stateless abuse protection for the public DAS-backed unlock endpoint. */
+  FILMSTOCK_UNLOCK_LIMITER: RateLimit
   /** Staged quick-mint images, pending a verified fee. 24h lifecycle rule. */
   QUICK_STAGING: R2Bucket
   /**

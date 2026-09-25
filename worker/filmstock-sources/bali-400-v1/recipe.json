@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "filmStockId": "bali-400-v1",
+  "displayName": "Bali 400",
+  "shortDescription": "Warm, nostalgic colour with dense shadows and restrained highlights.",
+  "characteristics": ["warm skin tones", "restrained highlights", "muted greens", "subtle grain"],
+  "inputColorSpace": "sRGB",
+  "outputColorSpace": "sRGB",
+  "baseMode": "color",
+  "lut": {
+    "format": "momints-lut",
+    "size": 33,
+    "intensity": 1
+  },
+  "exposure": { "ev": 0 },
+  "grain": { "amount": 0.13, "size": 0.32, "roughness": 0.35 },
+  "halation": { "amount": 0.025, "radius": 0.16 },
+  "bloom": { "amount": 0.015, "radius": 0.16 },
+  "sharpness": { "amount": -0.06 },
+  "vignette": { "amount": 0.02 },
+  "minimumEngineVersion": 2
+}

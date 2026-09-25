@@ -18,7 +18,7 @@ import type { MintFilmUsed, RollContext } from '../store/mintQueue'
 import type { CaptureMeta } from '../store/photos'
 import type { AspectRatio } from '../store/session'
 import { tryPermanentQuickImage } from '../services/permanentAsset'
-import { verifyPermanentImage } from '../services/imagePrivacy'
+import { isPermanentImagePending, verifyPermanentImage } from '../services/imagePrivacy'
 
 const SKR_UNAVAILABLE_NOTE = '$SKR unavailable — paying with SOL instead'
 
@@ -43,7 +43,7 @@ export interface BatchItemInput {
 
 export type BatchItemUpdate =
   | { status: 'uploading' | 'signing'; note?: string }
-  | { status: 'confirming'; note?: string; signature?: string; mintAddress?: string }
+  | { status: 'confirming'; note?: string; signature?: string; mintAddress?: string; imageUri?: string }
   | { status: 'success'; signature: string; mintAddress: string; imageUri: string }
   | { status: 'failed'; error: string }
 
@@ -253,7 +253,26 @@ export function useMint() {
             description: `Shot on Seeker by ${item.artist}`,
             attributes: workerFrameAttributes(item),
           })
-          const imageUri = await verifyPermanentImage(res.imageUri)
+          let imageUri: string
+          try {
+            imageUri = await verifyPermanentImage(res.imageUri)
+          } catch (error) {
+            if (!isPermanentImagePending(error)) throw error
+
+            // The Worker has returned the minted asset and permanent URI. A
+            // gateway 404 at this point means Arweave is still propagating,
+            // not that the mint failed. Keep the encrypted roll source and
+            // let the progress screen retry retrieval without offering a
+            // second mint transaction.
+            onItem(item.photoId, {
+              status: 'confirming',
+              signature: res.signature ?? undefined,
+              mintAddress: res.assetAddress,
+              imageUri: res.imageUri,
+              note: 'Minted · permanent image becoming available (usually 8–12 min)',
+            })
+            continue
+          }
           summary.succeeded++
           onItem(item.photoId, {
             status: 'success',

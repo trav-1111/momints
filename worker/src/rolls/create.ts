@@ -15,6 +15,7 @@ import { SKR_MINT_ADDRESS } from '../skr/config'
 import { generateCover } from './cover'
 import { estimatedRollBytes, isRollSize, type RollSize } from './config'
 import { verifyRollFeePayment } from './verify'
+import { knownFilmStock } from '../filmstocks/catalogue'
 
 export interface CreateRollRequest {
   wallet: string
@@ -29,6 +30,8 @@ export interface CreateRollRequest {
   feeSignature: string
   /** Which currency paid the fee. Defaults 'SOL'. Not to be confused with `skrIdentity` (the SKR handle display name) — this is the $SKR token payment option. */
   payment?: 'SOL' | 'SKR'
+  /** Immutable recipe identity selected before the first exposure. */
+  filmStockId?: string
 }
 
 export interface CreateRollDeps {
@@ -93,6 +96,13 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
     throw new HttpError(400, `size must be 12 or 24, got ${JSON.stringify(req.size)}`)
   }
   const size: RollSize = req.size
+  // Rolling-deploy compatibility: app builds predating filmstocks sent no
+  // selection at all. Keep them working as the original Color house film;
+  // every filmstock-aware build sends the exact immutable ID explicitly.
+  const filmStockId = req.filmStockId ?? 'momints-color-v1'
+  if (!knownFilmStock(filmStockId)) {
+    throw new HttpError(400, `Unknown filmStockId: ${JSON.stringify(req.filmStockId)}`)
+  }
   const skrIdentity = req.skrIdentity ? sanitizeDisplayName(req.skrIdentity) : req.wallet
   const artist = req.artist ? sanitizeDisplayName(req.artist) : skrIdentity
   if (!artist) {
@@ -143,7 +153,10 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
     // own doc comment on why it is otherwise deferred).
     const quote = await db.getRollSkrQuote(req.wallet)
     if (!quote) {
-      throw new HttpError(402, `No $SKR quote was ever issued for wallet ${req.wallet} — call POST /skr/quote before paying`)
+      throw new HttpError(
+        402,
+        `No $SKR quote was ever issued for wallet ${req.wallet} — call POST /skr/quote before paying`,
+      )
     }
     const umi = await getUmi()
     skrCheck = {
@@ -173,7 +186,10 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
   })
   if (!verdict.ok) {
     if (verdict.retryable) {
-      throw new HttpError(503, `${verdict.reason}. Retry roll creation with the same feeSignature — nothing has been spent yet.`)
+      throw new HttpError(
+        503,
+        `${verdict.reason}. Retry roll creation with the same feeSignature — nothing has been spent yet.`,
+      )
     }
     throw new HttpError(402, `Roll fee refused: ${verdict.reason}`)
   }
@@ -218,6 +234,8 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
         { trait_type: 'skr_identity', value: skrIdentity },
         { trait_type: 'artist', value: artist },
         { trait_type: 'exposures', value: String(size) },
+        { trait_type: 'creatorAddress', value: req.wallet },
+        { trait_type: 'filmStockId', value: filmStockId },
       ],
       creators: [{ address: req.wallet, share: 100 }],
     }),
@@ -256,6 +274,9 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
       // collection for Royalties when the asset has none of its own, so one
       // plugin here covers every frame ever minted into this roll.
       royaltiesPlugin(publicKey(req.wallet)),
+      // The URI points to immutable Arweave data; this also prevents a later
+      // update-authority change from redirecting the roll to different JSON.
+      { type: 'ImmutableMetadata' },
     ],
   })
     .setBlockhash(blockhash)
@@ -307,5 +328,6 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
     status: 'OPEN' as const,
     mintedCount: 0,
     fundingWarning: fundingStatus.warning,
+    filmStockId,
   }
 }

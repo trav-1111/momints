@@ -1,4 +1,4 @@
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator'
+import { ImageManipulator, SaveFormat, type ImageManipulatorContext, type ImageRef } from 'expo-image-manipulator'
 import { File } from 'expo-file-system'
 import type { AspectRatio } from '../store/session'
 
@@ -61,13 +61,20 @@ function computeCropRect(w: number, h: number, aspect: Exclude<AspectRatio, 'ful
 export async function cropToAspect(uri: string, aspect: AspectRatio): Promise<string> {
   if (aspect === 'full') return uri
 
+  let baseContext: ImageManipulatorContext | null = null
+  let cropContext: ImageManipulatorContext | null = null
+  let base: ImageRef | null = null
+  let croppedRef: ImageRef | null = null
   try {
     // Load once to get orientation-normalized dimensions, then crop that same ref.
-    const base = await ImageManipulator.manipulate(uri).renderAsync()
+    baseContext = ImageManipulator.manipulate(uri)
+    base = await baseContext.renderAsync()
     const rect = computeCropRect(base.width, base.height, aspect)
     if (!rect) return uri
 
-    const croppedRef = await ImageManipulator.manipulate(base).crop(rect).renderAsync()
+    cropContext = ImageManipulator.manipulate(base)
+    cropContext.crop(rect)
+    croppedRef = await cropContext.renderAsync()
     const saved = await croppedRef.saveAsync({ format: SaveFormat.JPEG, compress: JPEG_QUALITY })
 
     // Keep every replacement beside its temporary input.
@@ -86,5 +93,10 @@ export async function cropToAspect(uri: string, aspect: AspectRatio): Promise<st
   } catch (error) {
     console.error('cropToAspect failed, keeping full frame:', error)
     return uri
+  } finally {
+    cropContext?.release()
+    baseContext?.release()
+    croppedRef?.release()
+    base?.release()
   }
 }

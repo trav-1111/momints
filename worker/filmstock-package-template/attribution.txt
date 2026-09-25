@@ -1,0 +1,5 @@
+Creator: Momints
+Source: Original Momints grade
+Licence: Proprietary, owned by Momints
+Commercial use: yes
+Redistribution: yes

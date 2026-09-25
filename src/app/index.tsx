@@ -52,7 +52,7 @@ export default function SplashScreen() {
             marginTop: 16,
           }}
         >
-          POINT · SHOOT · MINT
+          SHOOT · MINT · YOURS
         </Text>
 
         <ActivityIndicator size="small" color={colors.accentSoft} style={{ marginTop: 46 }} />

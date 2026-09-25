@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { View, Text, Pressable, FlatList, Image, Dimensions, Alert } from 'react-native'
+import { View, Text, Pressable, FlatList, Dimensions, Alert } from 'react-native'
 import { useRouter } from 'expo-router'
 import * as MediaLibrary from 'expo-media-library'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
@@ -13,6 +13,7 @@ import { deleteCapture } from '../services/imagePrivacy'
 import { FinishedRollCard } from '../components/FinishedRollCard'
 import { colors, fonts } from '../theme'
 import { IconBack, IconCheck, IconMint, IconSave, IconTrash } from '../components/icons'
+import { PrivatePhotoImage } from '../components/PrivatePhotoImage'
 
 const { width } = Dimensions.get('window')
 const ITEM_SIZE = (width - 36 - 12) / 3
@@ -216,7 +217,14 @@ export default function GalleryScreen() {
           }}
           style={{ margin: 2, borderRadius: 8, overflow: 'hidden', width: ITEM_SIZE, height: ITEM_SIZE }}
         >
-          <Image source={{ uri: item.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+          <PrivatePhotoImage
+            uri={item.uri}
+            photoId={item.id}
+            displayWidth={ITEM_SIZE}
+            displayHeight={ITEM_SIZE}
+            style={{ width: '100%', height: '100%' }}
+            contentFit="cover"
+          />
 
           {selectMode && (
             <View
@@ -327,6 +335,10 @@ export default function GalleryScreen() {
           renderItem={renderPhoto}
           keyExtractor={(item) => item.id}
           numColumns={3}
+          initialNumToRender={12}
+          maxToRenderPerBatch={9}
+          windowSize={5}
+          removeClippedSubviews
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 12 }}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={

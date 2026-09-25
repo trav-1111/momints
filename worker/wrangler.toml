@@ -100,6 +100,17 @@ migrations_dir = "migrations"
 binding = "QUICK_STAGING"
 bucket_name = "momints-quick-staging"
 
+# Public film recipes, textures and preview images. Object keys are immutable
+# and versioned by filmStockId; publishing a visual change requires a new ID.
+[[r2_buckets]]
+binding = "FILMSTOCK_ASSETS"
+bucket_name = "momints-filmstocks"
+
+[[ratelimits]]
+name = "FILMSTOCK_UNLOCK_LIMITER"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }
+
 # Finalize jobs, enqueued only after a fee-paying mint is VERIFIED on-chain.
 [[queues.producers]]
 binding = "QUICK_FINALIZE"

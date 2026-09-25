@@ -22,6 +22,8 @@ export interface RollRecord {
   skrIdentity: string
   /** App-side display metadata for contact sheets; never affects the mint. */
   film: FilmMode
+  /** Exact immutable processing recipe; inferred for legacy Color/B&W rolls. */
+  filmStockId: string
   /** Capture crop applied to every frame; absent on legacy records. */
   aspect?: AspectRatio
   framesMinted: number
@@ -61,6 +63,8 @@ function parseRecord(raw: unknown): RollRecord | null {
     artist: r.artist,
     skrIdentity: r.skrIdentity,
     film: r.film === 'bw' ? 'bw' : 'color',
+    filmStockId:
+      typeof r.filmStockId === 'string' ? r.filmStockId : r.film === 'bw' ? 'momints-bw-v1' : 'momints-color-v1',
     aspect:
       r.aspect === '1:1' || r.aspect === '4:3' || r.aspect === '16:9' || r.aspect === 'full' ? r.aspect : undefined,
     framesMinted: typeof r.framesMinted === 'number' ? r.framesMinted : 0,

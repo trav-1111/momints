@@ -8,6 +8,7 @@ import { useMintQueue } from '../store/mintQueue'
 import { useRollRegistry } from '../store/rollRegistry'
 import { useWalletDomain } from './useWalletDomain'
 import { acknowledgeVerifiedRollCompletion, verifyAndDiscardCompletedRollVault } from '../services/rollVault'
+import { useFilmStockStore } from '../store/filmstocks'
 
 /**
  * Mint the active (developed) roll: auto-queue every remaining frame with
@@ -61,6 +62,7 @@ export function useMintRoll() {
       const { completeRoll } = useSessionStore.getState()
       try {
         await verifyAndDiscardCompletedRollVault(activeRoll, walletAddress)
+        useFilmStockStore.getState().unlockLocally(walletAddress, activeRoll.film.filmStockId)
         if (activeRoll.collectionAddress) {
           useRollRegistry.getState().closeRoll(activeRoll.collectionAddress)
         }
@@ -85,6 +87,9 @@ export function useMintRoll() {
       ? useRollRegistry.getState().getRoll(activeRoll.collectionAddress)
       : undefined
     const artist = registryRecord?.artist ?? domain ?? `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`
+    const filmUsed =
+      useFilmStockStore.getState().catalogue.find((stock) => stock.filmStockId === activeRoll.film.filmStockId)
+        ?.displayName ?? (activeRoll.film.mode === 'bw' ? 'B&W' : 'Color')
 
     frames.forEach((photo) => {
       if (isMinted(photo)) return
@@ -96,7 +101,7 @@ export function useMintRoll() {
         artist,
         capturedAt: photo.capturedAt,
         captureMeta: photo.meta,
-        filmUsed: activeRoll.film.mode === 'bw' ? 'B&W' : 'Color',
+        filmUsed,
         aspect: activeRoll.aspect,
         rollContext: {
           rollId: activeRoll.id,

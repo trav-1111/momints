@@ -43,6 +43,7 @@ app-example
 # generated native folders
 /ios
 /android
+/worker/filmstock-validation/
 modules/*/android/build
 modules/*/android/.cxx
 

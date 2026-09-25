@@ -340,7 +340,12 @@ export async function verifyAndDiscardCompletedRollVault(activeRoll: ActiveRoll,
     throw new Error(`The encrypted roll contains ${manifest?.frames.length ?? 0} of ${activeRoll.size} frames.`)
   }
   const detail = await getWorkerRoll(activeRoll.collectionAddress)
-  if (detail.wallet !== wallet || detail.status !== 'COMPLETE' || detail.mintedCount !== activeRoll.size) {
+  if (
+    detail.wallet !== wallet ||
+    detail.status !== 'COMPLETE' ||
+    detail.mintedCount !== activeRoll.size ||
+    !detail.developedOnChain
+  ) {
     throw new Error('The Worker has not confirmed the complete prepaid roll yet.')
   }
   const { umi } = createMintUmi(wallet, getClusterRpc())

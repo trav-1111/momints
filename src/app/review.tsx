@@ -1,5 +1,15 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
-import { View, Text, Pressable, FlatList, Image, Dimensions, Alert, StatusBar, ViewStyle } from 'react-native'
+import {
+  View,
+  Text,
+  Pressable,
+  FlatList,
+  Dimensions,
+  Alert,
+  StatusBar,
+  ViewStyle,
+  InteractionManager,
+} from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as MediaLibrary from 'expo-media-library'
@@ -7,7 +17,9 @@ import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore, Photo } from '../store/photos'
 import { colors, fonts, tracking } from '../theme'
 import { IconArrowRight, IconBack, IconMint, IconSave, IconTrash } from '../components/icons'
+import { clearReleasedPrivatePhotoMemory, PrivatePhotoImage } from '../components/PrivatePhotoImage'
 import { deleteCapture } from '../services/imagePrivacy'
+import { ensureDisplayPreview } from '../services/displayPreview'
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window')
 
@@ -52,6 +64,16 @@ export default function ReviewScreen() {
   const allMarked = pendingCount === 0 && photos.length > 0
 
   const currentPhoto = photos[currentIndex]
+
+  useEffect(() => {
+    const task = InteractionManager.runAfterInteractions(() => {
+      void clearReleasedPrivatePhotoMemory()
+      for (const photo of [photos[currentIndex - 1], photos[currentIndex + 1]]) {
+        if (photo?.uri.startsWith('file://')) void ensureDisplayPreview(photo.uri).catch(() => {})
+      }
+    })
+    return () => task.cancel()
+  }, [currentIndex, photos])
 
   const handleBack = useCallback(() => {
     router.back()
@@ -186,8 +208,6 @@ export default function ReviewScreen() {
   const renderItem = useCallback(
     ({ item }: { item: Photo }) => (
       <View style={{ width: screenWidth, height: screenHeight }}>
-        <Image source={{ uri: item.uri }} style={{ width: screenWidth, height: screenHeight }} resizeMode="cover" />
-
         <LinearGradient
           colors={['rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
           style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 120 }}
@@ -266,6 +286,17 @@ export default function ReviewScreen() {
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <StatusBar barStyle="light-content" />
 
+      {currentPhoto ? (
+        <PrivatePhotoImage
+          uri={currentPhoto.uri}
+          photoId={currentPhoto.id}
+          displayWidth={screenWidth}
+          displayHeight={screenHeight}
+          style={{ position: 'absolute', width: screenWidth, height: screenHeight }}
+          contentFit="cover"
+        />
+      ) : null}
+
       <FlatList
         ref={flatListRef}
         data={photos}
@@ -273,6 +304,10 @@ export default function ReviewScreen() {
         keyExtractor={(item) => item.id}
         horizontal
         pagingEnabled
+        initialNumToRender={1}
+        maxToRenderPerBatch={1}
+        windowSize={3}
+        removeClippedSubviews
         showsHorizontalScrollIndicator={false}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
