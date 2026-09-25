@@ -14,7 +14,7 @@ import { useFilmStockStore } from '../../store/filmstocks'
 import { colors, fonts, tracking } from '../../theme'
 import { IconBack } from '../../components/icons'
 import { PrivatePhotoImage } from '../../components/PrivatePhotoImage'
-import { deleteCapture } from '../../services/imagePrivacy'
+import { deleteCapture, isPermanentImagePending, verifyPermanentImage } from '../../services/imagePrivacy'
 
 type MintStatus = 'pending' | 'uploading' | 'signing' | 'confirming' | 'success' | 'failed'
 
@@ -27,6 +27,8 @@ interface MintProgress {
   status: MintStatus
   txSignature?: string
   mintAddress?: string
+  /** Roll image URI returned by the Worker while Arweave is still propagating. */
+  permanentImageUri?: string
   error?: string
   /** The quoted $SKR amount ("Paying 12.50 $SKR") or a fallback notice, when this item requested $SKR payment. See useMint.ts's stageAndRecord. */
   note?: string
@@ -154,6 +156,7 @@ export default function MintProgressScreen() {
           note: update.note,
           txSignature: update.signature,
           mintAddress: update.mintAddress,
+          permanentImageUri: update.imageUri,
           error: undefined,
         })
       } else {
@@ -204,6 +207,46 @@ export default function MintProgressScreen() {
       }),
     )
   }, [mintHistory, progress, removeFromQueue, removePhoto, setPhotoAction, updatePhotoUri])
+
+  // A roll frame can be fully minted before its Arweave image is visible at
+  // the public gateway. Recheck those known permanent URIs while this screen
+  // remains open; 404/network propagation stays calm and pending, while a
+  // structurally invalid permanent URI still surfaces as a real failure.
+  useEffect(() => {
+    const waiting = progress.filter(
+      (item) => item.status === 'confirming' && item.permanentImageUri && item.mintAddress,
+    )
+    if (waiting.length === 0) return
+
+    let cancelled = false
+    const timer = setInterval(() => {
+      void Promise.all(
+        waiting.map(async (item) => {
+          try {
+            const imageUri = await verifyPermanentImage(item.permanentImageUri!)
+            if (cancelled) return
+            onItemUpdate(item.photoId, {
+              status: 'success',
+              signature: item.txSignature ?? '',
+              mintAddress: item.mintAddress!,
+              imageUri,
+            })
+          } catch (error) {
+            if (cancelled || isPermanentImagePending(error)) return
+            onItemUpdate(item.photoId, {
+              status: 'failed',
+              error: error instanceof Error ? error.message : 'Permanent image verification failed',
+            })
+          }
+        }),
+      )
+    }, 30_000)
+
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [onItemUpdate, progress])
 
   // Mint everything still pending, in chunks with one wallet approval per
   // MINT_CHUNK_SIZE frames. Photos missing their metadata are handled by
@@ -412,7 +455,7 @@ export default function MintProgressScreen() {
       case 'signing':
         return 'Sign in your wallet…'
       case 'confirming':
-        return 'Confirming payment on-chain…'
+        return 'Confirming on-chain…'
       case 'success':
         return 'Minted!'
       case 'failed':
@@ -515,7 +558,9 @@ export default function MintProgressScreen() {
               : canEdit
                 ? `${getStatusText(item.status)} · tap to edit`
                 : item.note
-                  ? `${getStatusText(item.status)} · ${item.note}`
+                  ? item.status === 'confirming'
+                    ? item.note
+                    : `${getStatusText(item.status)} · ${item.note}`
                   : getStatusText(item.status)
 
           return (
@@ -636,8 +681,8 @@ export default function MintProgressScreen() {
                   marginBottom: 12,
                 }}
               >
-                Your mint is finalizing in the background. Arweave usually takes 8–12 minutes. It will appear in history
-                automatically.
+                Your mint is safely recorded. Arweave usually takes 8–12 minutes to make the permanent image available.
+                You can return to the camera and check again later.
               </Text>
             )}
             <Pressable

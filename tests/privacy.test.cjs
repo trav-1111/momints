@@ -105,3 +105,20 @@ test('quick-shot review keeps a bounded number of decoded pages mounted', () => 
   assert.match(source, /ensureDisplayPreview\(photo\.uri\)/)
   assert.match(source, /clearReleasedPrivatePhotoMemory/)
 })
+
+test('roll Arweave propagation is pending rather than a failed mint', () => {
+  const mint = readFileSync(join(__dirname, '../src/hooks/useMint.ts'), 'utf8')
+  const progress = readFileSync(join(__dirname, '../src/app/mint/progress.tsx'), 'utf8')
+
+  assert.match(mint, /if \(!isPermanentImagePending\(error\)\) throw error/)
+  assert.match(mint, /status: 'confirming',[\s\S]*imageUri: res\.imageUri/)
+  assert.match(progress, /verifyPermanentImage\(item\.permanentImageUri!\)/)
+  assert.match(progress, /isPermanentImagePending\(error\)/)
+  assert.match(progress, /Your mint is safely recorded\./)
+})
+
+test('splash screen uses the ownership tagline', () => {
+  const splash = readFileSync(join(__dirname, '../src/app/index.tsx'), 'utf8')
+  assert.match(splash, /SHOOT · MINT · YOURS/)
+  assert.doesNotMatch(splash, /POINT · SHOOT · MINT/)
+})
