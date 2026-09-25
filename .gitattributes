@@ -1,2 +1,4 @@
 *.cube binary
 *.lut binary
+worker/filmstock-assets/** -text
+worker/filmstock-sources/** -text
