@@ -24,9 +24,30 @@ export const KINO_SHUTTER_GAPS: KinoShutterGap[] = ['off', 'subtle', 'classic', 
 
 export const KINO_SHUTTER_GAP_LABELS: Record<KinoShutterGap, string> = {
   off: 'OFF',
-  subtle: 'SUBTLE (18ms)',
-  classic: 'CLASSIC (32ms)',
-  deep: 'DEEP (50ms)',
+  subtle: 'SUBTLE',
+  classic: 'CLASSIC',
+  deep: 'DEEP',
+}
+
+/**
+ * Computes the exact blackout duration in milliseconds for a given shutter gap
+ * and playback FPS, simulating authentic mechanical rotary shutter angles:
+ * - off: 0ms
+ * - subtle: ~18% frame period
+ * - classic: ~38% frame period (authentic 180° rotary blade)
+ * - deep: ~58% frame period (deep cinema projector flicker)
+ */
+export function getShutterBlackoutMs(gap: KinoShutterGap, fps: KinoPlaybackSpeed): number {
+  if (gap === 'off') return 0
+  const period = 1000 / fps
+  switch (gap) {
+    case 'subtle':
+      return Math.round(Math.max(12, period * 0.18))
+    case 'classic':
+      return Math.round(Math.max(20, period * 0.38))
+    case 'deep':
+      return Math.round(Math.max(30, period * 0.58))
+  }
 }
 
 interface KinoSettingsStore {

@@ -1,5 +1,17 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
-import { View, Text, Pressable, FlatList, Image, Dimensions, Alert, StatusBar, ViewStyle, StyleSheet } from 'react-native'
+import {
+  View,
+  Text,
+  Pressable,
+  FlatList,
+  Image,
+  Dimensions,
+  Alert,
+  StatusBar,
+  ViewStyle,
+  StyleSheet,
+  Animated,
+} from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as MediaLibrary from 'expo-media-library'
@@ -10,6 +22,7 @@ import {
   KINO_PLAYBACK_SPEEDS,
   SHUTTER_GAP_MS,
   KINO_SHUTTER_GAP_LABELS,
+  getShutterBlackoutMs,
 } from '../store/kinoSettings'
 import { colors, fonts, tracking } from '../theme'
 import { IconArrowRight, IconBack, IconMint, IconSave, IconTrash } from '../components/icons'
@@ -106,7 +119,8 @@ export default function ReviewScreen() {
   const cycleShutterGap = useKinoSettingsStore((s) => s.cycleShutterGap)
 
   const [isPlayingKino, setIsPlayingKino] = useState(false)
-  const [isShutterBlackout, setIsShutterBlackout] = useState(false)
+  const [playingKinoUri, setPlayingKinoUri] = useState<string | null>(null)
+  const shutterAnim = useRef(new Animated.Value(0)).current
   const isPlayingKinoRef = useRef(false)
   const kinoPlayTimer = useRef<ReturnType<typeof setInterval> | null>(null)
   const blackoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -120,10 +134,11 @@ export default function ReviewScreen() {
       clearTimeout(blackoutTimerRef.current)
       blackoutTimerRef.current = null
     }
-    setIsShutterBlackout(false)
+    shutterAnim.setValue(0)
+    setPlayingKinoUri(null)
     isPlayingKinoRef.current = false
     setIsPlayingKino(false)
-  }, [])
+  }, [shutterAnim])
 
   const toggleKinoPlayback = useCallback(() => {
     if (isPlayingKinoRef.current) {
@@ -146,38 +161,38 @@ export default function ReviewScreen() {
     let framePointer = kinoFrames.findIndex((f) => f.originalIdx === currentIndex)
     if (framePointer < 0) framePointer = 0
 
-    const gapMs = SHUTTER_GAP_MS[shutterGap] ?? 32
+    // Set first frame immediately
+    setPlayingKinoUri(kinoFrames[framePointer].uri)
+
     const framePeriodMs = Math.round(1000 / playbackFps)
-    // Clamp blackout duration to maximum 45% of total frame duration to keep exposure visible
-    const effectiveGapMs = Math.min(gapMs, Math.round(framePeriodMs * 0.45))
+    const blackoutMs = getShutterBlackoutMs(shutterGap, playbackFps)
 
     kinoPlayTimer.current = setInterval(() => {
       if (!isPlayingKinoRef.current) return
       framePointer = (framePointer + 1) % kinoFrames.length
-      const targetIdx = kinoFrames[framePointer].originalIdx
+      const targetPhoto = kinoFrames[framePointer]
 
-      if (effectiveGapMs > 0) {
-        // Drop rotary shutter blade (blackout)
-        setIsShutterBlackout(true)
-        // Advance frame behind the shutter curtain
-        setCurrentIndex(targetIdx)
-        if (flatListRef.current) {
-          flatListRef.current.scrollToIndex({ index: targetIdx, animated: false })
-        }
-        // Open shutter after mechanical blade gap
+      if (blackoutMs > 0) {
+        // Drop rotary shutter blade
+        Animated.sequence([
+          Animated.timing(shutterAnim, { toValue: 1, duration: 8, useNativeDriver: true }),
+          Animated.delay(blackoutMs),
+          Animated.timing(shutterAnim, { toValue: 0, duration: 8, useNativeDriver: true }),
+        ]).start()
+
+        // Advance image behind the shutter curtain
         blackoutTimerRef.current = setTimeout(() => {
           if (isPlayingKinoRef.current) {
-            setIsShutterBlackout(false)
+            setPlayingKinoUri(targetPhoto.uri)
+            setCurrentIndex(targetPhoto.originalIdx)
           }
-        }, effectiveGapMs)
+        }, Math.max(1, Math.round(blackoutMs / 2)))
       } else {
-        setCurrentIndex(targetIdx)
-        if (flatListRef.current) {
-          flatListRef.current.scrollToIndex({ index: targetIdx, animated: false })
-        }
+        setPlayingKinoUri(targetPhoto.uri)
+        setCurrentIndex(targetPhoto.originalIdx)
       }
     }, framePeriodMs)
-  }, [currentIndex, photos, playbackFps, shutterGap, stopKinoPlayback])
+  }, [currentIndex, photos, playbackFps, shutterGap, stopKinoPlayback, shutterAnim])
 
   // Restart playback seamlessly if user adjusts speed or shutter gap while playing
   useEffect(() => {
@@ -407,13 +422,29 @@ export default function ReviewScreen() {
         })}
       />
 
-      {/* Rotary Shutter Blackout Overlay */}
-      {isShutterBlackout && (
-        <View
-          pointerEvents="none"
-          style={[StyleSheet.absoluteFill, { backgroundColor: '#000', zIndex: 999 }]}
-        />
+      {/* Active Kino frame direct projection overlay */}
+      {isPlayingKino && playingKinoUri && (
+        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <Image
+            source={{ uri: playingKinoUri }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="contain"
+          />
+        </View>
       )}
+
+      {/* Rotary Shutter Blackout Overlay */}
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            backgroundColor: '#000',
+            opacity: shutterAnim,
+            zIndex: 999,
+          },
+        ]}
+      />
 
       {/* Top bar */}
       <View

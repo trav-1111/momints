@@ -54,20 +54,28 @@ export function useManualCameraState(
   //   'AF': focus locked to target distance; exposure adapts continuously
   const [lockMode, setLockMode] = useState<CameraLockMode>('none')
   const [lockPoint, setLockPoint] = useState<{ x: number; y: number } | null>(null)
+  const [exposurePoint, setExposurePoint] = useState<{ x: number; y: number } | null>(null)
 
   const isAeLocked = lockMode === 'AF/AE' || lockMode === 'AE'
   const isAfLocked = lockMode === 'AF/AE' || lockMode === 'AF'
 
-  const lock = useCallback((mode: CameraLockMode, normPoint?: { x: number; y: number }) => {
-    setLockMode(mode)
-    if (normPoint) {
-      setLockPoint(normPoint)
-    }
-  }, [])
+  const lock = useCallback(
+    (mode: CameraLockMode, normPoint?: { x: number; y: number }, normExpPoint?: { x: number; y: number }) => {
+      setLockMode(mode)
+      if (normPoint) {
+        setLockPoint(normPoint)
+      }
+      if (normExpPoint) {
+        setExposurePoint(normExpPoint)
+      }
+    },
+    [],
+  )
 
   const unlock = useCallback(() => {
     setLockMode('none')
     setLockPoint(null)
+    setExposurePoint(null)
   }, [])
 
   const cycleLockMode = useCallback(() => {
@@ -102,19 +110,22 @@ export function useManualCameraState(
   const fullyManual = exposureMode === 'manual'
 
   const buildState = useCallback(
-    () => ({
-      exposureMode,
-      iso: exposureMode === 'manual' ? manualIso : null,
-      shutterNs: exposureMode === 'manual' ? manualShutterNs : null,
-      focusMode,
-      focusDistance: focusMode === 'manual' ? manualFocusDiopters : null,
-      whiteBalance,
-      metering: isAeLocked ? 'spot' : meteringMode,
-      meteringNormX: isAeLocked && lockPoint ? lockPoint.x : meteringPoint.x,
-      meteringNormY: isAeLocked && lockPoint ? lockPoint.y : meteringPoint.y,
-      aeLock: isAeLocked,
-      afLock: isAfLocked,
-    }),
+    () => {
+      const activeExp = exposurePoint ?? lockPoint ?? meteringPoint
+      return {
+        exposureMode,
+        iso: exposureMode === 'manual' ? manualIso : null,
+        shutterNs: exposureMode === 'manual' ? manualShutterNs : null,
+        focusMode,
+        focusDistance: focusMode === 'manual' ? manualFocusDiopters : null,
+        whiteBalance,
+        metering: isAeLocked ? 'spot' : meteringMode,
+        meteringNormX: isAeLocked ? activeExp.x : meteringPoint.x,
+        meteringNormY: isAeLocked ? activeExp.y : meteringPoint.y,
+        aeLock: isAeLocked,
+        afLock: isAfLocked,
+      }
+    },
     [
       exposureMode,
       manualIso,
@@ -127,6 +138,7 @@ export function useManualCameraState(
       isAeLocked,
       isAfLocked,
       lockPoint,
+      exposurePoint,
     ],
   )
 
@@ -144,6 +156,7 @@ export function useManualCameraState(
     setMeteringMode('matrix')
     setLockMode('none')
     setLockPoint(null)
+    setExposurePoint(null)
   }, [viewTag])
 
   return {
@@ -168,6 +181,8 @@ export function useManualCameraState(
     setLockMode,
     lockPoint,
     setLockPoint,
+    exposurePoint,
+    setExposurePoint,
     lock,
     unlock,
     cycleLockMode,

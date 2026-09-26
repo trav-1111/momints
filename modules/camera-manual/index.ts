@@ -86,19 +86,38 @@ export function applyCameraState(viewTag: number, state: CameraControlState): vo
   const iso = state.iso == null ? null : Math.round(clamp(state.iso, ISO_RANGE))
   const shutterNs = state.shutterNs == null ? null : Math.round(clamp(state.shutterNs, SHUTTER_NS_RANGE))
 
-  CameraManualNative.applyCameraState(viewTag, {
-    exposureMode: state.exposureMode,
-    iso,
-    shutterNs,
-    focusMode: state.focusMode,
-    focusDistance: state.focusDistance,
-    awbMode: WhiteBalancePreset[state.whiteBalance],
-    meteringMode: state.metering,
-    meteringNormX: state.meteringNormX ?? 0.5,
-    meteringNormY: state.meteringNormY ?? 0.5,
-    aeLock: Boolean(state.aeLock),
-    afLock: Boolean(state.afLock),
-  })
+  try {
+    CameraManualNative.applyCameraState(viewTag, {
+      exposureMode: state.exposureMode,
+      iso,
+      shutterNs,
+      focusMode: state.focusMode,
+      focusDistance: state.focusDistance,
+      awbMode: WhiteBalancePreset[state.whiteBalance],
+      meteringMode: state.metering,
+      meteringNormX: state.meteringNormX ?? 0.5,
+      meteringNormY: state.meteringNormY ?? 0.5,
+      aeLock: Boolean(state.aeLock),
+      afLock: Boolean(state.afLock),
+    })
+  } catch {
+    // Defensive fallback if native APK was compiled prior to aeLock/afLock field additions
+    try {
+      CameraManualNative.applyCameraState(viewTag, {
+        exposureMode: state.exposureMode,
+        iso,
+        shutterNs,
+        focusMode: state.focusMode,
+        focusDistance: state.focusDistance,
+        awbMode: WhiteBalancePreset[state.whiteBalance],
+        meteringMode: state.metering,
+        meteringNormX: state.meteringNormX ?? 0.5,
+        meteringNormY: state.meteringNormY ?? 0.5,
+      })
+    } catch {
+      // No-op
+    }
+  }
 }
 
 // Clears every override (exposure, white balance, focus, metering regions —

@@ -117,6 +117,13 @@ export default function CameraScreen() {
   const [zoom, setZoom] = useState(1)
   const baseZoomRef = useRef(1)
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null)
+  const [exposurePoint, setExposurePoint] = useState<{ x: number; y: number } | null>(null)
+  const [isSeparated, setIsSeparated] = useState(false)
+  const [isHoldingFocus, setIsHoldingFocus] = useState(false)
+  const holdProgress = useRef(new Animated.Value(0)).current
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const holdAnimRef = useRef<Animated.CompositeAnimation | null>(null)
+  const isLockedRef = useRef(false)
   const focusOpacity = useRef(new Animated.Value(0)).current
   const shutterFlashAnim = useRef(new Animated.Value(0)).current
   const [walletMenuVisible, setWalletMenuVisible] = useState(false)
@@ -611,70 +618,116 @@ export default function CameraScreen() {
     }
   }, [])
 
-  // Short tap on viewfinder: focus and metering, or unlock if already locked
+  // Touch begins: show reticle and start hold-to-lock visual animation if not locked
+  const handleViewfinderPressIn = useCallback(
+    (event: GestureResponderEvent) => {
+      // If already locked, press will unlock on release
+      if (manualCamera.lockMode !== 'none') return
+
+      const { locationX, locationY } = event.nativeEvent
+      clearFadeTimer()
+      setFocusPoint({ x: locationX, y: locationY })
+      setExposurePoint({ x: locationX, y: locationY })
+      focusOpacity.setValue(1)
+      holdProgress.setValue(0)
+      setIsHoldingFocus(true)
+      isLockedRef.current = false
+
+      // Animate hold progress bar over 1200ms
+      holdAnimRef.current = Animated.timing(holdProgress, {
+        toValue: 1,
+        duration: 1200,
+        useNativeDriver: false,
+      })
+      holdAnimRef.current.start()
+
+      // Set lock timer for 1200ms
+      holdTimerRef.current = setTimeout(() => {
+        isLockedRef.current = true
+        setIsHoldingFocus(false)
+        manualCamera.lock(
+          'AF/AE',
+          { x: locationX / screenW, y: locationY / screenH },
+          { x: locationX / screenW, y: locationY / screenH },
+        )
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+        if (cameraRef.current && activeDevice?.supportsFocus) {
+          cameraRef.current.focus({ x: locationX, y: locationY }).catch(() => {})
+        }
+      }, 1200)
+    },
+    [manualCamera, clearFadeTimer, focusOpacity, holdProgress, screenW, screenH, activeDevice],
+  )
+
+  // Touch released before lock completes or while holding
+  const handleViewfinderPressOut = useCallback(() => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current)
+      holdTimerRef.current = null
+    }
+    if (holdAnimRef.current) {
+      holdAnimRef.current.stop()
+    }
+    holdProgress.setValue(0)
+    setIsHoldingFocus(false)
+  }, [holdProgress])
+
+  // Tap completed (press release)
   const handleViewfinderPress = useCallback(
     async (event: GestureResponderEvent) => {
+      // If this release was the completion of hold-to-lock, do nothing
+      if (isLockedRef.current) {
+        isLockedRef.current = false
+        return
+      }
+
       // If currently locked, tapping outside unlocks and returns to auto
       if (manualCamera.lockMode !== 'none') {
         manualCamera.unlock()
+        setIsSeparated(false)
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
         clearFadeTimer()
         Animated.timing(focusOpacity, {
           toValue: 0,
           duration: 200,
           useNativeDriver: true,
-        }).start(() => setFocusPoint(null))
+        }).start(() => {
+          setFocusPoint(null)
+          setExposurePoint(null)
+        })
         return
       }
 
+      // Quick tap: focus & meter at target point with 1.5s auto fade
       const { locationX, locationY } = event.nativeEvent
       setFocusPoint({ x: locationX, y: locationY })
+      setExposurePoint({ x: locationX, y: locationY })
+      setIsSeparated(false)
       manualCamera.setMeteringPoint({ x: locationX / screenW, y: locationY / screenH })
 
       clearFadeTimer()
       focusOpacity.setValue(1)
 
-      // Start fade out after 1.5s in auto mode
       fadeTimeoutRef.current = setTimeout(() => {
         Animated.timing(focusOpacity, {
           toValue: 0,
           duration: 300,
           useNativeDriver: true,
-        }).start(() => setFocusPoint(null))
+        }).start(() => {
+          setFocusPoint(null)
+          setExposurePoint(null)
+        })
       }, 1500)
 
       if (cameraRef.current && activeDevice?.supportsFocus) {
         try {
           await cameraRef.current.focus({ x: locationX, y: locationY })
-        } catch (error) {
-          console.log('Focus not supported or failed:', error)
+        } catch {
+          // Ignore focus canceled
         }
       }
     },
     [manualCamera, screenW, screenH, clearFadeTimer, focusOpacity, activeDevice],
-  )
-
-  // Long press on viewfinder (~1.2s): locks AF and AE at target point
-  const handleViewfinderLongPress = useCallback(
-    async (event: GestureResponderEvent) => {
-      const { locationX, locationY } = event.nativeEvent
-
-      clearFadeTimer()
-      focusOpacity.setValue(1)
-      setFocusPoint({ x: locationX, y: locationY })
-
-      manualCamera.lock('AF/AE', { x: locationX / screenW, y: locationY / screenH })
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
-
-      if (cameraRef.current && activeDevice?.supportsFocus) {
-        try {
-          await cameraRef.current.focus({ x: locationX, y: locationY })
-        } catch (error) {
-          console.log('Focus failed during lock:', error)
-        }
-      }
-    },
-    [clearFadeTimer, focusOpacity, manualCamera, screenW, screenH, activeDevice],
   )
 
   const handleCycleLock = useCallback(() => {
@@ -682,15 +735,50 @@ export default function CameraScreen() {
     Haptics.selectionAsync()
   }, [manualCamera])
 
+  const handleToggleSeparate = useCallback(() => {
+    setIsSeparated((prev) => {
+      const next = !prev
+      if (next && focusPoint) {
+        // Place separated exposure box offset slightly
+        const newExp = {
+          x: Math.min(screenW - 50, Math.max(30, focusPoint.x + 70)),
+          y: Math.max(90, Math.min(screenH - 190, focusPoint.y - 70)),
+        }
+        setExposurePoint(newExp)
+        manualCamera.setExposurePoint({ x: newExp.x / screenW, y: newExp.y / screenH })
+      } else if (!next && focusPoint) {
+        setExposurePoint(focusPoint)
+        manualCamera.setExposurePoint(null)
+      }
+      return next
+    })
+    Haptics.selectionAsync()
+  }, [focusPoint, screenW, screenH, manualCamera])
+
+  const handleExposurePointChange = useCallback(
+    (pt: { x: number; y: number }) => {
+      setExposurePoint(pt)
+      manualCamera.setExposurePoint({ x: pt.x / screenW, y: pt.y / screenH })
+      // Keep reticle visible while adjusting
+      clearFadeTimer()
+      focusOpacity.setValue(1)
+    },
+    [manualCamera, screenW, screenH, clearFadeTimer, focusOpacity],
+  )
+
   const handleUnlock = useCallback(() => {
     manualCamera.unlock()
+    setIsSeparated(false)
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     clearFadeTimer()
     Animated.timing(focusOpacity, {
       toValue: 0,
       duration: 200,
       useNativeDriver: true,
-    }).start(() => setFocusPoint(null))
+    }).start(() => {
+      setFocusPoint(null)
+      setExposurePoint(null)
+    })
   }, [manualCamera, clearFadeTimer, focusOpacity])
 
   const pinchGesture = Gesture.Pinch()
@@ -826,9 +914,9 @@ export default function CameraScreen() {
         <View style={StyleSheet.absoluteFill}>
           <Pressable
             style={StyleSheet.absoluteFill}
+            onPressIn={handleViewfinderPressIn}
+            onPressOut={handleViewfinderPressOut}
             onPress={handleViewfinderPress}
-            onLongPress={handleViewfinderLongPress}
-            delayLongPress={1200}
           >
             <Camera
               ref={cameraRef}
@@ -867,11 +955,15 @@ export default function CameraScreen() {
             />
           </Pressable>
 
-          {/* Focus and Lock Reticle with EV Sun Slider */}
+          {/* Focus and Separated Exposure Reticles */}
           {focusPoint && (
             <FocusReticle
-              point={focusPoint}
+              focusPoint={focusPoint}
+              exposurePoint={exposurePoint}
+              isSeparated={isSeparated}
               lockMode={manualCamera.lockMode}
+              isHolding={isHoldingFocus}
+              holdProgress={holdProgress}
               ev={ev}
               minExposure={minExposure}
               maxExposure={maxExposure}
@@ -885,12 +977,17 @@ export default function CameraScreen() {
                       toValue: 0,
                       duration: 300,
                       useNativeDriver: true,
-                    }).start(() => setFocusPoint(null))
+                    }).start(() => {
+                      setFocusPoint(null)
+                      setExposurePoint(null)
+                    })
                   }, 2000)
                 }
               }}
               onCycleLock={handleCycleLock}
+              onToggleSeparate={handleToggleSeparate}
               onUnlock={handleUnlock}
+              onExposurePointChange={handleExposurePointChange}
               opacity={focusOpacity}
               screenW={screenW}
               screenH={screenH}
