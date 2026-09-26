@@ -18,7 +18,7 @@ import {
 import { useRouter } from 'expo-router'
 import { useIsFocused } from '@react-navigation/native'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
-import { Camera, useCameraDevice, useCameraPermission, PhotoFile } from 'react-native-vision-camera'
+import { Camera, useCameraDevice, useCameraPermission, PhotoFile, CameraRuntimeError } from 'react-native-vision-camera'
 import {
   Gesture,
   GestureDetector,
@@ -29,7 +29,8 @@ import { LinearGradient } from 'expo-linear-gradient'
 import { usePhotoStore } from '../store/photos'
 import { captureMetadata } from '../services/captureMetadata'
 import { adoptTemporaryCapture, deleteCapture } from '../services/imagePrivacy'
-import { applyFilm } from '../services/filmProcessor'
+import { applyFilm, isFilmEmulationActive, resetFilmProcessor } from '../services/filmProcessor'
+import { getFilmStock } from '../config/filmStocks'
 import { cropToAspect } from '../services/cropImage'
 import { ensureUnderCeiling } from '../services/compressImage'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
@@ -122,6 +123,17 @@ export default function CameraScreen() {
   // (e.g. wallet handoff) — Android throws camera-is-restricted otherwise
   const isFocused = useIsFocused()
   const [appActive, setAppActive] = useState(AppState.currentState === 'active')
+  const [cameraSessionError, setCameraSessionError] = useState(false)
+
+  const handleCameraError = useCallback((error: CameraRuntimeError) => {
+    console.warn('[Camera] runtime session error:', error.code, error.message)
+    if (error.code.startsWith('session/')) {
+      // Toggle session inactive briefly to allow CameraX to cleanly release and re-bind
+      setCameraSessionError(true)
+      setTimeout(() => setCameraSessionError(false), 250)
+    }
+  }, [])
+
   useEffect(() => {
     const sub = AppState.addEventListener('change', (s) => setAppActive(s === 'active'))
     return () => sub.remove()
@@ -148,6 +160,7 @@ export default function CameraScreen() {
   const setLocationGranularity = useLocationSettingsStore((s) => s.setGranularity)
 
   const activeMode = useSessionStore((s) => s.activeMode)
+  const quickFilm = useSessionStore((s) => s.quickFilm)
   const rollInProgress = useSessionStore((s) => s.activeRoll)
   const addFrameToRoll = useSessionStore((s) => s.addFrameToRoll)
   const developRoll = useSessionStore((s) => s.developRoll)
@@ -217,6 +230,12 @@ export default function CameraScreen() {
     baseZoomRef.current = 1
   }, [cameraPosition])
 
+  useEffect(() => {
+    return () => {
+      resetFilmProcessor()
+    }
+  }, [])
+
   const handleCapture = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return
 
@@ -274,24 +293,27 @@ export default function CameraScreen() {
         effectiveAspect,
       )
 
-      // Post-capture processing: crop to the aspect ratio first, then apply the
-      // roll's film emulation (B&W), then fit quick shots under the upload
-      // ceiling. Each no-ops where not needed and falls back to the original on
-      // failure, so a capture is never lost.
+      // Unified post-capture processing: apply aspect crop and film emulation
+      // in a single Skia GPU pass, avoiding multiple decode/encode roundtrips.
       let processedUri = captureUri
-      if (effectiveAspect !== 'full') {
-        processedUri = await cropToAspect(processedUri, effectiveAspect)
-      }
-      if (activeMode === 'roll' && activeRoll !== null && activeRoll.film.mode !== 'color') {
-        processedUri = await applyFilm(processedUri, activeRoll.film)
+      const filmToApply = activeMode === 'roll' && activeRoll !== null ? activeRoll.film : quickFilm
+      const needsFilm = filmToApply && isFilmEmulationActive(filmToApply)
+      const needsCrop = effectiveAspect !== 'full'
+
+      if (needsFilm || needsCrop) {
+        processedUri = await applyFilm(
+          processedUri,
+          filmToApply ?? { mode: 'color', stockId: 'standard-color' },
+          effectiveAspect,
+        )
       }
       // Quick shots only. Roll frames have no server-side size ceiling, so they
       // keep full capture quality. This is the same predicate addPhoto uses to
       // stamp rollId above, which is exactly what the gallery filters on to
       // decide what mints through the quick path — so the two cannot disagree.
       //
-      // Must come after applyFilm: film re-encodes at quality 95 and would
-      // otherwise be free to push an already-fitted image back over.
+      // Because applyFilm outputs at JPEG quality 90 (~2.0-2.6 MB), this naturally
+      // sits under the 2.9 MB ceiling and skips re-encoding completely.
       if (activeMode !== 'roll' || activeRoll === null) {
         processedUri = await ensureUnderCeiling(processedUri)
       }
@@ -348,6 +370,7 @@ export default function CameraScreen() {
     developRoll,
     mintRoll,
     locationGranularity,
+    quickFilm,
   ])
 
   const toggleFlash = useCallback(() => {
@@ -534,11 +557,12 @@ export default function CameraScreen() {
             ref={cameraRef}
             style={StyleSheet.absoluteFill}
             device={activeDevice}
-            isActive={isFocused && appActive}
+            isActive={isFocused && appActive && !cameraSessionError}
             photo={true}
             zoom={zoom}
             exposure={ev}
             torch={torchActive ? 'on' : 'off'}
+            onError={handleCameraError}
           />
 
           {/* Aspect-ratio framing guide */}
@@ -751,20 +775,26 @@ export default function CameraScreen() {
         >
           {activeMode === 'roll' ? 'FILM' : 'QUICK'}
         </Text>
-        {activeMode === 'roll' && activeRoll !== null && (
-          <>
-            <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-            {activeRoll.film.mode === 'bw' && (
-              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>B&W</Text>
-            )}
-            {activeRoll.aspect !== 'full' && (
-              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>{activeRoll.aspect}</Text>
-            )}
-            {activeRoll.film.mode !== 'bw' && activeRoll.aspect === 'full' && (
-              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>COLOR</Text>
-            )}
-          </>
-        )}
+        {(() => {
+          const currentFilm = activeMode === 'roll' && activeRoll !== null ? activeRoll.film : quickFilm
+          const stock = getFilmStock(
+            currentFilm?.stockId ?? (currentFilm?.mode === 'bw' ? 'standard-bw' : 'standard-color'),
+          )
+          return (
+            <>
+              <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>{stock.shortName}</Text>
+              {effectiveAspect !== 'full' && (
+                <>
+                  <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+                  <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>
+                    {effectiveAspect}
+                  </Text>
+                </>
+              )}
+            </>
+          )
+        })()}
       </Pressable>
 
       {/* EXP dial — frames remaining, counts down like a film counter */}
@@ -857,7 +887,13 @@ export default function CameraScreen() {
           made from it for this camera's real (coupled) exposure model. */}
       {proOpen && TIER2_ENABLED && (
         <View style={{ position: 'absolute', left: 0, right: 0, bottom: 150 }}>
-          <ManualControls controls={manualCamera} ev={ev} setEv={setEv} minExposure={minExposure} maxExposure={maxExposure} />
+          <ManualControls
+            controls={manualCamera}
+            ev={ev}
+            setEv={setEv}
+            minExposure={minExposure}
+            maxExposure={maxExposure}
+          />
         </View>
       )}
 
