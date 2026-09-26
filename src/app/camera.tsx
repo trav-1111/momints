@@ -45,6 +45,7 @@ import type { AspectRatio } from '../store/session'
 import { useLocationSettingsStore } from '../store/locationSettings'
 import type { LocationGranularity } from '../store/locationSettings'
 import { useContactSheetDiscovery } from '../store/contactSheetDiscovery'
+import { useKinoSettingsStore, CAPTURE_CADENCE_MS } from '../store/kinoSettings'
 import { colors, fonts, tracking } from '../theme'
 import {
   IconBolt,
@@ -127,6 +128,9 @@ export default function CameraScreen() {
   const crankHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const didCrankRef = useRef(false)
   const crankAnim = useRef(new Animated.Value(0)).current
+
+  const captureFps = useKinoSettingsStore((s) => s.captureFps)
+  const cycleCaptureFps = useKinoSettingsStore((s) => s.cycleCaptureFps)
 
   useEffect(() => {
     if (isCranking) {
@@ -428,6 +432,8 @@ export default function CameraScreen() {
     // Initial mechanical crank pulse
     Vibration.vibrate(30)
 
+    const targetIntervalMs = CAPTURE_CADENCE_MS[captureFps] ?? 0
+
     try {
       while (isCrankingRef.current) {
         if (isRoll && rawSnapshots.length >= maxRollFrames) {
@@ -437,14 +443,23 @@ export default function CameraScreen() {
           break
         }
 
+        const frameStart = performance.now()
         const photo = await cameraRef.current.takeSnapshot({ quality: 90 })
         rawSnapshots.push(photo.path)
         setCrankCount(rawSnapshots.length)
         // Mechanical gear-tooth tactile feedback
         Vibration.vibrate(20)
 
-        // Yield briefly for React batching and gesture polling
-        await new Promise((r) => setTimeout(r, 10))
+        if (targetIntervalMs > 0) {
+          const snapElapsed = performance.now() - frameStart
+          const remainingDelay = Math.max(0, targetIntervalMs - snapElapsed)
+          if (remainingDelay > 0 && isCrankingRef.current) {
+            await new Promise((r) => setTimeout(r, remainingDelay))
+          }
+        } else {
+          // Yield briefly for React batching and gesture polling
+          await new Promise((r) => setTimeout(r, 10))
+        }
       }
     } catch (err) {
       console.error('[Kino] burst capture error:', err)
@@ -520,6 +535,7 @@ export default function CameraScreen() {
     rollIsFull,
     setAction,
     updatePhotoUri,
+    captureFps,
   ])
 
   const handleShutterPressIn = useCallback(() => {
@@ -1099,7 +1115,7 @@ export default function CameraScreen() {
           >
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#e74c3c' }} />
             <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: '#fff' }}>
-              🎞️ KINO CRANKING · {crankCount} FRAMES ({(crankCount / 6.8).toFixed(1)}s)
+              🎞️ KINO CRANKING ({captureFps === 7 ? 'MAX' : `${captureFps} FPS`}) · {crankCount} FRAMES ({(crankCount / (captureFps === 7 ? 6.8 : captureFps)).toFixed(1)}s)
             </Text>
           </View>
         </View>
@@ -1214,17 +1230,39 @@ export default function CameraScreen() {
               ) : null}
             </View>
           </Pressable>
-          <Text
-            style={{
-              fontFamily: fonts.mono,
-              fontSize: 8,
-              letterSpacing: tracking(0.12, 8),
-              color: isCranking ? '#f39c12' : colors.textMuted,
-              marginTop: 6,
-            }}
-          >
-            {isCranking ? 'CRANKING KINO' : 'HOLD FOR KINO'}
-          </Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+            <Text
+              style={{
+                fontFamily: fonts.mono,
+                fontSize: 8,
+                letterSpacing: tracking(0.12, 8),
+                color: isCranking ? '#f39c12' : colors.textMuted,
+              }}
+            >
+              {isCranking ? 'CRANKING' : 'HOLD FOR KINO'}
+            </Text>
+            {!isCranking && (
+              <Pressable
+                onPress={() => {
+                  const next = cycleCaptureFps()
+                  Vibration.vibrate(25)
+                }}
+                hitSlop={8}
+                style={{
+                  paddingHorizontal: 6,
+                  paddingVertical: 2,
+                  borderRadius: 4,
+                  backgroundColor: 'rgba(255,255,255,0.12)',
+                  borderWidth: 1,
+                  borderColor: 'rgba(255,255,255,0.2)',
+                }}
+              >
+                <Text style={{ fontFamily: fonts.monoBold, fontSize: 8, color: colors.accentSoft }}>
+                  {captureFps === 7 ? 'MAX' : `${captureFps} FPS`}
+                </Text>
+              </Pressable>
+            )}
+          </View>
         </View>
 
         {/* Quick mode only — a roll's frames mint as a whole roll, not here */}

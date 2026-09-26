@@ -1,10 +1,16 @@
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react'
-import { View, Text, Pressable, FlatList, Image, Dimensions, Alert, StatusBar, ViewStyle } from 'react-native'
+import { View, Text, Pressable, FlatList, Image, Dimensions, Alert, StatusBar, ViewStyle, StyleSheet } from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as MediaLibrary from 'expo-media-library'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore, Photo } from '../store/photos'
+import {
+  useKinoSettingsStore,
+  KINO_PLAYBACK_SPEEDS,
+  SHUTTER_GAP_MS,
+  KINO_SHUTTER_GAP_LABELS,
+} from '../store/kinoSettings'
 import { colors, fonts, tracking } from '../theme'
 import { IconArrowRight, IconBack, IconMint, IconSave, IconTrash } from '../components/icons'
 import { deleteCapture } from '../services/imagePrivacy'
@@ -93,16 +99,28 @@ export default function ReviewScreen() {
     }
   }, [photos.length, initialIndex, scrollToIndex])
 
-  // LomoKino burst reel playback
+  // LomoKino burst reel playback settings & rotary shutter
+  const playbackFps = useKinoSettingsStore((s) => s.playbackFps)
+  const setPlaybackFps = useKinoSettingsStore((s) => s.setPlaybackFps)
+  const shutterGap = useKinoSettingsStore((s) => s.shutterGap)
+  const cycleShutterGap = useKinoSettingsStore((s) => s.cycleShutterGap)
+
   const [isPlayingKino, setIsPlayingKino] = useState(false)
+  const [isShutterBlackout, setIsShutterBlackout] = useState(false)
   const isPlayingKinoRef = useRef(false)
   const kinoPlayTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+  const blackoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const stopKinoPlayback = useCallback(() => {
     if (kinoPlayTimer.current) {
       clearInterval(kinoPlayTimer.current)
       kinoPlayTimer.current = null
     }
+    if (blackoutTimerRef.current) {
+      clearTimeout(blackoutTimerRef.current)
+      blackoutTimerRef.current = null
+    }
+    setIsShutterBlackout(false)
     isPlayingKinoRef.current = false
     setIsPlayingKino(false)
   }, [])
@@ -128,16 +146,46 @@ export default function ReviewScreen() {
     let framePointer = kinoFrames.findIndex((f) => f.originalIdx === currentIndex)
     if (framePointer < 0) framePointer = 0
 
+    const gapMs = SHUTTER_GAP_MS[shutterGap] ?? 32
+    const framePeriodMs = Math.round(1000 / playbackFps)
+    // Clamp blackout duration to maximum 45% of total frame duration to keep exposure visible
+    const effectiveGapMs = Math.min(gapMs, Math.round(framePeriodMs * 0.45))
+
     kinoPlayTimer.current = setInterval(() => {
       if (!isPlayingKinoRef.current) return
       framePointer = (framePointer + 1) % kinoFrames.length
       const targetIdx = kinoFrames[framePointer].originalIdx
-      setCurrentIndex(targetIdx)
-      if (flatListRef.current) {
-        flatListRef.current.scrollToIndex({ index: targetIdx, animated: false })
+
+      if (effectiveGapMs > 0) {
+        // Drop rotary shutter blade (blackout)
+        setIsShutterBlackout(true)
+        // Advance frame behind the shutter curtain
+        setCurrentIndex(targetIdx)
+        if (flatListRef.current) {
+          flatListRef.current.scrollToIndex({ index: targetIdx, animated: false })
+        }
+        // Open shutter after mechanical blade gap
+        blackoutTimerRef.current = setTimeout(() => {
+          if (isPlayingKinoRef.current) {
+            setIsShutterBlackout(false)
+          }
+        }, effectiveGapMs)
+      } else {
+        setCurrentIndex(targetIdx)
+        if (flatListRef.current) {
+          flatListRef.current.scrollToIndex({ index: targetIdx, animated: false })
+        }
       }
-    }, 145)
-  }, [currentIndex, photos, stopKinoPlayback])
+    }, framePeriodMs)
+  }, [currentIndex, photos, playbackFps, shutterGap, stopKinoPlayback])
+
+  // Restart playback seamlessly if user adjusts speed or shutter gap while playing
+  useEffect(() => {
+    if (isPlayingKinoRef.current) {
+      stopKinoPlayback()
+      toggleKinoPlayback()
+    }
+  }, [playbackFps, shutterGap])
 
   useEffect(() => {
     return () => {
@@ -359,6 +407,14 @@ export default function ReviewScreen() {
         })}
       />
 
+      {/* Rotary Shutter Blackout Overlay */}
+      {isShutterBlackout && (
+        <View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, { backgroundColor: '#000', zIndex: 999 }]}
+        />
+      )}
+
       {/* Top bar */}
       <View
         style={{
@@ -392,33 +448,106 @@ export default function ReviewScreen() {
         </Pressable>
       </View>
 
-      {/* Kino Reel Playback toggle */}
+      {/* Kino Reel Playback & Speed & Shutter Controls */}
       {currentPhoto?.kinoId && (
         <View
           style={{
             position: 'absolute',
             bottom: allMarked ? 84 : 148,
-            left: 0,
-            right: 0,
+            left: 18,
+            right: 18,
             alignItems: 'center',
+            gap: 8,
           }}
         >
+          {/* Speed & Shutter Gap Bar */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              backgroundColor: 'rgba(15, 12, 8, 0.88)',
+              paddingVertical: 4,
+              paddingHorizontal: 8,
+              borderRadius: 999,
+              borderWidth: 1,
+              borderColor: 'rgba(243, 156, 18, 0.35)',
+            }}
+          >
+            {/* Speed pills */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+              {KINO_PLAYBACK_SPEEDS.map((fps) => {
+                const selected = playbackFps === fps
+                return (
+                  <Pressable
+                    key={fps}
+                    onPress={() => setPlaybackFps(fps)}
+                    style={{
+                      paddingHorizontal: 7,
+                      paddingVertical: 4,
+                      borderRadius: 999,
+                      backgroundColor: selected ? '#f39c12' : 'transparent',
+                    }}
+                  >
+                    <Text
+                      style={{
+                        fontFamily: fonts.monoBold,
+                        fontSize: 9,
+                        color: selected ? '#fff' : colors.textSoft,
+                      }}
+                    >
+                      {fps} FPS
+                    </Text>
+                  </Pressable>
+                )
+              })}
+            </View>
+
+            <View style={{ width: 1, height: 14, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+
+            {/* Shutter blackout gap pill */}
+            <Pressable
+              onPress={() => cycleShutterGap()}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 4,
+                paddingHorizontal: 8,
+                paddingVertical: 4,
+                borderRadius: 999,
+                backgroundColor: shutterGap === 'off' ? 'rgba(255,255,255,0.06)' : 'rgba(243,156,18,0.25)',
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: fonts.mono,
+                  fontSize: 8.5,
+                  letterSpacing: tracking(0.08, 8.5),
+                  color: shutterGap === 'off' ? colors.textMuted : colors.accentSoft,
+                }}
+              >
+                BLADE: {KINO_SHUTTER_GAP_LABELS[shutterGap]}
+              </Text>
+            </Pressable>
+          </View>
+
+          {/* Main Play / Pause Button */}
           <Pressable
             onPress={toggleKinoPlayback}
             style={{
               flexDirection: 'row',
               alignItems: 'center',
               gap: 8,
-              backgroundColor: isPlayingKino ? '#d35400' : 'rgba(25, 20, 10, 0.9)',
+              backgroundColor: isPlayingKino ? '#d35400' : 'rgba(25, 20, 10, 0.92)',
               borderWidth: 1,
               borderColor: '#f39c12',
-              paddingHorizontal: 16,
+              paddingHorizontal: 20,
               paddingVertical: 9,
               borderRadius: 999,
             }}
           >
             <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: '#fff' }}>
-              {isPlayingKino ? '⏸ PAUSE KINO REEL' : '▶ PLAY KINO REEL (6.8 FPS)'}
+              {isPlayingKino ? '⏸ PAUSE KINO REEL' : `▶ PLAY KINO REEL (${playbackFps} FPS)`}
             </Text>
           </Pressable>
         </View>
