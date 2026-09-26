@@ -93,6 +93,58 @@ export default function ReviewScreen() {
     }
   }, [photos.length, initialIndex, scrollToIndex])
 
+  // LomoKino burst reel playback
+  const [isPlayingKino, setIsPlayingKino] = useState(false)
+  const isPlayingKinoRef = useRef(false)
+  const kinoPlayTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const stopKinoPlayback = useCallback(() => {
+    if (kinoPlayTimer.current) {
+      clearInterval(kinoPlayTimer.current)
+      kinoPlayTimer.current = null
+    }
+    isPlayingKinoRef.current = false
+    setIsPlayingKino(false)
+  }, [])
+
+  const toggleKinoPlayback = useCallback(() => {
+    if (isPlayingKinoRef.current) {
+      stopKinoPlayback()
+      return
+    }
+    const curPhoto = photos[currentIndex]
+    if (!curPhoto?.kinoId) return
+
+    const kinoFrames = photos
+      .map((p, idx) => ({ ...p, originalIdx: idx }))
+      .filter((p) => p.kinoId === curPhoto.kinoId)
+      .sort((a, b) => (a.kinoIndex ?? 0) - (b.kinoIndex ?? 0))
+
+    if (kinoFrames.length <= 1) return
+
+    isPlayingKinoRef.current = true
+    setIsPlayingKino(true)
+
+    let framePointer = kinoFrames.findIndex((f) => f.originalIdx === currentIndex)
+    if (framePointer < 0) framePointer = 0
+
+    kinoPlayTimer.current = setInterval(() => {
+      if (!isPlayingKinoRef.current) return
+      framePointer = (framePointer + 1) % kinoFrames.length
+      const targetIdx = kinoFrames[framePointer].originalIdx
+      setCurrentIndex(targetIdx)
+      if (flatListRef.current) {
+        flatListRef.current.scrollToIndex({ index: targetIdx, animated: false })
+      }
+    }, 145)
+  }, [currentIndex, photos, stopKinoPlayback])
+
+  useEffect(() => {
+    return () => {
+      stopKinoPlayback()
+    }
+  }, [stopKinoPlayback])
+
   const saveToGallery = useCallback(async (uri: string): Promise<boolean> => {
     try {
       const { status } = await MediaLibrary.requestPermissionsAsync()
@@ -193,10 +245,34 @@ export default function ReviewScreen() {
           style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 120 }}
         />
 
-        <LinearGradient
-          colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.78)']}
-          style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 230 }}
-        />
+        {/* Kino sequence badge */}
+        {item.kinoId && (
+          <View
+            style={{
+              position: 'absolute',
+              top: 80,
+              left: 18,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              paddingVertical: 6,
+              paddingHorizontal: 12,
+              borderRadius: 999,
+              backgroundColor: 'rgba(243, 156, 18, 0.9)',
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.monoBold,
+                fontSize: 10,
+                letterSpacing: tracking(0.06, 10),
+                color: colors.white,
+              }}
+            >
+              🎞️ KINO #{item.kinoIndex !== undefined ? item.kinoIndex + 1 : ''}
+            </Text>
+          </View>
+        )}
 
         {/* Marked-action badge */}
         {item.action !== 'pending' && (
@@ -315,6 +391,38 @@ export default function ReviewScreen() {
           <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 12, color: colors.text }}>View All</Text>
         </Pressable>
       </View>
+
+      {/* Kino Reel Playback toggle */}
+      {currentPhoto?.kinoId && (
+        <View
+          style={{
+            position: 'absolute',
+            bottom: allMarked ? 84 : 148,
+            left: 0,
+            right: 0,
+            alignItems: 'center',
+          }}
+        >
+          <Pressable
+            onPress={toggleKinoPlayback}
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+              backgroundColor: isPlayingKino ? '#d35400' : 'rgba(25, 20, 10, 0.9)',
+              borderWidth: 1,
+              borderColor: '#f39c12',
+              paddingHorizontal: 16,
+              paddingVertical: 9,
+              borderRadius: 999,
+            }}
+          >
+            <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: '#fff' }}>
+              {isPlayingKino ? '⏸ PAUSE KINO REEL' : '▶ PLAY KINO REEL (6.8 FPS)'}
+            </Text>
+          </Pressable>
+        </View>
+      )}
 
       {/* Bottom actions */}
       <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: 26, paddingHorizontal: 18 }}>

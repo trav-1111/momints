@@ -14,6 +14,8 @@ import {
   useWindowDimensions,
   ViewStyle,
   findNodeHandle,
+  Easing,
+  ActivityIndicator,
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useIsFocused } from '@react-navigation/native'
@@ -98,6 +100,9 @@ export default function CameraScreen() {
   const { account, connect, disconnect } = useMobileWallet()
   const { hasPermission, requestPermission } = useCameraPermission()
   const cameraRef = useRef<Camera>(null)
+  if (__DEV__) {
+    ;(globalThis as any).__cameraRef = cameraRef
+  }
   const cameraViewTag = findNodeHandle(cameraRef.current)
 
   const [flash, setFlash] = useState<'off' | 'on'>('off')
@@ -113,6 +118,32 @@ export default function CameraScreen() {
   const [locationMenuVisible, setLocationMenuVisible] = useState(false)
   const showContactSheetNudge = useContactSheetDiscovery((state) => state.hydrated && !state.acknowledged)
   const acknowledgeContactSheet = useContactSheetDiscovery((state) => state.acknowledge)
+
+  // LomoKino burst state
+  const [isCranking, setIsCranking] = useState(false)
+  const [crankCount, setCrankCount] = useState(0)
+  const [kinoDevelopingCount, setKinoDevelopingCount] = useState<number | null>(null)
+  const isCrankingRef = useRef(false)
+  const crankHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const didCrankRef = useRef(false)
+  const crankAnim = useRef(new Animated.Value(0)).current
+
+  useEffect(() => {
+    if (isCranking) {
+      const loop = Animated.loop(
+        Animated.timing(crankAnim, {
+          toValue: 1,
+          duration: 400,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+      )
+      loop.start()
+      return () => loop.stop()
+    } else {
+      crankAnim.setValue(0)
+    }
+  }, [isCranking, crankAnim])
 
   // Pro mode — Tier 1 (EV bias, metering) is always available here; Tier 2
   // (manual ISO/shutter/focus/WB) mounts underneath, gated by TIER2_ENABLED.
@@ -372,6 +403,150 @@ export default function CameraScreen() {
     locationGranularity,
     quickFilm,
   ])
+
+  const handleStartCrank = useCallback(async () => {
+    if (!cameraRef.current || isCapturing || isCrankingRef.current) return
+
+    if (activeRoll?.developed || rollIsFull) {
+      Alert.alert('Roll Complete', 'Every frame on this roll is shot. Mint the roll to see them.', [
+        { text: 'Later', style: 'cancel' },
+        { text: 'Mint Roll', onPress: () => mintRoll() },
+      ])
+      return
+    }
+
+    isCrankingRef.current = true
+    didCrankRef.current = true
+    setIsCranking(true)
+    setCrankCount(0)
+
+    const rawSnapshots: string[] = []
+    const isRoll = activeMode === 'roll' && activeRoll !== null
+    const maxRollFrames = activeRoll ? activeRoll.size - activeRoll.frameIds.length : 36
+    const kinoSeqId = `kino-${Date.now()}`
+
+    // Initial mechanical crank pulse
+    Vibration.vibrate(30)
+
+    try {
+      while (isCrankingRef.current) {
+        if (isRoll && rawSnapshots.length >= maxRollFrames) {
+          break
+        }
+        if (rawSnapshots.length >= 36) {
+          break
+        }
+
+        const photo = await cameraRef.current.takeSnapshot({ quality: 90 })
+        rawSnapshots.push(photo.path)
+        setCrankCount(rawSnapshots.length)
+        // Mechanical gear-tooth tactile feedback
+        Vibration.vibrate(20)
+
+        // Yield briefly for React batching and gesture polling
+        await new Promise((r) => setTimeout(r, 10))
+      }
+    } catch (err) {
+      console.error('[Kino] burst capture error:', err)
+    } finally {
+      isCrankingRef.current = false
+      setIsCranking(false)
+    }
+
+    // Develop captured Kino frames sequentially through the native film shader
+    if (rawSnapshots.length > 0) {
+      setKinoDevelopingCount(rawSnapshots.length)
+      setIsCapturing(true)
+      try {
+        const filmToApply = isRoll ? activeRoll.film : quickFilm
+        const needsFilm = filmToApply && isFilmEmulationActive(filmToApply)
+        const needsCrop = effectiveAspect !== 'full'
+
+        for (let i = 0; i < rawSnapshots.length; i++) {
+          const rawPath = rawSnapshots[i]
+          let captureUri = adoptTemporaryCapture(`file://${rawPath}`)
+          const photoId = addPhoto(
+            captureUri,
+            isRoll ? { id: activeRoll.id, name: activeRoll.name } : undefined,
+            effectiveAspect,
+            { id: kinoSeqId, index: i },
+          )
+
+          let processedUri = captureUri
+          if (needsFilm || needsCrop) {
+            processedUri = await applyFilm(
+              processedUri,
+              filmToApply ?? { mode: 'color', stockId: 'standard-color' },
+              effectiveAspect,
+            )
+          }
+          if (!isRoll) {
+            processedUri = await ensureUnderCeiling(processedUri)
+          }
+          captureUri = processedUri
+          updatePhotoUri(photoId, processedUri)
+
+          if (isRoll) {
+            addFrameToRoll(photoId)
+            setAction(photoId, 'mint')
+          }
+        }
+
+        if (isRoll && activeRoll && activeRoll.frameIds.length + rawSnapshots.length >= activeRoll.size) {
+          developRoll()
+          Alert.alert('Roll Complete! 🎞️', `All ${activeRoll.size} frames are shot. Mint the roll?`, [
+            { text: 'Later', style: 'cancel' },
+            { text: 'Mint Roll', onPress: () => mintRoll() },
+          ])
+        }
+      } catch (err) {
+        console.error('[Kino] failed to develop frames:', err)
+        Alert.alert('Error', 'Failed to develop some Kino frames.')
+      } finally {
+        setKinoDevelopingCount(null)
+        setIsCapturing(false)
+      }
+    }
+  }, [
+    activeMode,
+    activeRoll,
+    addFrameToRoll,
+    addPhoto,
+    developRoll,
+    effectiveAspect,
+    isCapturing,
+    mintRoll,
+    quickFilm,
+    rollIsFull,
+    setAction,
+    updatePhotoUri,
+  ])
+
+  const handleShutterPressIn = useCallback(() => {
+    if (isCapturing || rollIsFull || activeRoll?.developed || kinoDevelopingCount !== null) return
+    didCrankRef.current = false
+    crankHoldTimer.current = setTimeout(() => {
+      handleStartCrank()
+    }, 280)
+  }, [isCapturing, rollIsFull, activeRoll?.developed, kinoDevelopingCount, handleStartCrank])
+
+  const handleShutterPressOut = useCallback(() => {
+    if (crankHoldTimer.current) {
+      clearTimeout(crankHoldTimer.current)
+      crankHoldTimer.current = null
+    }
+    if (isCrankingRef.current) {
+      isCrankingRef.current = false
+    }
+  }, [])
+
+  const handleShutterPress = useCallback(() => {
+    if (didCrankRef.current) {
+      didCrankRef.current = false
+      return
+    }
+    handleCapture()
+  }, [handleCapture])
 
   const toggleFlash = useCallback(() => {
     if (!supportsFlash) return
@@ -897,6 +1072,72 @@ export default function CameraScreen() {
         </View>
       )}
 
+      {/* LomoKino Active Cranking HUD */}
+      {isCranking && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            bottom: 155,
+            left: 0,
+            right: 0,
+            alignItems: 'center',
+          }}
+        >
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+              backgroundColor: 'rgba(25, 20, 10, 0.92)',
+              paddingHorizontal: 16,
+              paddingVertical: 8,
+              borderRadius: 20,
+              borderWidth: 1,
+              borderColor: '#f39c12',
+            }}
+          >
+            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#e74c3c' }} />
+            <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: '#fff' }}>
+              🎞️ KINO CRANKING · {crankCount} FRAMES ({(crankCount / 6.8).toFixed(1)}s)
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {/* LomoKino Developing Banner */}
+      {kinoDevelopingCount !== null && (
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            bottom: 155,
+            left: 0,
+            right: 0,
+            alignItems: 'center',
+          }}
+        >
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 10,
+              backgroundColor: 'rgba(10, 10, 15, 0.94)',
+              paddingHorizontal: 18,
+              paddingVertical: 9,
+              borderRadius: 20,
+              borderWidth: 1,
+              borderColor: colors.accent,
+            }}
+          >
+            <ActivityIndicator size="small" color={colors.accent} />
+            <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.text }}>
+              DEVELOPING {kinoDevelopingCount} KINO FRAMES...
+            </Text>
+          </View>
+        </View>
+      )}
+
       {/* Bottom row — flip · shutter · mint */}
       <View
         style={{
@@ -915,31 +1156,76 @@ export default function CameraScreen() {
           <IconFlip size={20} color={colors.text} />
         </Pressable>
 
-        <Pressable
-          onPress={handleCapture}
-          disabled={isCapturing}
-          style={{
-            width: 80,
-            height: 80,
-            borderRadius: 40,
-            borderWidth: 2,
-            borderColor: colors.accent,
-            alignItems: 'center',
-            justifyContent: 'center',
-            opacity: isCapturing || rollIsFull || activeRoll?.developed ? 0.5 : 1,
-          }}
-        >
-          <View
+        <View style={{ alignItems: 'center' }}>
+          <Pressable
+            onPressIn={handleShutterPressIn}
+            onPressOut={handleShutterPressOut}
+            onPress={handleShutterPress}
+            disabled={(isCapturing && !isCranking) || kinoDevelopingCount !== null}
             style={{
-              width: 64,
-              height: 64,
-              borderRadius: 32,
-              backgroundColor: colors.text,
-              borderWidth: 4,
-              borderColor: 'rgba(12,13,22,0.35)',
+              width: 82,
+              height: 82,
+              borderRadius: 41,
+              borderWidth: isCranking ? 3 : 2,
+              borderColor: isCranking ? '#f39c12' : colors.accent,
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: (isCapturing && !isCranking) || rollIsFull || activeRoll?.developed ? 0.5 : 1,
+              transform: [{ scale: isCranking ? 1.08 : 1 }],
             }}
-          />
-        </Pressable>
+          >
+            {isCranking && (
+              <Animated.View
+                style={{
+                  position: 'absolute',
+                  width: 92,
+                  height: 92,
+                  borderRadius: 46,
+                  borderWidth: 2,
+                  borderColor: '#f39c12',
+                  borderStyle: 'dashed',
+                  transform: [
+                    {
+                      rotate: crankAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0deg', '360deg'],
+                      }),
+                    },
+                  ],
+                }}
+              />
+            )}
+            <View
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: 32,
+                backgroundColor: isCranking ? '#d35400' : colors.text,
+                borderWidth: 4,
+                borderColor: 'rgba(12,13,22,0.35)',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {isCranking ? (
+                <Text style={{ fontFamily: fonts.monoBold, fontSize: 16, color: '#fff' }}>
+                  {crankCount}
+                </Text>
+              ) : null}
+            </View>
+          </Pressable>
+          <Text
+            style={{
+              fontFamily: fonts.mono,
+              fontSize: 8,
+              letterSpacing: tracking(0.12, 8),
+              color: isCranking ? '#f39c12' : colors.textMuted,
+              marginTop: 6,
+            }}
+          >
+            {isCranking ? 'CRANKING KINO' : 'HOLD FOR KINO'}
+          </Text>
+        </View>
 
         {/* Quick mode only — a roll's frames mint as a whole roll, not here */}
         {activeMode === 'roll' ? (

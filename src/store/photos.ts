@@ -23,6 +23,8 @@ export interface Photo {
   // un-hid all of them the moment a roll finished minting.
   rollId?: string
   rollName?: string
+  kinoId?: string
+  kinoIndex?: number
 }
 
 /** Roll a frame belongs to, passed at capture so membership is stamped atomically. */
@@ -33,7 +35,12 @@ export interface PhotoRollRef {
 
 interface PhotoStore {
   photos: Photo[]
-  addPhoto: (uri: string, roll?: PhotoRollRef, aspect?: AspectRatio) => string
+  addPhoto: (
+    uri: string,
+    roll?: PhotoRollRef,
+    aspect?: AspectRatio,
+    kino?: { id: string; index: number },
+  ) => string
   setAction: (id: string, action: Photo['action']) => void
   setBulkAction: (ids: string[], action: Photo['action']) => void
   setPhotoMeta: (id: string, meta: CaptureMeta) => void
@@ -49,7 +56,12 @@ interface PhotoStore {
 export const usePhotoStore = create<PhotoStore>((set, get) => ({
   photos: [],
 
-  addPhoto: (uri: string, roll?: PhotoRollRef, aspect?: AspectRatio): string => {
+  addPhoto: (
+    uri: string,
+    roll?: PhotoRollRef,
+    aspect?: AspectRatio,
+    kino?: { id: string; index: number },
+  ): string => {
     const newPhoto: Photo = {
       id: uuidv4(),
       uri,
@@ -58,6 +70,8 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
       aspect,
       rollId: roll?.id,
       rollName: roll?.name,
+      kinoId: kino?.id,
+      kinoIndex: kino?.index,
     }
     set((state) => {
       const photos = [...state.photos, newPhoto]
