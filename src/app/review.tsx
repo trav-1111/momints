@@ -4,14 +4,13 @@ import {
   Text,
   Pressable,
   FlatList,
-  Image,
   Dimensions,
   Alert,
   StatusBar,
   ViewStyle,
   StyleSheet,
-  Animated,
 } from 'react-native'
+import { Image } from 'expo-image'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
 import * as MediaLibrary from 'expo-media-library'
@@ -23,6 +22,8 @@ import {
   SHUTTER_GAP_MS,
   KINO_SHUTTER_GAP_LABELS,
   getShutterBlackoutMs,
+  KinoPlaybackSpeed,
+  KinoShutterGap,
 } from '../store/kinoSettings'
 import { colors, fonts, tracking } from '../theme'
 import { IconArrowRight, IconBack, IconMint, IconSave, IconTrash } from '../components/icons'
@@ -34,6 +35,155 @@ const chip: ViewStyle = {
   backgroundColor: colors.chipBg,
   borderWidth: 1,
   borderColor: colors.chipBorder,
+}
+
+interface KinoReelPlayerProps {
+  frames: (Photo & { originalIdx: number })[]
+  initialIndex: number
+  isPlaying: boolean
+  playbackFps: KinoPlaybackSpeed
+  shutterGap: KinoShutterGap
+  onTogglePlay: () => void
+  onFrameChange: (frameIdx: number, originalIdx: number) => void
+}
+
+function KinoReelPlayer({
+  frames,
+  initialIndex,
+  isPlaying,
+  playbackFps,
+  shutterGap,
+  onTogglePlay,
+  onFrameChange,
+}: KinoReelPlayerProps) {
+  const [activePointer, setActivePointer] = useState(() => {
+    const idx = frames.findIndex((f) => f.originalIdx === initialIndex)
+    return idx >= 0 ? idx : 0
+  })
+  const [isBlackout, setIsBlackout] = useState(false)
+  const activePointerRef = useRef(activePointer)
+  activePointerRef.current = activePointer
+
+  // When initialIndex changes while NOT playing, sync active pointer
+  useEffect(() => {
+    if (!isPlaying) {
+      const idx = frames.findIndex((f) => f.originalIdx === initialIndex)
+      if (idx >= 0) {
+        setActivePointer(idx)
+      }
+    }
+  }, [initialIndex, isPlaying, frames])
+
+  // Playback ticker with rotary shutter blade synchronization
+  useEffect(() => {
+    if (!isPlaying || frames.length <= 1) {
+      setIsBlackout(false)
+      return
+    }
+
+    const framePeriodMs = Math.round(1000 / playbackFps)
+    const blackoutMs = getShutterBlackoutMs(shutterGap, playbackFps)
+    let blackoutTimer: ReturnType<typeof setTimeout> | null = null
+
+    const ticker = setInterval(() => {
+      const nextPointer = (activePointerRef.current + 1) % frames.length
+      const targetFrame = frames[nextPointer]
+
+      if (blackoutMs > 0) {
+        // Drop rotary shutter blade
+        setIsBlackout(true)
+        // Advance frame behind closed shutter
+        setActivePointer(nextPointer)
+        if (targetFrame) {
+          onFrameChange(nextPointer, targetFrame.originalIdx)
+        }
+        // Open rotary shutter blade after blackout duration
+        blackoutTimer = setTimeout(() => {
+          setIsBlackout(false)
+        }, blackoutMs)
+      } else {
+        // Shutter blade off: direct frame advance
+        setActivePointer(nextPointer)
+        if (targetFrame) {
+          onFrameChange(nextPointer, targetFrame.originalIdx)
+        }
+      }
+    }, framePeriodMs)
+
+    return () => {
+      clearInterval(ticker)
+      if (blackoutTimer) clearTimeout(blackoutTimer)
+      setIsBlackout(false)
+    }
+  }, [isPlaying, playbackFps, shutterGap, frames, onFrameChange])
+
+  if (!isPlaying) return null
+
+  return (
+    <Pressable onPress={onTogglePlay} style={[StyleSheet.absoluteFill, { zIndex: 5 }]}>
+      {/* Preloaded stack of all frames in the Kino reel */}
+      {frames.map((frame, index) => (
+        <View
+          key={frame.id}
+          style={[
+            StyleSheet.absoluteFill,
+            { opacity: activePointer === index ? 1 : 0 },
+          ]}
+          pointerEvents="none"
+        >
+          <Image
+            source={{ uri: frame.uri }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            cachePolicy="memory"
+            priority="high"
+          />
+        </View>
+      ))}
+
+      {/* Rotary Shutter Blackout Blade Overlay */}
+      <View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            backgroundColor: '#000',
+            opacity: isBlackout ? 1 : 0,
+            zIndex: 6,
+          },
+        ]}
+      />
+
+      {/* Live Playback Indicator Badge */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: 80,
+          left: 18,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingVertical: 6,
+          paddingHorizontal: 12,
+          borderRadius: 999,
+          backgroundColor: 'rgba(211, 84, 0, 0.92)',
+          zIndex: 7,
+        }}
+      >
+        <Text
+          style={{
+            fontFamily: fonts.monoBold,
+            fontSize: 10,
+            letterSpacing: tracking(0.06, 10),
+            color: colors.white,
+          }}
+        >
+          🎞️ KINO #{activePointer + 1} / {frames.length} ({playbackFps} FPS)
+        </Text>
+      </View>
+    </Pressable>
+  )
 }
 
 export default function ReviewScreen() {
@@ -119,94 +269,56 @@ export default function ReviewScreen() {
   const cycleShutterGap = useKinoSettingsStore((s) => s.cycleShutterGap)
 
   const [isPlayingKino, setIsPlayingKino] = useState(false)
-  const [playingKinoUri, setPlayingKinoUri] = useState<string | null>(null)
-  const shutterAnim = useRef(new Animated.Value(0)).current
-  const isPlayingKinoRef = useRef(false)
-  const kinoPlayTimer = useRef<ReturnType<typeof setInterval> | null>(null)
-  const blackoutTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastKinoOriginalIdxRef = useRef(currentIndex)
 
-  const stopKinoPlayback = useCallback(() => {
-    if (kinoPlayTimer.current) {
-      clearInterval(kinoPlayTimer.current)
-      kinoPlayTimer.current = null
+  const kinoFrames = useMemo(() => {
+    if (!currentPhoto?.kinoId) return []
+    return photos
+      .map((p, idx) => ({ ...p, originalIdx: idx }))
+      .filter((p) => p.kinoId === currentPhoto.kinoId)
+      .sort((a, b) => (a.kinoIndex ?? 0) - (b.kinoIndex ?? 0))
+  }, [photos, currentPhoto?.kinoId])
+
+  useEffect(() => {
+    if (!isPlayingKino) {
+      lastKinoOriginalIdxRef.current = currentIndex
     }
-    if (blackoutTimerRef.current) {
-      clearTimeout(blackoutTimerRef.current)
-      blackoutTimerRef.current = null
-    }
-    shutterAnim.setValue(0)
-    setPlayingKinoUri(null)
-    isPlayingKinoRef.current = false
+  }, [currentIndex, isPlayingKino])
+
+  const handleKinoFrameChange = useCallback((_frameIdx: number, originalIdx: number) => {
+    lastKinoOriginalIdxRef.current = originalIdx
+  }, [])
+
+  const handleStopKino = useCallback(() => {
     setIsPlayingKino(false)
-  }, [shutterAnim])
+    const targetIdx = lastKinoOriginalIdxRef.current
+    if (targetIdx >= 0 && targetIdx < photos.length) {
+      setCurrentIndex(targetIdx)
+      flatListRef.current?.scrollToIndex({ index: targetIdx, animated: false })
+    }
+  }, [photos.length])
 
   const toggleKinoPlayback = useCallback(() => {
-    if (isPlayingKinoRef.current) {
-      stopKinoPlayback()
-      return
+    if (isPlayingKino) {
+      handleStopKino()
+    } else {
+      if (kinoFrames.length <= 1) return
+      lastKinoOriginalIdxRef.current = currentIndex
+      setIsPlayingKino(true)
     }
-    const curPhoto = photos[currentIndex]
-    if (!curPhoto?.kinoId) return
-
-    const kinoFrames = photos
-      .map((p, idx) => ({ ...p, originalIdx: idx }))
-      .filter((p) => p.kinoId === curPhoto.kinoId)
-      .sort((a, b) => (a.kinoIndex ?? 0) - (b.kinoIndex ?? 0))
-
-    if (kinoFrames.length <= 1) return
-
-    isPlayingKinoRef.current = true
-    setIsPlayingKino(true)
-
-    let framePointer = kinoFrames.findIndex((f) => f.originalIdx === currentIndex)
-    if (framePointer < 0) framePointer = 0
-
-    // Set first frame immediately
-    setPlayingKinoUri(kinoFrames[framePointer].uri)
-
-    const framePeriodMs = Math.round(1000 / playbackFps)
-    const blackoutMs = getShutterBlackoutMs(shutterGap, playbackFps)
-
-    kinoPlayTimer.current = setInterval(() => {
-      if (!isPlayingKinoRef.current) return
-      framePointer = (framePointer + 1) % kinoFrames.length
-      const targetPhoto = kinoFrames[framePointer]
-
-      if (blackoutMs > 0) {
-        // Drop rotary shutter blade
-        Animated.sequence([
-          Animated.timing(shutterAnim, { toValue: 1, duration: 8, useNativeDriver: true }),
-          Animated.delay(blackoutMs),
-          Animated.timing(shutterAnim, { toValue: 0, duration: 8, useNativeDriver: true }),
-        ]).start()
-
-        // Advance image behind the shutter curtain
-        blackoutTimerRef.current = setTimeout(() => {
-          if (isPlayingKinoRef.current) {
-            setPlayingKinoUri(targetPhoto.uri)
-            setCurrentIndex(targetPhoto.originalIdx)
-          }
-        }, Math.max(1, Math.round(blackoutMs / 2)))
-      } else {
-        setPlayingKinoUri(targetPhoto.uri)
-        setCurrentIndex(targetPhoto.originalIdx)
-      }
-    }, framePeriodMs)
-  }, [currentIndex, photos, playbackFps, shutterGap, stopKinoPlayback, shutterAnim])
-
-  // Restart playback seamlessly if user adjusts speed or shutter gap while playing
-  useEffect(() => {
-    if (isPlayingKinoRef.current) {
-      stopKinoPlayback()
-      toggleKinoPlayback()
-    }
-  }, [playbackFps, shutterGap])
+  }, [isPlayingKino, handleStopKino, kinoFrames.length, currentIndex])
 
   useEffect(() => {
     return () => {
-      stopKinoPlayback()
+      setIsPlayingKino(false)
     }
-  }, [stopKinoPlayback])
+  }, [])
+
+  useEffect(() => {
+    if (isPlayingKino && kinoFrames.length <= 1) {
+      setIsPlayingKino(false)
+    }
+  }, [isPlayingKino, kinoFrames.length])
 
   const saveToGallery = useCallback(async (uri: string): Promise<boolean> => {
     try {
@@ -301,7 +413,12 @@ export default function ReviewScreen() {
   const renderItem = useCallback(
     ({ item }: { item: Photo }) => (
       <View style={{ width: screenWidth, height: screenHeight }}>
-        <Image source={{ uri: item.uri }} style={{ width: screenWidth, height: screenHeight }} resizeMode="cover" />
+        <Image
+          source={{ uri: item.uri }}
+          style={{ width: screenWidth, height: screenHeight }}
+          contentFit="cover"
+          cachePolicy="memory"
+        />
 
         <LinearGradient
           colors={['rgba(0,0,0,0.62)', 'rgba(0,0,0,0)']}
@@ -422,28 +539,15 @@ export default function ReviewScreen() {
         })}
       />
 
-      {/* Active Kino frame direct projection overlay */}
-      {isPlayingKino && playingKinoUri && (
-        <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-          <Image
-            source={{ uri: playingKinoUri }}
-            style={StyleSheet.absoluteFill}
-            resizeMode="contain"
-          />
-        </View>
-      )}
-
-      {/* Rotary Shutter Blackout Overlay */}
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          StyleSheet.absoluteFill,
-          {
-            backgroundColor: '#000',
-            opacity: shutterAnim,
-            zIndex: 999,
-          },
-        ]}
+      {/* Active Kino frame high-speed projection player */}
+      <KinoReelPlayer
+        frames={kinoFrames}
+        initialIndex={currentIndex}
+        isPlaying={isPlayingKino}
+        playbackFps={playbackFps}
+        shutterGap={shutterGap}
+        onTogglePlay={handleStopKino}
+        onFrameChange={handleKinoFrameChange}
       />
 
       {/* Top bar */}
@@ -456,6 +560,7 @@ export default function ReviewScreen() {
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'space-between',
+          zIndex: 20,
         }}
       >
         <Pressable
@@ -480,7 +585,7 @@ export default function ReviewScreen() {
       </View>
 
       {/* Kino Reel Playback & Speed & Shutter Controls */}
-      {currentPhoto?.kinoId && (
+      {kinoFrames.length > 1 && (
         <View
           style={{
             position: 'absolute',
@@ -489,6 +594,7 @@ export default function ReviewScreen() {
             right: 18,
             alignItems: 'center',
             gap: 8,
+            zIndex: 20,
           }}
         >
           {/* Speed & Shutter Gap Bar */}
@@ -585,7 +691,7 @@ export default function ReviewScreen() {
       )}
 
       {/* Bottom actions */}
-      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: 26, paddingHorizontal: 18 }}>
+      <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: 26, paddingHorizontal: 18, zIndex: 20 }}>
         {allMarked ? (
           <Pressable
             onPress={handleProceedToMint}

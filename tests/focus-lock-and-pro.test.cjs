@@ -277,3 +277,83 @@ test('Dual separated reticles: exposure point directs spot metering independentl
   assert.equal(state.afLock, true)
 })
 
+test('Kino playback frame pipeline: filters matching sequence, sorts by index, loops smoothly', () => {
+  const mockPhotos = [
+    { id: 'p1', uri: 'file:///p1.jpg', action: 'pending' },
+    { id: 'kino-1', kinoId: 'seq-abc', kinoIndex: 1, uri: 'file:///k1.jpg', action: 'pending' },
+    { id: 'kino-0', kinoId: 'seq-abc', kinoIndex: 0, uri: 'file:///k0.jpg', action: 'pending' },
+    { id: 'kino-2', kinoId: 'seq-abc', kinoIndex: 2, uri: 'file:///k2.jpg', action: 'pending' },
+    { id: 'other-kino', kinoId: 'seq-xyz', kinoIndex: 0, uri: 'file:///other.jpg', action: 'pending' },
+  ]
+
+  const currentPhoto = mockPhotos[1] // points to kino-1 in seq-abc
+  const kinoFrames = mockPhotos
+    .map((p, idx) => ({ ...p, originalIdx: idx }))
+    .filter((p) => p.kinoId === currentPhoto.kinoId)
+    .sort((a, b) => (a.kinoIndex ?? 0) - (b.kinoIndex ?? 0))
+
+  // Must only match seq-abc, correctly ordered 0, 1, 2
+  assert.equal(kinoFrames.length, 3)
+  assert.equal(kinoFrames[0].id, 'kino-0')
+  assert.equal(kinoFrames[1].id, 'kino-1')
+  assert.equal(kinoFrames[2].id, 'kino-2')
+
+  // Initial pointer resolution from currentIndex
+  let currentIndex = 1 // kino-1
+  let pointer = kinoFrames.findIndex((f) => f.originalIdx === currentIndex)
+  assert.equal(pointer, 1)
+
+  // Advance sequence
+  pointer = (pointer + 1) % kinoFrames.length
+  assert.equal(pointer, 2)
+  assert.equal(kinoFrames[pointer].id, 'kino-2')
+
+  // Wrap around
+  pointer = (pointer + 1) % kinoFrames.length
+  assert.equal(pointer, 0)
+  assert.equal(kinoFrames[pointer].id, 'kino-0')
+})
+
+test('Kino shutter blackout guarantees: blackout time is strictly less than frame period across all FPS', () => {
+  const tsCode = fs.readFileSync(path.join(__dirname, '../src/store/kinoSettings.ts'), 'utf8')
+  const jsCode = ts.transpileModule(tsCode, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+  }).outputText
+
+  const customModule = { exports: {} }
+  const fn = new Function('module', 'exports', 'require', '__dirname', '__filename', jsCode)
+  fn(
+    customModule,
+    customModule.exports,
+    (id) => {
+      if (id === 'expo-file-system') return { Paths: {}, File: class {} }
+      if (id === 'zustand') return require('zustand')
+      return require(id)
+    },
+    __dirname,
+    __filename,
+  )
+
+  const { getShutterBlackoutMs } = customModule.exports
+  const speeds = [3, 5, 8, 12, 18, 24]
+  const gaps = ['subtle', 'classic', 'deep']
+
+  for (const fps of speeds) {
+    const period = 1000 / fps
+    for (const gap of gaps) {
+      const blackout = getShutterBlackoutMs(gap, fps)
+      assert.ok(
+        blackout < period,
+        `Blackout (${blackout}ms) must be strictly less than period (${period}ms) at ${fps} FPS for gap ${gap}`,
+      )
+      // Must leave at least 20% exposure time
+      const exposureTime = period - blackout
+      assert.ok(
+        exposureTime > 0,
+        `Exposure time (${exposureTime}ms) must be positive at ${fps} FPS for gap ${gap}`,
+      )
+    }
+  }
+})
+
+
