@@ -316,3 +316,68 @@ export function IconFocusFar(p: IconProps) {
     </IconBase>
   )
 }
+
+/** Lock — AF/AE lock indicator. */
+export function IconLock(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="5" y="11" width="14" height="10" rx="2" />
+      <Path d="M8 11V7a4 4 0 0 1 8 0v4" />
+      <Circle cx="12" cy="16" r="1.2" fill={p.color ?? colors.text} stroke="none" />
+    </IconBase>
+  )
+}
+
+/** Unlock — unlocked AF/AE. */
+export function IconUnlock(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="5" y="11" width="14" height="10" rx="2" />
+      <Path d="M8 11V7a4 4 0 0 1 8 0" />
+      <Circle cx="12" cy="16" r="1.2" fill={p.color ?? colors.text} stroke="none" />
+    </IconBase>
+  )
+}
+
+/** Sun / EV brightness bias. */
+export function IconSun(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Circle cx="12" cy="12" r="4.2" />
+      <Line x1="12" y1="2.5" x2="12" y2="4.8" />
+      <Line x1="12" y1="19.2" x2="12" y2="21.5" />
+      <Line x1="2.5" y1="12" x2="4.8" y2="12" />
+      <Line x1="19.2" y1="12" x2="21.5" y2="12" />
+      <Line x1="5.3" y1="5.3" x2="7" y2="7" />
+      <Line x1="17" y1="17" x2="18.7" y2="18.7" />
+      <Line x1="5.3" y1="18.7" x2="7" y2="17" />
+      <Line x1="17" y1="7" x2="18.7" y2="5.3" />
+    </IconBase>
+  )
+}
+
+/** Grid — 3x3 composition framing guide. */
+export function IconGrid(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="3" y="3" width="18" height="18" rx="2" />
+      <Line x1="9" y1="3" x2="9" y2="21" />
+      <Line x1="15" y1="3" x2="15" y2="21" />
+      <Line x1="3" y1="9" x2="21" y2="9" />
+      <Line x1="3" y1="15" x2="21" y2="15" />
+    </IconBase>
+  )
+}
+
+/** Level — horizon leveler. */
+export function IconLevel(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Circle cx="12" cy="12" r="8.5" />
+      <Line x1="3.5" y1="12" x2="7.5" y2="12" />
+      <Line x1="16.5" y1="12" x2="20.5" y2="12" />
+      <Circle cx="12" cy="12" r="2" fill={p.color ?? colors.text} stroke="none" />
+    </IconBase>
+  )
+}
+

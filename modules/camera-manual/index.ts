@@ -62,6 +62,8 @@ export type CameraControlState = {
   metering: MeteringMode
   meteringNormX?: number // 0..1, only used for 'spot'
   meteringNormY?: number
+  aeLock?: boolean
+  afLock?: boolean
 }
 
 function clamp(value: number, range: { min: number; max: number }): number {
@@ -94,6 +96,8 @@ export function applyCameraState(viewTag: number, state: CameraControlState): vo
     meteringMode: state.metering,
     meteringNormX: state.meteringNormX ?? 0.5,
     meteringNormY: state.meteringNormY ?? 0.5,
+    aeLock: Boolean(state.aeLock),
+    afLock: Boolean(state.afLock),
   })
 }
 

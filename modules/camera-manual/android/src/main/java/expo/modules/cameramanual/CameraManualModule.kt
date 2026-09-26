@@ -52,6 +52,12 @@ class CameraStateRecord : Record {
 
   @Field
   var meteringNormY: Float = 0.5f
+
+  @Field
+  var aeLock: Boolean = false
+
+  @Field
+  var afLock: Boolean = false
 }
 
 // TIER 2 — manual camera controls via CameraX's Camera2Interop, pushed onto
@@ -129,21 +135,26 @@ class CameraManualModule : Module() {
         val ceiling = maxFrameDuration(camera) ?: ns
         builder.setCaptureRequestOption(CaptureRequest.SENSOR_FRAME_DURATION, ns.coerceAtMost(ceiling))
       }
+    } else {
+      // In auto exposure mode: lock AE when aeLock is true, release when false
+      builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, state.aeLock)
     }
-    // else ("auto"): omit AE_MODE/sensor keys entirely so CameraX's own
-    // default (fully auto) applies — nothing to override.
 
     // --- Focus ---
     if (state.focusMode == "manual") {
       builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
       state.focusDistance?.let { builder.setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, it) }
+    } else if (state.afLock) {
+      // Locking AF in auto mode holds lens focus distance at the locked target
+      builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+    } else {
+      builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
     }
-    // else: omit AF_MODE/LENS_FOCUS_DISTANCE — CameraX's own continuous-AF default applies.
 
     // --- White balance (always has a value; AUTO=1 is a real preset, not "unset") ---
     builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, state.awbMode)
 
-    // --- Metering (only meaningful while AE_MODE isn't OFF, harmless otherwise) ---
+    // --- Metering and Focus Regions (only meaningful while AE_MODE/AF_MODE isn't OFF) ---
     if (state.meteringMode != "matrix") {
       val array = activeArraySize(camera)
       if (array != null) {
@@ -154,6 +165,7 @@ class CameraManualModule : Module() {
         }
         if (region != null) {
           builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(region))
+          builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(region))
         }
       }
     }

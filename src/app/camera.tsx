@@ -28,6 +28,7 @@ import {
   PinchGestureHandlerEventPayload,
 } from 'react-native-gesture-handler'
 import { LinearGradient } from 'expo-linear-gradient'
+import * as Haptics from 'expo-haptics'
 import { usePhotoStore } from '../store/photos'
 import { captureMetadata } from '../services/captureMetadata'
 import { adoptTemporaryCapture, deleteCapture } from '../services/imagePrivacy'
@@ -36,6 +37,8 @@ import { getFilmStock } from '../config/filmStocks'
 import { cropToAspect } from '../services/cropImage'
 import { ensureUnderCeiling } from '../services/compressImage'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
+import { CompositionGridOverlay, type GridMode } from '../components/CompositionGridOverlay'
+import { FocusReticle } from '../components/FocusReticle'
 import ManualControls from '../components/ManualControls'
 import { useManualCameraState } from '../hooks/useManualCameraState'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
@@ -55,6 +58,7 @@ import {
   IconFilm,
   IconFlip,
   IconGallery,
+  IconGrid,
   IconMint,
   IconPin,
 } from '../components/icons'
@@ -586,32 +590,108 @@ export default function CameraScreen() {
     if (manualCamera.fullyManual) setEv(0)
   }, [manualCamera.fullyManual])
 
-  const handleFocus = useCallback(
+  // Composition Grid mode: 'off' | '3x3' | 'cross'
+  const [gridMode, setGridMode] = useState<GridMode>('off')
+
+  const toggleGrid = useCallback(() => {
+    Haptics.selectionAsync()
+    setGridMode((prev) => {
+      if (prev === 'off') return '3x3'
+      if (prev === '3x3') return 'cross'
+      return 'off'
+    })
+  }, [])
+
+  const fadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearFadeTimer = useCallback(() => {
+    if (fadeTimeoutRef.current) {
+      clearTimeout(fadeTimeoutRef.current)
+      fadeTimeoutRef.current = null
+    }
+  }, [])
+
+  // Short tap on viewfinder: focus and metering, or unlock if already locked
+  const handleViewfinderPress = useCallback(
     async (event: GestureResponderEvent) => {
-      if (!cameraRef.current || !activeDevice?.supportsFocus) return
+      // If currently locked, tapping outside unlocks and returns to auto
+      if (manualCamera.lockMode !== 'none') {
+        manualCamera.unlock()
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+        clearFadeTimer()
+        Animated.timing(focusOpacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }).start(() => setFocusPoint(null))
+        return
+      }
 
       const { locationX, locationY } = event.nativeEvent
-
       setFocusPoint({ x: locationX, y: locationY })
+      manualCamera.setMeteringPoint({ x: locationX / screenW, y: locationY / screenH })
 
+      clearFadeTimer()
       focusOpacity.setValue(1)
-      Animated.sequence([
-        Animated.delay(500),
+
+      // Start fade out after 1.5s in auto mode
+      fadeTimeoutRef.current = setTimeout(() => {
         Animated.timing(focusOpacity, {
           toValue: 0,
           duration: 300,
           useNativeDriver: true,
-        }),
-      ]).start(() => setFocusPoint(null))
+        }).start(() => setFocusPoint(null))
+      }, 1500)
 
-      try {
-        await cameraRef.current.focus({ x: locationX, y: locationY })
-      } catch (error) {
-        console.log('Focus not supported or failed:', error)
+      if (cameraRef.current && activeDevice?.supportsFocus) {
+        try {
+          await cameraRef.current.focus({ x: locationX, y: locationY })
+        } catch (error) {
+          console.log('Focus not supported or failed:', error)
+        }
       }
     },
-    [activeDevice, focusOpacity],
+    [manualCamera, screenW, screenH, clearFadeTimer, focusOpacity, activeDevice],
   )
+
+  // Long press on viewfinder (~1.2s): locks AF and AE at target point
+  const handleViewfinderLongPress = useCallback(
+    async (event: GestureResponderEvent) => {
+      const { locationX, locationY } = event.nativeEvent
+
+      clearFadeTimer()
+      focusOpacity.setValue(1)
+      setFocusPoint({ x: locationX, y: locationY })
+
+      manualCamera.lock('AF/AE', { x: locationX / screenW, y: locationY / screenH })
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+
+      if (cameraRef.current && activeDevice?.supportsFocus) {
+        try {
+          await cameraRef.current.focus({ x: locationX, y: locationY })
+        } catch (error) {
+          console.log('Focus failed during lock:', error)
+        }
+      }
+    },
+    [clearFadeTimer, focusOpacity, manualCamera, screenW, screenH, activeDevice],
+  )
+
+  const handleCycleLock = useCallback(() => {
+    manualCamera.cycleLockMode()
+    Haptics.selectionAsync()
+  }, [manualCamera])
+
+  const handleUnlock = useCallback(() => {
+    manualCamera.unlock()
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    clearFadeTimer()
+    Animated.timing(focusOpacity, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => setFocusPoint(null))
+  }, [manualCamera, clearFadeTimer, focusOpacity])
 
   const pinchGesture = Gesture.Pinch()
     .onStart(() => {
@@ -743,57 +823,80 @@ export default function CameraScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <GestureDetector gesture={pinchGesture}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={handleFocus}>
-          <Camera
-            ref={cameraRef}
+        <View style={StyleSheet.absoluteFill}>
+          <Pressable
             style={StyleSheet.absoluteFill}
-            device={activeDevice}
-            isActive={isFocused && appActive && !cameraSessionError}
-            photo={true}
-            zoom={zoom}
-            exposure={ev}
-            torch={torchActive ? 'on' : 'off'}
-            onError={handleCameraError}
-          />
+            onPress={handleViewfinderPress}
+            onLongPress={handleViewfinderLongPress}
+            delayLongPress={1200}
+          >
+            <Camera
+              ref={cameraRef}
+              style={StyleSheet.absoluteFill}
+              device={activeDevice}
+              isActive={isFocused && appActive && !cameraSessionError}
+              photo={true}
+              zoom={zoom}
+              exposure={ev}
+              torch={torchActive ? 'on' : 'off'}
+              onError={handleCameraError}
+            />
 
-          {/* Aspect-ratio framing guide */}
-          <AspectFramingOverlay aspect={effectiveAspect} width={screenW} height={screenH} />
+            {/* Aspect-ratio framing guide */}
+            <AspectFramingOverlay aspect={effectiveAspect} width={screenW} height={screenH} />
 
-          {/* Legibility scrims — controls float above these */}
-          <LinearGradient
-            pointerEvents="none"
-            colors={['rgba(0,0,0,0.6)', 'rgba(0,0,0,0)']}
-            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 150 }}
-          />
-          <LinearGradient
-            pointerEvents="none"
-            colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.72)']}
-            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 190 }}
-          />
+            {/* Composition grid overlay */}
+            <CompositionGridOverlay mode={gridMode} aspect={effectiveAspect} width={screenW} height={screenH} />
 
-          {/* Shutter Flash Overlay */}
-          <Animated.View
-            pointerEvents="none"
-            style={[StyleSheet.absoluteFill, { backgroundColor: '#000', opacity: shutterFlashAnim }]}
-          />
+            {/* Legibility scrims — controls float above these */}
+            <LinearGradient
+              pointerEvents="none"
+              colors={['rgba(0,0,0,0.6)', 'rgba(0,0,0,0)']}
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 150 }}
+            />
+            <LinearGradient
+              pointerEvents="none"
+              colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.72)']}
+              style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 190 }}
+            />
 
-          {/* Focus Indicator */}
-          {focusPoint && (
+            {/* Shutter Flash Overlay */}
             <Animated.View
-              style={{
-                position: 'absolute',
-                left: focusPoint.x - 40,
-                top: focusPoint.y - 40,
-                width: 80,
-                height: 80,
-                borderWidth: 1.5,
-                borderColor: colors.accentSoft,
-                borderRadius: 10,
-                opacity: focusOpacity,
+              pointerEvents="none"
+              style={[StyleSheet.absoluteFill, { backgroundColor: '#000', opacity: shutterFlashAnim }]}
+            />
+          </Pressable>
+
+          {/* Focus and Lock Reticle with EV Sun Slider */}
+          {focusPoint && (
+            <FocusReticle
+              point={focusPoint}
+              lockMode={manualCamera.lockMode}
+              ev={ev}
+              minExposure={minExposure}
+              maxExposure={maxExposure}
+              onEvChange={(newEv) => {
+                setEv(newEv)
+                clearFadeTimer()
+                focusOpacity.setValue(1)
+                if (manualCamera.lockMode === 'none') {
+                  fadeTimeoutRef.current = setTimeout(() => {
+                    Animated.timing(focusOpacity, {
+                      toValue: 0,
+                      duration: 300,
+                      useNativeDriver: true,
+                    }).start(() => setFocusPoint(null))
+                  }, 2000)
+                }
               }}
+              onCycleLock={handleCycleLock}
+              onUnlock={handleUnlock}
+              opacity={focusOpacity}
+              screenW={screenW}
+              screenH={screenH}
             />
           )}
-        </Pressable>
+        </View>
       </GestureDetector>
 
       {/* Zoom Indicator */}
@@ -815,7 +918,7 @@ export default function CameraScreen() {
         </View>
       )}
 
-      {/* Top row — flash · wallet */}
+      {/* Top row — flash · location · grid · pro · wallet */}
       <View
         style={{
           position: 'absolute',
@@ -845,6 +948,21 @@ export default function CameraScreen() {
             style={[roundChip(42), { opacity: locationGranularity === 'off' ? 0.4 : 1 }]}
           >
             <IconPin size={19} color={locationGranularity === 'off' ? colors.text : colors.accent} />
+          </Pressable>
+
+          <Pressable
+            onPress={toggleGrid}
+            accessibilityRole="button"
+            accessibilityLabel={`Composition Grid: ${gridMode}`}
+            style={[
+              roundChip(42),
+              {
+                borderColor: gridMode !== 'off' ? colors.accent : colors.chipBorder,
+                backgroundColor: gridMode !== 'off' ? colors.accentTint : colors.chipBg,
+              },
+            ]}
+          >
+            <IconGrid size={18} color={gridMode !== 'off' ? colors.accentSoft : colors.text} />
           </Pressable>
 
           <Pressable

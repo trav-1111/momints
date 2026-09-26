@@ -17,6 +17,7 @@
   "version": "1.0.0",
   "scripts": {
     "test:film": "node --test tests/film-emulation.test.cjs",
+    "test:focus-lock": "node --test tests/focus-lock-and-pro.test.cjs",
     "test:kino": "node --test tests/kino-settings.test.cjs",
     "test:privacy": "node --test tests/privacy.test.cjs",
     "test:wallet-domain": "node --test tests/wallet-domain.test.cjs",
