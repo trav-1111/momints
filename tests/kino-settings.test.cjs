@@ -50,13 +50,13 @@ test('Kino settings: default values and constants are properly calibrated', () =
   assert.equal(mod.SHUTTER_GAP_MS.classic, 32)
   assert.equal(mod.SHUTTER_GAP_MS.deep, 50)
 
-  // 3 FPS = 333ms, 5 FPS = 200ms, 7 FPS = 0ms (hardware max)
+  // 3 FPS = 333ms, 5 FPS = 200ms, 8 FPS = 125ms (Nikon F5 SLR motor drive cadence)
   assert.equal(mod.CAPTURE_CADENCE_MS[3], 333)
   assert.equal(mod.CAPTURE_CADENCE_MS[5], 200)
-  assert.equal(mod.CAPTURE_CADENCE_MS[7], 0)
+  assert.equal(mod.CAPTURE_CADENCE_MS[8], 125)
 
-  assert.deepEqual(mod.KINO_CAPTURE_SPEEDS, [3, 5, 7])
-  assert.deepEqual(mod.KINO_PLAYBACK_SPEEDS, [3, 5, 7, 12, 18])
+  assert.deepEqual(mod.KINO_CAPTURE_SPEEDS, [3, 5, 8])
+  assert.deepEqual(mod.KINO_PLAYBACK_SPEEDS, [3, 5, 8, 12, 18, 24])
   assert.deepEqual(mod.KINO_SHUTTER_GAPS, ['off', 'subtle', 'classic', 'deep'])
 })
 
@@ -66,13 +66,13 @@ test('Kino settings store: updates capture FPS, playback FPS, and cycles shutter
 
   // Defaults
   assert.equal(store.getState().captureFps, 5)
-  assert.equal(store.getState().playbackFps, 7)
+  assert.equal(store.getState().playbackFps, 8)
   assert.equal(store.getState().shutterGap, 'classic')
 
-  // Capture FPS cycling
+  // Capture FPS cycling: 5 -> 8 -> 3 -> 5
   const next1 = store.getState().cycleCaptureFps()
-  assert.equal(next1, 7)
-  assert.equal(store.getState().captureFps, 7)
+  assert.equal(next1, 8)
+  assert.equal(store.getState().captureFps, 8)
 
   const next2 = store.getState().cycleCaptureFps()
   assert.equal(next2, 3)
@@ -87,6 +87,8 @@ test('Kino settings store: updates capture FPS, playback FPS, and cycles shutter
   assert.equal(store.getState().playbackFps, 12)
   store.getState().setPlaybackFps(18)
   assert.equal(store.getState().playbackFps, 18)
+  store.getState().setPlaybackFps(8)
+  assert.equal(store.getState().playbackFps, 8)
 
   // Shutter gap cycling: classic -> deep -> off -> subtle -> classic
   assert.equal(store.getState().shutterGap, 'classic')

@@ -444,7 +444,7 @@ export default function CameraScreen() {
         }
 
         const frameStart = performance.now()
-        const photo = await cameraRef.current.takeSnapshot({ quality: 90 })
+        const photo = await cameraRef.current.takeSnapshot({ quality: 85 })
         rawSnapshots.push(photo.path)
         setCrankCount(rawSnapshots.length)
         // Mechanical gear-tooth tactile feedback
@@ -1115,7 +1115,7 @@ export default function CameraScreen() {
           >
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#e74c3c' }} />
             <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: '#fff' }}>
-              🎞️ KINO CRANKING ({captureFps === 7 ? 'MAX' : `${captureFps} FPS`}) · {crankCount} FRAMES ({(crankCount / (captureFps === 7 ? 6.8 : captureFps)).toFixed(1)}s)
+              🎞️ KINO CRANKING ({captureFps === 8 ? '8 FPS · F5' : `${captureFps} FPS`}) · {crankCount} FRAMES ({(crankCount / captureFps).toFixed(1)}s)
             </Text>
           </View>
         </View>
@@ -1258,7 +1258,7 @@ export default function CameraScreen() {
                 }}
               >
                 <Text style={{ fontFamily: fonts.monoBold, fontSize: 8, color: colors.accentSoft }}>
-                  {captureFps === 7 ? 'MAX' : `${captureFps} FPS`}
+                  {captureFps === 8 ? '8 FPS (F5)' : `${captureFps} FPS`}
                 </Text>
               </Pressable>
             )}

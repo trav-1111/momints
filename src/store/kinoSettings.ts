@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import { Paths, File } from 'expo-file-system'
 
-export type KinoCaptureSpeed = 3 | 5 | 7 // FPS
-export type KinoPlaybackSpeed = 3 | 5 | 7 | 12 | 18 // FPS
+export type KinoCaptureSpeed = 3 | 5 | 8 // FPS: 3 = Slow Crank, 5 = Classic LomoKino, 8 = Nikon F5 High-Speed Motor Drive
+export type KinoPlaybackSpeed = 3 | 5 | 8 | 12 | 18 | 24 // FPS
 export type KinoShutterGap = 'off' | 'subtle' | 'classic' | 'deep'
 
 export const SHUTTER_GAP_MS: Record<KinoShutterGap, number> = {
@@ -15,11 +15,11 @@ export const SHUTTER_GAP_MS: Record<KinoShutterGap, number> = {
 export const CAPTURE_CADENCE_MS: Record<KinoCaptureSpeed, number> = {
   3: 333,
   5: 200,
-  7: 0, // Max hardware preview speed (~135ms = ~7.2 FPS)
+  8: 125, // 8 FPS (Nikon F5 SLR motor drive cadence)
 }
 
-export const KINO_CAPTURE_SPEEDS: KinoCaptureSpeed[] = [3, 5, 7]
-export const KINO_PLAYBACK_SPEEDS: KinoPlaybackSpeed[] = [3, 5, 7, 12, 18]
+export const KINO_CAPTURE_SPEEDS: KinoCaptureSpeed[] = [3, 5, 8]
+export const KINO_PLAYBACK_SPEEDS: KinoPlaybackSpeed[] = [3, 5, 8, 12, 18, 24]
 export const KINO_SHUTTER_GAPS: KinoShutterGap[] = ['off', 'subtle', 'classic', 'deep']
 
 export const KINO_SHUTTER_GAP_LABELS: Record<KinoShutterGap, string> = {
@@ -43,11 +43,11 @@ interface KinoSettingsStore {
 const STORAGE_KEY = 'kino-settings-store'
 
 function parseCaptureFps(value: unknown): KinoCaptureSpeed {
-  return value === 3 || value === 5 || value === 7 ? value : 5
+  return value === 3 || value === 5 || value === 8 ? value : value === 7 ? 8 : 5
 }
 
 function parsePlaybackFps(value: unknown): KinoPlaybackSpeed {
-  return value === 3 || value === 5 || value === 7 || value === 12 || value === 18 ? value : 7
+  return value === 3 || value === 5 || value === 8 || value === 12 || value === 18 || value === 24 ? value : value === 7 ? 8 : 8
 }
 
 function parseShutterGap(value: unknown): KinoShutterGap {
@@ -62,7 +62,7 @@ async function readPersistedKinoSettings(): Promise<{
   try {
     const file = new File(Paths.document, `${STORAGE_KEY}.json`)
     if (!file.exists) {
-      return { captureFps: 5, playbackFps: 7, shutterGap: 'classic' }
+      return { captureFps: 5, playbackFps: 8, shutterGap: 'classic' }
     }
     const text = await file.text()
     const data = JSON.parse(text)
@@ -72,7 +72,7 @@ async function readPersistedKinoSettings(): Promise<{
       shutterGap: parseShutterGap(data?.shutterGap),
     }
   } catch {
-    return { captureFps: 5, playbackFps: 7, shutterGap: 'classic' }
+    return { captureFps: 5, playbackFps: 8, shutterGap: 'classic' }
   }
 }
 
@@ -91,7 +91,7 @@ function persistKinoSettings(settings: {
 
 export const useKinoSettingsStore = create<KinoSettingsStore>()((set, get) => ({
   captureFps: 5,
-  playbackFps: 7,
+  playbackFps: 8,
   shutterGap: 'classic',
 
   setCaptureFps: (captureFps) => {
@@ -114,7 +114,7 @@ export const useKinoSettingsStore = create<KinoSettingsStore>()((set, get) => ({
 
   cycleCaptureFps: () => {
     const current = get().captureFps
-    const nextFps: KinoCaptureSpeed = current === 3 ? 5 : current === 5 ? 7 : 3
+    const nextFps: KinoCaptureSpeed = current === 3 ? 5 : current === 5 ? 8 : 3
     get().setCaptureFps(nextFps)
     return nextFps
   },
