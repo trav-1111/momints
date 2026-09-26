@@ -1,0 +1,8 @@
+{
+  "name": "film-gl",
+  "version": "1.0.0",
+  "description": "Native OpenGL ES 3.0 offscreen film emulation processor with isolated EGLContext for zero-leak GPU processing.",
+  "main": "index.ts",
+  "license": "UNLICENSED",
+  "private": true
+}
