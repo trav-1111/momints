@@ -270,7 +270,8 @@ function validateRecipe(raw: unknown, expectedId: string): FilmStockRecipe {
     typeof lut.sha256 !== 'string' ||
     !/^[a-f0-9]{64}$/.test(lut.sha256) ||
     !Number.isInteger(recipe.minimumEngineVersion) ||
-    (recipe.minimumEngineVersion as number) < 2
+    (recipe.minimumEngineVersion as number) < 2 ||
+    (recipe.minimumEngineVersion as number) > FILMSTOCK_ENGINE_VERSION
   ) {
     throw new Error(`${expectedId} has an unsupported LUT recipe`)
   }

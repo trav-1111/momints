@@ -29,7 +29,8 @@ import { usePhotoStore } from '../store/photos'
 import { captureMetadata } from '../services/captureMetadata'
 import { adoptTemporaryCapture, deleteCapture } from '../services/imagePrivacy'
 import { persistRollFrame, updateStoredRollFrameMeta } from '../services/rollVault'
-import { applyFilm } from '../services/filmProcessor'
+import { processFilm } from '../services/filmProcessor'
+import { verifyCompressedFilmOutput } from '../services/filmOutput'
 import { cropToAspect } from '../services/cropImage'
 import { ensureUnderCeiling } from '../services/compressImage'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
@@ -128,7 +129,6 @@ export default function CameraScreen() {
   const addPhoto = usePhotoStore((state) => state.addPhoto)
   const setAction = usePhotoStore((state) => state.setAction)
   const setPhotoMeta = usePhotoStore((state) => state.setPhotoMeta)
-  const updatePhotoUri = usePhotoStore((state) => state.updatePhotoUri)
   const removePhoto = usePhotoStore((state) => state.removePhoto)
 
   const walletAddress = account?.address?.toString() ?? null
@@ -330,40 +330,33 @@ export default function CameraScreen() {
 
       captureUri = adoptTemporaryCapture(`file://${photo.path}`)
 
-      // Stamp roll membership at creation so it outlives the session's
-      // activeRoll — completeRoll() clears that, and frames must stay grouped
-      // as a roll (and out of the quick-photo flows) forever after.
+      // Originals are session-only. No photo enters the store/queue until the
+      // selected immutable package has rendered and its output is verified.
+      if (effectiveAspect !== 'full') {
+        captureUri = await cropToAspect(captureUri, effectiveAspect)
+      }
+      let receipt = await processFilm(captureUri, effectiveFilm)
+      captureUri = receipt.outputUri
+      // Quick shots only. Roll frames have no server-side size ceiling, so they
+      // keep full capture quality. This is the same predicate addPhoto uses to
+      // stamp rollId below, which is exactly what the gallery filters on to
+      // decide what mints through the quick path — so the two cannot disagree.
+      //
+      // Must come after processing: film re-encodes at quality 95 and would
+      // otherwise be free to push an already-fitted image back over.
+      if (activeMode !== 'roll' || activeRoll === null) {
+        captureUri = await ensureUnderCeiling(captureUri)
+        receipt = await verifyCompressedFilmOutput(receipt, captureUri)
+      }
       const photoId = addPhoto(
-        captureUri,
+        receipt.outputUri,
         activeMode === 'roll' && activeRoll !== null
           ? { id: activeRoll.id, name: activeRoll.name, frameNumber: activeRoll.frameIds.length + 1 }
           : undefined,
         effectiveAspect,
-        effectiveFilm.filmStockId,
+        receipt.filmStockId,
       )
       createdPhotoId = photoId
-
-      // Post-capture processing: crop to the aspect ratio first, then apply the
-      // roll's film emulation (B&W), then fit quick shots under the upload
-      // ceiling. Each no-ops where not needed and falls back to the original on
-      // failure, so a capture is never lost.
-      let processedUri = captureUri
-      if (effectiveAspect !== 'full') {
-        processedUri = await cropToAspect(processedUri, effectiveAspect)
-      }
-      processedUri = await applyFilm(processedUri, effectiveFilm)
-      // Quick shots only. Roll frames have no server-side size ceiling, so they
-      // keep full capture quality. This is the same predicate addPhoto uses to
-      // stamp rollId above, which is exactly what the gallery filters on to
-      // decide what mints through the quick path — so the two cannot disagree.
-      //
-      // Must come after applyFilm: film re-encodes at quality 95 and would
-      // otherwise be free to push an already-fitted image back over.
-      if (activeMode !== 'roll' || activeRoll === null) {
-        processedUri = await ensureUnderCeiling(processedUri)
-      }
-      captureUri = processedUri
-      updatePhotoUri(photoId, processedUri)
 
       // Best-effort location — fire-and-forget, never blocks capture. 'off'
       // short-circuits inside captureMetadata before touching GPS at all.
@@ -404,7 +397,10 @@ export default function CameraScreen() {
       deleteCapture(captureUri)
       if (createdPhotoId) removePhoto(createdPhotoId)
       console.error('Failed to capture photo:', error)
-      Alert.alert('Error', 'Failed to capture photo. Please try again.')
+      Alert.alert(
+        'Photo not added',
+        'Capture or film processing could not be verified. No frame was queued. Please try again.',
+      )
     } finally {
       if (usingTorchForFlash) setTorchActive(false)
       setIsCapturing(false)
@@ -420,7 +416,6 @@ export default function CameraScreen() {
     addFrameToRoll,
     setAction,
     setPhotoMeta,
-    updatePhotoUri,
     removePhoto,
     effectiveAspect,
     shutterFlashAnim,
@@ -886,10 +881,7 @@ export default function CameraScreen() {
 
       {/* Quick-mode aspect dropdown — collapsed shows the current ratio */}
       {activeMode === 'quick' && (
-        <View
-          pointerEvents="box-none"
-          style={{ position: 'absolute', top: 74, right: 18, alignItems: 'flex-end' }}
-        >
+        <View pointerEvents="box-none" style={{ position: 'absolute', top: 74, right: 18, alignItems: 'flex-end' }}>
           <Pressable
             onPress={() => setAspectMenuOpen((o) => !o)}
             style={[

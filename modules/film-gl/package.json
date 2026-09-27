@@ -1,0 +1,8 @@
+{
+  "name": "film-gl",
+  "version": "1.0.0",
+  "description": "Momints v2 filmstock processor using a per-frame isolated EGL context and verified runtime packages.",
+  "main": "index.ts",
+  "license": "UNLICENSED",
+  "private": true
+}

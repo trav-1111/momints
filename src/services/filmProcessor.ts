@@ -10,6 +10,11 @@ import {
 } from '@shopify/react-native-skia'
 import { createHash } from 'react-native-quick-crypto'
 import { File } from 'expo-file-system'
+import { Platform } from 'react-native'
+import { v4 as uuidv4 } from 'uuid'
+import { applyFilmNative, type FilmProcessingReceipt } from '../../modules/film-gl'
+import { jpegDimensions, sha256, verifyFilmOutput } from './filmOutput'
+import { deleteCapture } from './imagePrivacy'
 import type { FilmSettings } from '../store/session'
 import {
   LUT_SIZE,
@@ -101,9 +106,13 @@ if (!LUT_EFFECT) console.error('Momints LUT shader failed to compile on this dev
 
 function decodeImage(bytes: Uint8Array): SkImage {
   const data = Skia.Data.fromBytes(bytes)
-  const image = Skia.Image.MakeImageFromEncoded(data)
-  if (!image) throw new Error('Captured image could not be decoded')
-  return image
+  try {
+    const image = Skia.Image.MakeImageFromEncoded(data)
+    if (!image) throw new Error('Captured image could not be decoded')
+    return image
+  } finally {
+    data.dispose()
+  }
 }
 
 function normalizeToSrgb(image: SkImage): SkImage {
@@ -122,31 +131,21 @@ function normalizeToSrgb(image: SkImage): SkImage {
 }
 
 function outputFile(source: File, filmStockId: string): File {
-  return new File(source.parentDirectory, `photo_${Date.now()}_${filmStockId}.jpg`)
+  return new File(source.parentDirectory, `photo_${uuidv4()}_${filmStockId}.jpg`)
 }
 
 function removeSource(source: File): void {
-  try {
-    source.delete()
-  } catch {
-    // Startup cleanup removes any stray app-owned temporary capture.
-  }
+  deleteCapture(source.uri)
 }
 
-function encodeSurface(
-  source: File,
-  filmStockId: string,
-  image: ReturnType<typeof Skia.Surface.MakeOffscreen>,
-): string {
+function encodeSurface(destination: File, image: ReturnType<typeof Skia.Surface.MakeOffscreen>): string {
   if (!image) throw new Error('Film processing surface could not be created')
   try {
     image.flush()
     const snapshot = image.makeImageSnapshot()
     try {
       const encoded = snapshot.encodeToBytes(ImageFormat.JPEG, JPEG_QUALITY)
-      const destination = outputFile(source, filmStockId)
       destination.write(encoded)
-      removeSource(source)
       return destination.uri
     } finally {
       snapshot.dispose()
@@ -156,30 +155,45 @@ function encodeSurface(
   }
 }
 
-function applyLegacyMatrix(source: File, image: SkImage, recipe: FilmStockRecipeV1, filmStockId: string): string {
-  const surface = Skia.Surface.MakeOffscreen(image.width(), image.height())
+function applyLegacyMatrix(destination: File, image: SkImage, recipe: FilmStockRecipeV1): string {
+  let surface = Skia.Surface.MakeOffscreen(image.width(), image.height())
   if (!surface) throw new Error('Film processing surface could not be created')
   const paint = Skia.Paint()
-  paint.setColorFilter(Skia.ColorFilter.MakeMatrix(recipe.colorMatrix))
-  surface.getCanvas().drawImage(image, 0, 0, paint)
-  return encodeSurface(source, filmStockId, surface)
+  const filter = Skia.ColorFilter.MakeMatrix(recipe.colorMatrix)
+  try {
+    paint.setColorFilter(filter)
+    surface.getCanvas().drawImage(image, 0, 0, paint)
+    const ownedSurface = surface
+    surface = null
+    // encodeSurface owns disposal from here, including encode failure.
+    return encodeSurface(destination, ownedSurface)
+  } finally {
+    surface?.dispose()
+    paint.dispose()
+    filter.dispose()
+  }
 }
 
 function runtimeLutImage(bytes: Uint8Array): { image: SkImage; size: number } {
   const runtime = parseRuntimeLut(bytes)
   const width = runtime.size * runtime.size
-  const image = Skia.Image.MakeImage(
-    {
-      width,
-      height: runtime.size,
-      alphaType: AlphaType.Opaque,
-      colorType: ColorType.RGBA_8888,
-    },
-    Skia.Data.fromBytes(runtime.pixels),
-    width * 4,
-  )
-  if (!image) throw new Error('Runtime LUT could not be uploaded to the GPU')
-  return { image, size: runtime.size }
+  const data = Skia.Data.fromBytes(runtime.pixels)
+  try {
+    const image = Skia.Image.MakeImage(
+      {
+        width,
+        height: runtime.size,
+        alphaType: AlphaType.Opaque,
+        colorType: ColorType.RGBA_8888,
+      },
+      data,
+      width * 4,
+    )
+    if (!image) throw new Error('Runtime LUT could not be uploaded to the GPU')
+    return { image, size: runtime.size }
+  } finally {
+    data.dispose()
+  }
 }
 
 function recipeUniforms(recipe: FilmStockRecipeV2, width: number, height: number, seed: number): number[] {
@@ -263,15 +277,15 @@ function runDevelopmentShaderProbe(): void {
   }
 }
 
-if (__DEV__) setTimeout(runDevelopmentShaderProbe, 0)
+// Android uses the isolated native renderer, not the shared Skia GPU context.
+if (__DEV__ && Platform.OS !== 'android') setTimeout(runDevelopmentShaderProbe, 0)
 
 function applyLutRecipe(
-  source: File,
+  destination: File,
   seed: number,
   image: SkImage,
   recipe: FilmStockRecipeV2,
   runtimeBytes: Uint8Array,
-  filmStockId: string,
 ): string {
   if (!LUT_EFFECT) throw new Error('This device could not compile the Momints film engine')
   const { image: lutImage } = runtimeLutImage(runtimeBytes)
@@ -283,23 +297,34 @@ function applyLutRecipe(
       lutShader,
     ])
     const paint = Skia.Paint()
-    paint.setShader(shader)
-    const surface = Skia.Surface.MakeOffscreen(image.width(), image.height())
-    if (!surface) throw new Error('Film processing surface could not be created')
-    const canvas = surface.getCanvas()
+    let surface: ReturnType<typeof Skia.Surface.MakeOffscreen> = null
+    try {
+      paint.setShader(shader)
+      surface = Skia.Surface.MakeOffscreen(image.width(), image.height())
+      if (!surface) throw new Error('Film processing surface could not be created')
+      const canvas = surface.getCanvas()
 
-    // Tile draw commands avoid additional per-tile JavaScript pixel buffers.
-    // The only full-resolution raster allocation beyond the decoded source is
-    // the color-managed sRGB image consumed by the GPU surface.
-    for (let y = 0; y < image.height(); y += TILE_SIZE) {
-      for (let x = 0; x < image.width(); x += TILE_SIZE) {
-        canvas.drawRect(
-          Skia.XYWHRect(x, y, Math.min(TILE_SIZE, image.width() - x), Math.min(TILE_SIZE, image.height() - y)),
-          paint,
-        )
+      // Tile draw commands avoid additional per-tile JavaScript pixel buffers.
+      // The only full-resolution raster allocation beyond the decoded source is
+      // the color-managed sRGB image consumed by the GPU surface.
+      for (let y = 0; y < image.height(); y += TILE_SIZE) {
+        for (let x = 0; x < image.width(); x += TILE_SIZE) {
+          canvas.drawRect(
+            Skia.XYWHRect(x, y, Math.min(TILE_SIZE, image.width() - x), Math.min(TILE_SIZE, image.height() - y)),
+            paint,
+          )
+        }
       }
+      const ownedSurface = surface
+      surface = null
+      return encodeSurface(destination, ownedSurface)
+    } finally {
+      surface?.dispose()
+      paint.dispose()
+      shader.dispose()
+      sourceShader.dispose()
+      lutShader.dispose()
     }
-    return encodeSurface(source, filmStockId, surface)
   } finally {
     lutImage.dispose()
   }
@@ -309,8 +334,12 @@ function applyLutRecipe(
  * Apply the immutable recipe pinned to a capture. Processing failure is fatal:
  * the app never mints an unprocessed image under a selected filmStockId.
  */
-export async function applyFilm(uri: string, film: FilmSettings): Promise<string> {
-  const filmPackage = await loadFilmStockPackage(film.filmStockId)
+async function applyFilmSkia(
+  uri: string,
+  film: FilmSettings,
+  filmPackage: Awaited<ReturnType<typeof loadFilmStockPackage>>,
+  destination: File,
+): Promise<string> {
   const source = new File(uri)
   try {
     const sourceBytes = await source.bytes()
@@ -325,11 +354,11 @@ export async function applyFilm(uri: string, film: FilmSettings): Promise<string
     }
     try {
       if (filmPackage.recipe.schemaVersion === 1) {
-        return applyLegacyMatrix(source, image, filmPackage.recipe, film.filmStockId)
+        return applyLegacyMatrix(destination, image, filmPackage.recipe)
       }
       if (!filmPackage.runtimeLutUri) throw new Error(`Film LUT ${film.filmStockId} is missing`)
       const runtimeBytes = await new File(filmPackage.runtimeLutUri).bytes()
-      return applyLutRecipe(source, seed, image, filmPackage.recipe, runtimeBytes, film.filmStockId)
+      return applyLutRecipe(destination, seed, image, filmPackage.recipe, runtimeBytes)
     } finally {
       image.dispose()
     }
@@ -337,4 +366,82 @@ export async function applyFilm(uri: string, film: FilmSettings): Promise<string
     console.error(`applyFilm failed for ${film.filmStockId}:`, error)
     throw new Error(`Could not process ${film.filmStockId}`, { cause: error instanceof Error ? error : undefined })
   }
+}
+
+let processingTail: Promise<unknown> = Promise.resolve()
+
+/** Serialize full-resolution work. Native failures never fall back to Skia/original. */
+export function processFilm(uri: string, film: FilmSettings): Promise<FilmProcessingReceipt> {
+  const selected = { ...film }
+  const job = processingTail.then(() => processFilmOnce(uri, selected))
+  processingTail = job.catch(() => {})
+  return job
+}
+
+async function processFilmOnce(uri: string, film: FilmSettings): Promise<FilmProcessingReceipt> {
+  const filmPackage = await loadFilmStockPackage(film.filmStockId)
+  const source = new File(uri)
+  const recipeJson = JSON.stringify(filmPackage.recipe)
+  const recipeSha256 = sha256(recipeJson)
+  const lutSha256 = filmPackage.recipe.schemaVersion === 2 ? filmPackage.recipe.lut.sha256 : null
+  if (lutSha256 && !filmPackage.runtimeLutUri) throw new Error('Selected film LUT is missing')
+  let destination: File | null = null
+  let ownsDestination = false
+  try {
+    destination = outputFile(source, film.filmStockId)
+    if (destination.exists) throw new Error('Film output path already exists')
+    ownsDestination = true
+    let receipt: FilmProcessingReceipt
+    const renderer = Platform.OS === 'android' ? 'native-egl-v2' : 'skia-v2'
+    if (Platform.OS === 'android') {
+      const seed = Number.parseInt(sha256(await source.bytes()).slice(0, 8), 16) % 100_000
+      receipt = await applyFilmNative({
+        inputUri: uri,
+        outputUri: destination.uri,
+        filmStockId: film.filmStockId,
+        recipeJson,
+        recipeSha256,
+        lutUri: filmPackage.runtimeLutUri ?? null,
+        seed,
+        jpegQuality: JPEG_QUALITY,
+      })
+    } else {
+      await applyFilmSkia(uri, film, filmPackage, destination)
+      const bytes = await destination.bytes()
+      receipt = {
+        filmStockId: film.filmStockId,
+        recipeSha256,
+        lutSha256,
+        outputUri: destination.uri,
+        outputSha256: sha256(bytes),
+        ...jpegDimensions(bytes),
+        renderer,
+        colorSpace: 'sRGB',
+      }
+    }
+    await verifyFilmOutput(receipt, {
+      filmStockId: film.filmStockId,
+      recipeSha256,
+      lutSha256,
+      outputUri: destination.uri,
+      renderer,
+    })
+    removeSource(source)
+    return receipt
+  } catch (error) {
+    // Delete only the destination chosen by this call, never a URI from an invalid receipt.
+    try {
+      if (ownsDestination && destination?.exists) destination.delete()
+    } catch {
+      /* Startup sweeps temporary outputs. */
+    }
+    throw new Error(`Could not process ${film.filmStockId}; the frame was not queued`, {
+      cause: error instanceof Error ? error : undefined,
+    })
+  }
+}
+
+/** Compatibility wrapper for existing callers; it still passes the verification gate. */
+export async function applyFilm(uri: string, film: FilmSettings): Promise<string> {
+  return (await processFilm(uri, film)).outputUri
 }
