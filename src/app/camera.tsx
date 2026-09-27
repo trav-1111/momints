@@ -119,6 +119,7 @@ export default function CameraScreen() {
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null)
   const [exposurePoint, setExposurePoint] = useState<{ x: number; y: number } | null>(null)
   const [isSeparated, setIsSeparated] = useState(false)
+  const [hasPlacedAe, setHasPlacedAe] = useState(false)
   const [isHoldingFocus, setIsHoldingFocus] = useState(false)
   const holdProgress = useRef(new Animated.Value(0)).current
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -225,7 +226,7 @@ export default function CameraScreen() {
 
   // Target orientation & UI rotation for landscape / portrait layout adaptation
   const uiRotationAnim = useRef(new Animated.Value(0)).current
-  const [_uiRotation, setUiRotation] = useState(0)
+  const [uiRotation, setUiRotation] = useState(0)
 
   const handleUIRotationChanged = useCallback((degrees: number) => {
     setUiRotation(degrees)
@@ -646,8 +647,8 @@ export default function CameraScreen() {
   // Touch begins: show reticle and start hold-to-lock visual animation if not locked
   const handleViewfinderPressIn = useCallback(
     (event: GestureResponderEvent) => {
-      // If already locked, press will unlock on release
-      if (manualCamera.lockMode !== 'none') return
+      // If already locked or separate AE mode is active, do not start hold-to-lock timer
+      if (manualCamera.lockMode !== 'none' || isSeparated) return
 
       const { locationX, locationY } = event.nativeEvent
       clearFadeTimer()
@@ -681,7 +682,7 @@ export default function CameraScreen() {
         }
       }, 1200)
     },
-    [manualCamera, clearFadeTimer, focusOpacity, holdProgress, screenW, screenH, activeDevice],
+    [manualCamera, isSeparated, clearFadeTimer, focusOpacity, holdProgress, screenW, screenH, activeDevice],
   )
 
   // Touch released before lock completes or while holding
@@ -706,10 +707,27 @@ export default function CameraScreen() {
         return
       }
 
+      const { locationX, locationY } = event.nativeEvent
+
+      // Tap-to-set separate AE:
+      // When separate AE mode is active, tapping anywhere moves the AE metering point there
+      if (isSeparated) {
+        const normX = Math.max(0, Math.min(1, locationX / screenW))
+        const normY = Math.max(0, Math.min(1, locationY / screenH))
+        setExposurePoint({ x: locationX, y: locationY })
+        manualCamera.setExposurePoint({ x: normX, y: normY })
+        setHasPlacedAe(true)
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+        clearFadeTimer()
+        focusOpacity.setValue(1)
+        return
+      }
+
       // If currently locked, tapping outside unlocks and returns to auto
       if (manualCamera.lockMode !== 'none') {
         manualCamera.unlock()
         setIsSeparated(false)
+        setHasPlacedAe(false)
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
         clearFadeTimer()
         Animated.timing(focusOpacity, {
@@ -724,10 +742,10 @@ export default function CameraScreen() {
       }
 
       // Quick tap: focus & meter at target point with 1.5s auto fade
-      const { locationX, locationY } = event.nativeEvent
       setFocusPoint({ x: locationX, y: locationY })
       setExposurePoint({ x: locationX, y: locationY })
       setIsSeparated(false)
+      setHasPlacedAe(false)
       manualCamera.setMeteringPoint({ x: locationX / screenW, y: locationY / screenH })
 
       clearFadeTimer()
@@ -752,7 +770,7 @@ export default function CameraScreen() {
         }
       }
     },
-    [manualCamera, screenW, screenH, clearFadeTimer, focusOpacity, activeDevice],
+    [manualCamera, isSeparated, screenW, screenH, clearFadeTimer, focusOpacity, activeDevice],
   )
 
   const handleCycleLock = useCallback(() => {
@@ -764,26 +782,47 @@ export default function CameraScreen() {
     setIsSeparated((prev) => {
       const next = !prev
       if (next && focusPoint) {
-        // Place separated exposure box offset slightly
-        const newExp = {
-          x: Math.min(screenW - 50, Math.max(30, focusPoint.x + 70)),
-          y: Math.max(90, Math.min(screenH - 190, focusPoint.y - 70)),
+        setHasPlacedAe(false)
+        // If not already locked, lock AF/AE so focus is pinned at focusPoint
+        if (manualCamera.lockMode === 'none') {
+          manualCamera.lock(
+            'AF/AE',
+            { x: focusPoint.x / screenW, y: focusPoint.y / screenH },
+            { x: focusPoint.x / screenW, y: focusPoint.y / screenH },
+          )
         }
-        setExposurePoint(newExp)
-        manualCamera.setExposurePoint({ x: newExp.x / screenW, y: newExp.y / screenH })
+        // Initially place separated exposure reticle at focusPoint until user taps screen to place it
+        setExposurePoint(focusPoint)
+        manualCamera.setExposurePoint({ x: focusPoint.x / screenW, y: focusPoint.y / screenH })
       } else if (!next && focusPoint) {
         setExposurePoint(focusPoint)
         manualCamera.setExposurePoint(null)
+        setHasPlacedAe(false)
       }
       return next
     })
     Haptics.selectionAsync()
   }, [focusPoint, screenW, screenH, manualCamera])
 
+  const handleFocusPointChange = useCallback(
+    (pt: { x: number; y: number }) => {
+      setFocusPoint(pt)
+      manualCamera.setLockPoint({ x: pt.x / screenW, y: pt.y / screenH })
+      if (!isSeparated) {
+        setExposurePoint(pt)
+        manualCamera.setExposurePoint(null)
+      }
+      clearFadeTimer()
+      focusOpacity.setValue(1)
+    },
+    [manualCamera, screenW, screenH, isSeparated, clearFadeTimer, focusOpacity],
+  )
+
   const handleExposurePointChange = useCallback(
     (pt: { x: number; y: number }) => {
       setExposurePoint(pt)
       manualCamera.setExposurePoint({ x: pt.x / screenW, y: pt.y / screenH })
+      setHasPlacedAe(true)
       // Keep reticle visible while adjusting
       clearFadeTimer()
       focusOpacity.setValue(1)
@@ -794,6 +833,7 @@ export default function CameraScreen() {
   const handleUnlock = useCallback(() => {
     manualCamera.unlock()
     setIsSeparated(false)
+    setHasPlacedAe(false)
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
     clearFadeTimer()
     Animated.timing(focusOpacity, {
@@ -989,6 +1029,7 @@ export default function CameraScreen() {
               focusPoint={focusPoint}
               exposurePoint={exposurePoint}
               isSeparated={isSeparated}
+              isAePlaced={hasPlacedAe}
               lockMode={manualCamera.lockMode}
               isHolding={isHoldingFocus}
               holdProgress={holdProgress}
@@ -1015,6 +1056,7 @@ export default function CameraScreen() {
               onCycleLock={handleCycleLock}
               onToggleSeparate={handleToggleSeparate}
               onUnlock={handleUnlock}
+              onFocusPointChange={handleFocusPointChange}
               onExposurePointChange={handleExposurePointChange}
               opacity={focusOpacity}
               screenW={screenW}
@@ -1347,6 +1389,41 @@ export default function CameraScreen() {
               )}
             </View>
           )}
+
+          {/* Kino Cadence Selector Chip */}
+          <Pressable
+            onPress={() => {
+              cycleCaptureFps()
+              Vibration.vibrate(25)
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
+            style={[
+              chip,
+              {
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 5,
+                paddingVertical: 7,
+                paddingHorizontal: 10,
+                borderRadius: 10,
+              },
+            ]}
+          >
+            <Animated.Text
+              style={[
+                {
+                  fontFamily: fonts.monoBold,
+                  fontSize: 10,
+                  color: colors.accentSoft,
+                  letterSpacing: 0.5,
+                },
+                hudRotateStyle,
+              ]}
+            >
+              🎞️ {captureFps === 8 ? '8 FPS · F5' : `${captureFps} FPS`}
+            </Animated.Text>
+          </Pressable>
         </View>
 
         {/* EXP dial — frames remaining */}
@@ -1541,7 +1618,18 @@ export default function CameraScreen() {
               ) : null}
             </View>
           </Pressable>
-          <Animated.View style={[{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }, hudRotateStyle]}>
+          {/* Shutter sub-label: only visible in portrait so landscape has 100% clean clearance */}
+          <Animated.View
+            style={[
+              {
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginTop: 6,
+                opacity: uiRotation === 0 ? 1 : 0,
+              },
+              hudRotateStyle,
+            ]}
+          >
             <Text
               style={{
                 fontFamily: fonts.mono,
@@ -1552,27 +1640,6 @@ export default function CameraScreen() {
             >
               {isCranking ? 'CRANKING' : 'HOLD FOR KINO'}
             </Text>
-            {!isCranking && (
-              <Pressable
-                onPress={() => {
-                  const next = cycleCaptureFps()
-                  Vibration.vibrate(25)
-                }}
-                hitSlop={8}
-                style={{
-                  paddingHorizontal: 6,
-                  paddingVertical: 2,
-                  borderRadius: 4,
-                  backgroundColor: 'rgba(255,255,255,0.12)',
-                  borderWidth: 1,
-                  borderColor: 'rgba(255,255,255,0.2)',
-                }}
-              >
-                <Text style={{ fontFamily: fonts.monoBold, fontSize: 8, color: colors.accentSoft }}>
-                  {captureFps === 8 ? '8 FPS (F5)' : `${captureFps} FPS`}
-                </Text>
-              </Pressable>
-            )}
           </Animated.View>
         </View>
 

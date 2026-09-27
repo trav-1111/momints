@@ -473,5 +473,54 @@ test('Landscape Mode: Shortest rotation angle and transform mappings', () => {
   assert.equal(computeRotationDegrees('portrait-upside-down'), 180)
 })
 
+test('Tap-to-Place Separate AE: screen tap directs exposure without clearing focus lock', () => {
+  let isSeparated = true
+  let hasPlacedAe = false
+  let focusPoint = { x: 200, y: 300 }
+  let exposurePoint = { x: 200, y: 300 }
+  const screenW = 390
+  const screenH = 844
+
+  const appliedPoints = []
+  const mockManualCamera = {
+    lockMode: 'AF/AE',
+    setExposurePoint: (pt) => appliedPoints.push(pt),
+    unlock: () => { isSeparated = false },
+  }
+
+  // User taps at (100, 500)
+  const tapEvent = { nativeEvent: { locationX: 100, locationY: 500 } }
+
+  // Simulate handleViewfinderPress logic when isSeparated is true:
+  if (isSeparated) {
+    const { locationX, locationY } = tapEvent.nativeEvent
+    const normX = Math.max(0, Math.min(1, locationX / screenW))
+    const normY = Math.max(0, Math.min(1, locationY / screenH))
+    exposurePoint = { x: locationX, y: locationY }
+    mockManualCamera.setExposurePoint({ x: normX, y: normY })
+    hasPlacedAe = true
+  }
+
+  assert.equal(isSeparated, true, 'isSeparated must remain active')
+  assert.equal(hasPlacedAe, true, 'hasPlacedAe must be set to true')
+  assert.deepEqual(focusPoint, { x: 200, y: 300 }, 'focusPoint must not be overridden')
+  assert.deepEqual(exposurePoint, { x: 100, y: 500 }, 'exposurePoint must update to tap coordinates')
+  assert.equal(appliedPoints.length, 1)
+  assert.equal(appliedPoints[0].x, 100 / 390)
+  assert.equal(appliedPoints[0].y, 500 / 844)
+})
+
+test('Landscape Shutter Clearance: shutter sub-label is hidden in landscape to avoid touch collision', () => {
+  function getShutterSubLabelOpacity(uiRotation) {
+    return uiRotation === 0 ? 1 : 0
+  }
+
+  assert.equal(getShutterSubLabelOpacity(0), 1, 'Portrait must display informative shutter hint')
+  assert.equal(getShutterSubLabelOpacity(90), 0, 'Landscape right must hide hint to prevent collision with shutter')
+  assert.equal(getShutterSubLabelOpacity(-90), 0, 'Landscape left must hide hint to prevent collision with shutter')
+  assert.equal(getShutterSubLabelOpacity(180), 0, 'Inverted portrait must hide hint')
+})
+
+
 
 

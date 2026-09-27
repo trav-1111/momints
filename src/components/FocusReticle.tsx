@@ -17,6 +17,7 @@ interface Props {
   focusPoint: { x: number; y: number } | null
   exposurePoint: { x: number; y: number } | null
   isSeparated: boolean
+  isAePlaced?: boolean
   lockMode: CameraLockMode
   isHolding: boolean
   holdProgress: Animated.Value
@@ -46,6 +47,7 @@ export function FocusReticle({
   focusPoint,
   exposurePoint,
   isSeparated,
+  isAePlaced = true,
   lockMode,
   isHolding,
   holdProgress,
@@ -101,56 +103,76 @@ export function FocusReticle({
     }
   }, [lockMode])
 
-  // PanResponder for moving the Exposure Box across the screen
-  const expPanResponder = useMemo(() => {
-    let startX = 0
-    let startY = 0
-    return PanResponder.create({
+  // Stable refs for Exposure Box PanResponder to prevent tear-down mid-drag
+  const expPointRef = useRef(expPoint)
+  expPointRef.current = expPoint
+  const onExposurePointChangeRef = useRef(onExposurePointChange)
+  onExposurePointChangeRef.current = onExposurePointChange
+  const expStartXRef = useRef(0)
+  const expStartYRef = useRef(0)
+  const screenWRef = useRef(screenW)
+  screenWRef.current = screenW
+  const screenHRef = useRef(screenH)
+  screenHRef.current = screenH
+
+  const expPanResponder = useRef(
+    PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dx) > 1 || Math.abs(gestureState.dy) > 1
+      },
       onPanResponderGrant: () => {
-        startX = expPoint.x
-        startY = expPoint.y
+        expStartXRef.current = expPointRef.current.x
+        expStartYRef.current = expPointRef.current.y
         Haptics.selectionAsync()
       },
       onPanResponderMove: (_, gestureState) => {
-        if (onExposurePointChange) {
-          const newX = Math.max(20, Math.min(screenW - 20, startX + gestureState.dx))
-          const newY = Math.max(80, Math.min(screenH - 180, startY + gestureState.dy))
-          onExposurePointChange({ x: newX, y: newY })
+        if (onExposurePointChangeRef.current) {
+          const newX = Math.max(20, Math.min(screenWRef.current - 20, expStartXRef.current + gestureState.dx))
+          const newY = Math.max(80, Math.min(screenHRef.current - 180, expStartYRef.current + gestureState.dy))
+          onExposurePointChangeRef.current({ x: newX, y: newY })
         }
       },
-    })
-  }, [expPoint, onExposurePointChange, screenW, screenH])
+      onPanResponderRelease: () => {
+        Haptics.selectionAsync()
+      },
+    }),
+  ).current
 
-  // PanResponder for vertical EV adjustment next to the exposure reticle
+  // Stable refs for EV Adjustment PanResponder
   const lastEvRef = useRef(ev)
   lastEvRef.current = ev
+  const onEvChangeRef = useRef(onEvChange)
+  onEvChangeRef.current = onEvChange
+  const minExposureRef = useRef(minExposure)
+  minExposureRef.current = minExposure
+  const maxExposureRef = useRef(maxExposure)
+  maxExposureRef.current = maxExposure
 
-  const evPanResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: () => true,
-        onPanResponderGrant: () => {
-          Haptics.selectionAsync()
-        },
-        onPanResponderMove: (_, gestureState) => {
-          const range = maxExposure - minExposure
-          const deltaEv = (-gestureState.dy / MAX_TRAVEL) * (range / 2)
-          let targetEv = lastEvRef.current + deltaEv
-          targetEv = Math.max(minExposure, Math.min(maxExposure, targetEv))
-          const roundedEv = Math.round(targetEv * 10) / 10
-          if (roundedEv !== ev) {
-            onEvChange(roundedEv)
-          }
-        },
-        onPanResponderRelease: () => {
-          Haptics.selectionAsync()
-        },
-      }),
-    [ev, minExposure, maxExposure, onEvChange],
-  )
+  const evPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return Math.abs(gestureState.dy) > 1
+      },
+      onPanResponderGrant: () => {
+        Haptics.selectionAsync()
+      },
+      onPanResponderMove: (_, gestureState) => {
+        const range = maxExposureRef.current - minExposureRef.current
+        const deltaEv = (-gestureState.dy / MAX_TRAVEL) * (range / 2)
+        let targetEv = lastEvRef.current + deltaEv
+        targetEv = Math.max(minExposureRef.current, Math.min(maxExposureRef.current, targetEv))
+        const roundedEv = Math.round(targetEv * 10) / 10
+        if (roundedEv !== lastEvRef.current) {
+          onEvChangeRef.current(roundedEv)
+        }
+      },
+      onPanResponderRelease: () => {
+        Haptics.selectionAsync()
+      },
+    }),
+  ).current
 
   // Map current EV to vertical knob offset
   const knobTravel = Math.max(
@@ -242,9 +264,9 @@ export function FocusReticle({
             </Animated.View>
           )}
 
-          {/* Locked Badge and Separate / Join Button */}
+          {/* Locked Badge, Separate/Join Button, and Dismiss ✕ Button */}
           {isLocked && (
-            <Animated.View style={[styles.pillRow, hudRotateStyle]} pointerEvents="box-none">
+            <View style={styles.pillRow} pointerEvents="box-none">
               <Pressable
                 onPress={(e) => {
                   e.stopPropagation()
@@ -254,11 +276,14 @@ export function FocusReticle({
                 accessibilityRole="button"
                 accessibilityLabel={`${lockLabel}, tap to cycle lock mode`}
                 style={[styles.lockPill, { borderColor: lockColor }]}
+                hitSlop={8}
               >
-                <IconLock size={12} color={lockColor} strokeWidth={2.2} />
-                <Text style={[styles.lockPillText, { color: lockColor }]}>
-                  {isSeparated ? 'AF LOCK' : lockLabel}
-                </Text>
+                <Animated.View style={[{ flexDirection: 'row', alignItems: 'center', gap: 4 }, hudRotateStyle]}>
+                  <IconLock size={12} color={lockColor} strokeWidth={2.2} />
+                  <Text style={[styles.lockPillText, { color: lockColor }]}>
+                    {isSeparated ? 'AF LOCK' : lockLabel}
+                  </Text>
+                </Animated.View>
               </Pressable>
 
               {/* Separate / Join Exposure Box toggle */}
@@ -271,10 +296,30 @@ export function FocusReticle({
                 accessibilityRole="button"
                 accessibilityLabel={isSeparated ? 'Join Exposure to Focus' : 'Separate Exposure Box'}
                 style={styles.separateBtn}
+                hitSlop={8}
               >
-                <Text style={styles.separateBtnText}>{isSeparated ? 'JOIN AE' : 'SEP AE'}</Text>
+                <Animated.Text style={[styles.separateBtnText, hudRotateStyle]}>
+                  {isSeparated ? 'JOIN AE' : 'SEP AE'}
+                </Animated.Text>
               </Pressable>
-            </Animated.View>
+
+              {/* Dismiss / Unlock button */}
+              <Pressable
+                onPress={(e) => {
+                  e.stopPropagation()
+                  Haptics.selectionAsync()
+                  onUnlock()
+                }}
+                accessibilityRole="button"
+                accessibilityLabel="Unlock and dismiss reticle"
+                style={[styles.separateBtn, { paddingHorizontal: 7, marginLeft: 2 }]}
+                hitSlop={8}
+              >
+                <Animated.Text style={[styles.separateBtnText, { color: colors.textMuted }, hudRotateStyle]}>
+                  ✕
+                </Animated.Text>
+              </Pressable>
+            </View>
           )}
         </View>
 
@@ -328,7 +373,9 @@ export function FocusReticle({
           {isSeparated && (
             <View {...expPanResponder.panHandlers} style={styles.expCircleWrapper}>
               <Animated.View style={[styles.expPillBadge, { top: expBadgeTop }, hudRotateStyle]}>
-                <Text style={styles.expPillText}>☀️ AE LOCK</Text>
+                <Text style={styles.expPillText}>
+                  {isAePlaced ? '☀️ AE LOCK' : '☀️ TAP SCREEN TO SET AE'}
+                </Text>
               </Animated.View>
 
               <View style={styles.expCircle}>
@@ -385,7 +432,7 @@ export function FocusReticle({
                     hudRotateStyle,
                   ]}
                 >
-                  <Text style={styles.evBadgeText}>
+                  <Text style={styles.evBadgeText} numberOfLines={1}>
                     {ev > 0 ? `+${ev.toFixed(1)}` : ev.toFixed(1)}
                   </Text>
                 </Animated.View>
@@ -592,16 +639,20 @@ const styles = StyleSheet.create({
   evBadge: {
     position: 'absolute',
     left: 34,
-    paddingHorizontal: 4,
+    paddingHorizontal: 5,
     paddingVertical: 2,
     borderRadius: 5,
     backgroundColor: 'rgba(18, 18, 22, 0.92)',
     borderWidth: 1,
     borderColor: colors.accent,
+    minWidth: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   evBadgeText: {
     fontFamily: fonts.monoBold,
     fontSize: 9.5,
     color: colors.accentSoft,
+    textAlign: 'center',
   },
 })
