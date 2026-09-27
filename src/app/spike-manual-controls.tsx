@@ -9,19 +9,31 @@
 // the on-device verification vehicle and a smoke test of the component
 // before/alongside its use in camera.tsx.
 // ============================================================================
-import { useRef, useState } from 'react'
-import { View, Text, StyleSheet, findNodeHandle } from 'react-native'
+import { useEffect, useState } from 'react'
+import { AppState, View, Text, StyleSheet } from 'react-native'
+import { useIsFocused } from '@react-navigation/native'
 import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera'
 import ManualControls from '../components/ManualControls'
 import { useManualCameraState } from '../hooks/useManualCameraState'
+import { useCameraReadiness } from '../hooks/useCameraReadiness'
 
 export default function ManualControlsSpike() {
   const { hasPermission, requestPermission } = useCameraPermission()
   const device = useCameraDevice('back')
-  const cameraRef = useRef<Camera>(null)
-  const viewTag = findNodeHandle(cameraRef.current)
+  const focused = useIsFocused()
+  const [appActive, setAppActive] = useState(AppState.currentState === 'active')
+  const active = focused && appActive
+  const readiness = useCameraReadiness(device?.id ?? null, active)
+  const invalidate = readiness.invalidate
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') invalidate()
+      setAppActive(state === 'active')
+    })
+    return () => subscription.remove()
+  }, [invalidate])
   const maxFocusDiopters = device && device.minFocusDistance > 0 ? 100 / device.minFocusDistance : null
-  const controls = useManualCameraState(viewTag, device?.id ?? null, maxFocusDiopters)
+  const controls = useManualCameraState(readiness.session, device?.id ?? null, maxFocusDiopters, readiness.isCurrent)
   const [ev, setEv] = useState(0)
   const minExposure = device?.minExposure ?? -2
   const maxExposure = device?.maxExposure ?? 2
@@ -45,7 +57,16 @@ export default function ManualControlsSpike() {
 
   return (
     <View style={styles.root}>
-      <Camera ref={cameraRef} style={StyleSheet.absoluteFill} device={device} isActive={true} />
+      <Camera
+        ref={readiness.ref}
+        style={StyleSheet.absoluteFill}
+        device={device}
+        isActive={active}
+        onInitialized={readiness.onInitialized}
+        onStarted={readiness.onStarted}
+        onStopped={readiness.onStopped}
+        onError={readiness.onError}
+      />
       <View style={styles.hud}>
         <ManualControls controls={controls} ev={ev} setEv={setEv} minExposure={minExposure} maxExposure={maxExposure} />
       </View>

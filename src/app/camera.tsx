@@ -13,7 +13,6 @@ import {
   AppState,
   useWindowDimensions,
   ViewStyle,
-  findNodeHandle,
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useIsFocused } from '@react-navigation/native'
@@ -36,6 +35,7 @@ import { ensureUnderCeiling } from '../services/compressImage'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
 import ManualControls from '../components/ManualControls'
 import { useManualCameraState } from '../hooks/useManualCameraState'
+import { useCameraReadiness } from '../hooks/useCameraReadiness'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { useSessionStore } from '../store/session'
@@ -99,8 +99,6 @@ export default function CameraScreen() {
   const router = useRouter()
   const { account, connect, disconnect } = useMobileWallet()
   const { hasPermission, requestPermission } = useCameraPermission()
-  const cameraRef = useRef<Camera>(null)
-  const cameraViewTag = findNodeHandle(cameraRef.current)
 
   const [flash, setFlash] = useState<'off' | 'on'>('off')
   const [torchActive, setTorchActive] = useState(false)
@@ -125,10 +123,6 @@ export default function CameraScreen() {
   // (e.g. wallet handoff) — Android throws camera-is-restricted otherwise
   const isFocused = useIsFocused()
   const [appActive, setAppActive] = useState(AppState.currentState === 'active')
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (s) => setAppActive(s === 'active'))
-    return () => sub.remove()
-  }, [])
 
   const photos = usePhotoStore((state) => state.photos)
   const addPhoto = usePhotoStore((state) => state.addPhoto)
@@ -224,7 +218,39 @@ export default function CameraScreen() {
       ? 100 / activeDevice.minFocusDistance + MANUAL_FOCUS_HEADROOM_DIOPTERS
       : null
 
-  const manualCamera = useManualCameraState(cameraViewTag, activeDevice?.id ?? null, maxFocusDiopters)
+  const cameraReadiness = useCameraReadiness(activeDevice?.id ?? null, isFocused && appActive)
+  const { cameraRef, invalidate: invalidateCamera } = cameraReadiness
+  const manualCamera = useManualCameraState(
+    cameraReadiness.session,
+    activeDevice?.id ?? null,
+    maxFocusDiopters,
+    cameraReadiness.isCurrent,
+  )
+  const { canCapture, controlsReady, controlsError, retry: retryCameraControls } = manualCamera
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') invalidateCamera()
+      setAppActive(state === 'active')
+    })
+    return () => sub.remove()
+  }, [invalidateCamera])
+  useEffect(() => {
+    if (!controlsError) return
+    console.error('Camera settings could not be confirmed:', controlsError)
+    Alert.alert(
+      'Camera controls unavailable',
+      'Capture is paused because your settings could not be confirmed. Please retry.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Retry', onPress: retryCameraControls },
+      ],
+    )
+  }, [controlsError, retryCameraControls])
+  useEffect(() => {
+    if (!cameraReadiness.error) return
+    console.error('Camera session failed:', cameraReadiness.error)
+    Alert.alert('Camera unavailable', 'The camera could not start. Return to the camera screen to try again.')
+  }, [cameraReadiness.error])
 
   useEffect(() => {
     if (!hasPermission) {
@@ -238,7 +264,7 @@ export default function CameraScreen() {
   }, [cameraPosition])
 
   const handleCapture = useCallback(async () => {
-    if (!cameraRef.current || isCapturing) return
+    if (!cameraRef.current || isCapturing || !canCapture()) return
 
     if (!isFilmStockDownloaded(effectiveFilm.filmStockId)) {
       const stock = filmCatalogue.find((item) => item.filmStockId === effectiveFilm.filmStockId)
@@ -264,6 +290,8 @@ export default function CameraScreen() {
       return
     }
 
+    // Recipe downloads can take long enough for a lens/focus/app transition.
+    if (!canCapture()) return
     setIsCapturing(true)
     // takePhoto's own flash:'on' (CameraX's AE-precapture-driven still
     // flash) silently doesn't fire on this hardware — confirmed via EXIF
@@ -284,6 +312,8 @@ export default function CameraScreen() {
     let captureUri: string | null = null
     let createdPhotoId: string | null = null
     try {
+      // Also recheck after the torch delay. Never shoot with unconfirmed controls.
+      if (!cameraRef.current || !canCapture()) return
       const photo: PhotoFile = await cameraRef.current.takePhoto({
         flash: usingTorchForFlash ? 'off' : supportsFlash ? flash : 'off',
         enableShutterSound: true,
@@ -400,6 +430,8 @@ export default function CameraScreen() {
     locationGranularity,
     effectiveFilm,
     filmCatalogue,
+    canCapture,
+    cameraRef,
   ])
 
   const toggleFlash = useCallback(() => {
@@ -408,11 +440,12 @@ export default function CameraScreen() {
   }, [supportsFlash])
 
   const toggleCamera = useCallback(() => {
+    invalidateCamera()
     setCameraPosition((prev) => (prev === 'back' ? 'front' : 'back'))
     if (flash === 'on') {
       setFlash('off')
     }
-  }, [flash])
+  }, [flash, invalidateCamera])
 
   // Manual ISO+shutter together (fullyManual, i.e. AE_MODE_OFF) dominates the
   // visual result — leaving EV bias "active" underneath it is a confusing
@@ -426,7 +459,7 @@ export default function CameraScreen() {
 
   const handleFocus = useCallback(
     async (event: GestureResponderEvent) => {
-      if (!cameraRef.current || !activeDevice?.supportsFocus) return
+      if (!cameraRef.current || !activeDevice?.supportsFocus || !canCapture()) return
 
       const { locationX, locationY } = event.nativeEvent
 
@@ -448,7 +481,7 @@ export default function CameraScreen() {
         console.log('Focus not supported or failed:', error)
       }
     },
-    [activeDevice, focusOpacity],
+    [activeDevice, focusOpacity, cameraRef, canCapture],
   )
 
   const pinchGesture = Gesture.Pinch()
@@ -583,10 +616,14 @@ export default function CameraScreen() {
       <GestureDetector gesture={pinchGesture}>
         <Pressable style={StyleSheet.absoluteFill} onPress={handleFocus}>
           <Camera
-            ref={cameraRef}
+            ref={cameraReadiness.ref}
             style={StyleSheet.absoluteFill}
             device={activeDevice}
             isActive={isFocused && appActive}
+            onInitialized={cameraReadiness.onInitialized}
+            onStarted={cameraReadiness.onStarted}
+            onStopped={cameraReadiness.onStopped}
+            onError={cameraReadiness.onError}
             photo={true}
             photoHdr={false}
             zoom={zoom}
@@ -945,7 +982,7 @@ export default function CameraScreen() {
 
         <Pressable
           onPress={handleCapture}
-          disabled={isCapturing}
+          disabled={isCapturing || !controlsReady}
           style={{
             width: 80,
             height: 80,
@@ -954,7 +991,7 @@ export default function CameraScreen() {
             borderColor: colors.accent,
             alignItems: 'center',
             justifyContent: 'center',
-            opacity: isCapturing || rollIsFull || activeRoll?.developed ? 0.5 : 1,
+            opacity: isCapturing || !controlsReady || rollIsFull || activeRoll?.developed ? 0.5 : 1,
           }}
         >
           <View

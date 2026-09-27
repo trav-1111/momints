@@ -4,16 +4,24 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.MeteringRectangle
 import android.view.View
+import android.os.Handler
+import android.os.Looper
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
+import androidx.camera.core.CameraControl
+import com.google.common.util.concurrent.ListenableFuture
+import expo.modules.kotlin.Promise
+import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.exception.CodedException
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
+import java.util.concurrent.Executor
+import java.util.concurrent.ExecutionException
 
 // exposureMode/focusMode: "auto" | "manual". ISO and shutter share ONE
 // exposureMode (see index.ts CameraControlState doc comment for why: this
@@ -79,6 +87,7 @@ class CameraStateRecord : Record {
 // wholesale each time, which is exactly what the JS layer already does
 // (it holds all UI state and calls this after every change anyway).
 class CameraManualModule : Module() {
+  @OptIn(ExperimentalCamera2Interop::class)
   override fun definition() = ModuleDefinition {
     Name("CameraManual")
 
@@ -93,26 +102,41 @@ class CameraManualModule : Module() {
     // deliberately not implemented here — see index.ts's CameraControlState
     // comment: this hardware doesn't support CONTROL_AE_AVAILABLE_PRIORITY_MODES,
     // so there's no real Camera2 state to drive it with.
-    Function("applyCameraState") { viewTag: Int, state: CameraStateRecord ->
-      applyCameraState(viewTag, state)
-    }
+    AsyncFunction("applyCameraState") { viewTag: Int, cameraId: String, state: CameraStateRecord, promise: Promise ->
+      val camera = requireCamera(viewTag, cameraId)
+      val future = applyCameraState(camera, state)
+      // A long manual shutter can also slow repeating requests. Bound the wait,
+      // but allow the requested exposure rather than timing it out at one frame.
+      val timeoutMs = ((state.shutterNs ?: 0L) / 1_000_000L + 3_000L).coerceIn(3_000L, 20_000L)
+      acknowledge(future, camera, viewTag, cameraId, timeoutMs, promise)
+    }.runOnQueue(Queues.MAIN)
 
     // Full escape hatch — clears every override in one call, distinct from
     // applyCameraState(all auto) in that it doesn't require knowing/computing
     // a valid full state first. Useful on screen unmount/cleanup.
-    Function("resetToAuto") { viewTag: Int ->
-      resetAuto(viewTag)
-    }
+    AsyncFunction("resetToAuto") { viewTag: Int, cameraId: String, promise: Promise ->
+      val camera = requireCamera(viewTag, cameraId)
+      val future = Camera2CameraControl.from(camera.cameraControl).clearCaptureRequestOptions()
+      acknowledge(future, camera, viewTag, cameraId, 3_000L, promise)
+    }.runOnQueue(Queues.MAIN)
   }
 
   @OptIn(ExperimentalCamera2Interop::class)
-  private fun applyCameraState(viewTag: Int, state: CameraStateRecord) {
+  private fun requireCamera(viewTag: Int, cameraId: String): Camera {
     val camera = resolveCameraXCamera(viewTag)
       ?: throw CodedException(
         "ERR_CAMERA_NOT_BOUND",
         "No bound CameraX session on view $viewTag yet — try again once the preview is visible",
         null,
       )
+    if (Camera2CameraInfo.from(camera.cameraInfo).cameraId != cameraId) {
+      throw CodedException("ERR_CAMERA_SESSION_CHANGED", "The requested camera is no longer bound to this view", null)
+    }
+    return camera
+  }
+
+  @OptIn(ExperimentalCamera2Interop::class)
+  private fun applyCameraState(camera: Camera, state: CameraStateRecord): ListenableFuture<Void> {
 
     val builder = CaptureRequestOptions.Builder()
 
@@ -159,7 +183,7 @@ class CameraManualModule : Module() {
     }
     // "matrix": omit CONTROL_AE_REGIONS — device default is whole-frame metering.
 
-    Camera2CameraControl.from(camera.cameraControl).setCaptureRequestOptions(builder.build())
+    return Camera2CameraControl.from(camera.cameraControl).setCaptureRequestOptions(builder.build())
   }
 
   // A square region of `sizeFraction` of the active array's shorter side,
@@ -192,9 +216,45 @@ class CameraManualModule : Module() {
   }
 
   @OptIn(ExperimentalCamera2Interop::class)
-  private fun resetAuto(viewTag: Int) {
-    val camera = resolveCameraXCamera(viewTag) ?: return
-    Camera2CameraControl.from(camera.cameraControl).clearCaptureRequestOptions()
+  private fun acknowledge(
+    future: ListenableFuture<Void>,
+    camera: Camera,
+    viewTag: Int,
+    cameraId: String,
+    timeoutMs: Long,
+    promise: Promise,
+  ) {
+    val handler = Handler(Looper.getMainLooper())
+    var settled = false
+    val timeout = Runnable {
+      if (!settled) {
+        settled = true
+        promise.reject("ERR_CAMERA_STATE_TIMEOUT", "Camera settings were not acknowledged before the deadline", null)
+      }
+    }
+    handler.postDelayed(timeout, timeoutMs)
+    future.addListener({
+      if (!settled) {
+        settled = true
+        handler.removeCallbacks(timeout)
+        try {
+          future.get() // Listener runs only after completion; never blocks the UI.
+          if (requireCamera(viewTag, cameraId) !== camera) {
+            promise.reject("ERR_CAMERA_SESSION_CHANGED", "Camera session changed while applying settings", null)
+          } else {
+            promise.resolve()
+          }
+        } catch (error: Throwable) {
+          val cause = if (error is ExecutionException) error.cause ?: error else error
+          when (cause) {
+            is CodedException -> promise.reject(cause)
+            is CameraControl.OperationCanceledException ->
+              promise.reject("ERR_CAMERA_STATE_CANCELLED", "Camera closed or settings were superseded before acknowledgement", cause)
+            else -> promise.reject("ERR_CAMERA_STATE_APPLY", "Could not confirm camera settings: ${cause.message}", cause)
+          }
+        }
+      }
+    }, Executor { handler.post(it) })
   }
 
   private fun resolveCameraXCamera(viewTag: Int): Camera? {

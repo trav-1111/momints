@@ -80,11 +80,11 @@ function clamp(value: number, range: { min: number; max: number }): number {
 // ISO/shutter are clamped to this camera's real hardware range; focus is
 // NOT clamped here since its range is camera-specific (main vs macro vs
 // front) — the caller must clamp against its own maxFocusDiopters.
-export function applyCameraState(viewTag: number, state: CameraControlState): void {
+export async function applyCameraState(viewTag: number, cameraId: string, state: CameraControlState): Promise<void> {
   const iso = state.iso == null ? null : Math.round(clamp(state.iso, ISO_RANGE))
   const shutterNs = state.shutterNs == null ? null : Math.round(clamp(state.shutterNs, SHUTTER_NS_RANGE))
 
-  CameraManualNative.applyCameraState(viewTag, {
+  await CameraManualNative.applyCameraState(viewTag, cameraId, {
     exposureMode: state.exposureMode,
     iso,
     shutterNs,
@@ -101,6 +101,6 @@ export function applyCameraState(viewTag: number, state: CameraControlState): vo
 // everything) in one call — hands the whole session back to CameraX's
 // normal auto-everything behavior without needing to compute a valid full
 // state first. Useful on screen unmount/cleanup.
-export function resetToAuto(viewTag: number): void {
-  CameraManualNative.resetToAuto(viewTag)
+export async function resetToAuto(viewTag: number, cameraId: string): Promise<void> {
+  await CameraManualNative.resetToAuto(viewTag, cameraId)
 }

@@ -6,23 +6,24 @@
 // of state, whichever called last would silently wipe out the other's
 // settings. camera.tsx and ManualControls both read/write through this one
 // hook instead of owning any of this state themselves.
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyCameraState,
-  resetToAuto,
   type AutoManualMode,
   type MeteringMode,
   type WhiteBalancePresetName,
 } from '../../modules/camera-manual'
 import { getCameraCapabilities } from '../../modules/camera-caps'
+import type { ReadyCameraSession } from './useCameraReadiness'
 
 const DEFAULT_ISO = 400
 const DEFAULT_SHUTTER_NS = 1_000_000 // 1/1000s
 
 export function useManualCameraState(
-  viewTag: number | null,
+  session: ReadyCameraSession | null,
   cameraId: string | null,
   maxFocusDiopters: number | null,
+  isSessionCurrent: (session: ReadyCameraSession) => boolean,
 ) {
   // ISO and shutter share one exposure mode (see camera-manual's index.ts
   // CameraControlState doc comment) — manualIso/manualShutterNs are kept as
@@ -67,7 +68,7 @@ export function useManualCameraState(
   const canIndependentExposure = hasIsoPriority && hasShutterPriority
   const fullyManual = exposureMode === 'manual'
 
-  const buildState = useCallback(
+  const desiredState = useMemo(
     () => ({
       exposureMode,
       iso: exposureMode === 'manual' ? manualIso : null,
@@ -79,22 +80,99 @@ export function useManualCameraState(
       meteringNormX: meteringPoint.x,
       meteringNormY: meteringPoint.y,
     }),
-    [exposureMode, manualIso, manualShutterNs, focusMode, manualFocusDiopters, whiteBalance, meteringMode, meteringPoint],
+    [
+      exposureMode,
+      manualIso,
+      manualShutterNs,
+      focusMode,
+      manualFocusDiopters,
+      whiteBalance,
+      meteringMode,
+      meteringPoint,
+    ],
   )
 
+  const [retryGeneration, setRetryGeneration] = useState(0)
+  type Applied = { session: ReadyCameraSession; state: typeof desiredState; retryGeneration: number }
+  const [applied, setApplied] = useState<Applied | null>(null)
+  const [failure, setFailure] = useState<{
+    session: ReadyCameraSession
+    state: typeof desiredState
+    error: Error
+  } | null>(null)
+  const latest = useRef({ session, desiredState, retryGeneration })
+  latest.current = { session, desiredState, retryGeneration }
+  const acknowledged = useRef<Applied | null>(null)
+  const canCapture = useCallback(() => {
+    const now = latest.current
+    const ack = acknowledged.current
+    return !!(
+      now.session &&
+      isSessionCurrent(now.session) &&
+      ack?.session === now.session &&
+      ack.state === now.desiredState &&
+      ack.retryGeneration === now.retryGeneration
+    )
+  }, [isSessionCurrent])
+
   useEffect(() => {
-    if (viewTag == null) return
-    applyCameraState(viewTag, buildState())
-  }, [viewTag, buildState])
+    if (!session) return
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const stillCurrent = () =>
+      !cancelled &&
+      isSessionCurrent(session) &&
+      latest.current.session === session &&
+      latest.current.desiredState === desiredState &&
+      latest.current.retryGeneration === retryGeneration
+    const apply = async (attempt: number) => {
+      if (!stillCurrent()) return
+      try {
+        await applyCameraState(session.viewTag, session.cameraId, desiredState)
+        if (!stillCurrent()) return
+        const ack = { session, state: desiredState, retryGeneration }
+        acknowledged.current = ack
+        setApplied(ack)
+        setFailure(null)
+      } catch (error) {
+        if (!stillCurrent()) return
+        // Only the known binding race is retryable. No infinite polling and no
+        // swallowed hardware, reflection, settings or timeout failures.
+        if ((error as { code?: string })?.code === 'ERR_CAMERA_NOT_BOUND' && attempt < 2) {
+          timer = setTimeout(() => void apply(attempt + 1), 100 * (attempt + 1))
+          return
+        }
+        setFailure({ session, state: desiredState, error: error instanceof Error ? error : new Error(String(error)) })
+      }
+    }
+    void apply(0)
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [session, desiredState, retryGeneration, isSessionCurrent])
+
+  const controlsReady = !!(
+    session &&
+    applied?.session === session &&
+    applied.state === desiredState &&
+    applied.retryGeneration === retryGeneration
+  )
+  const controlsError = failure?.session === session && failure?.state === desiredState ? failure.error : null
+  const retry = useCallback(() => {
+    setFailure(null)
+    setRetryGeneration((value) => value + 1)
+  }, [])
 
   const reset = useCallback(() => {
-    if (viewTag == null) return
-    resetToAuto(viewTag)
+    // Reset desired JS state even when unbound. The same acknowledged full-state
+    // application handles the native reset once this session is ready again.
     setExposureMode('auto')
     setFocusMode('auto')
     setWhiteBalance('AUTO')
     setMeteringMode('matrix')
-  }, [viewTag])
+    retry()
+  }, [retry])
 
   return {
     exposureMode,
@@ -117,6 +195,10 @@ export function useManualCameraState(
     canIndependentExposure,
     fullyManual,
     reset,
+    controlsReady,
+    controlsError,
+    canCapture,
+    retry,
   }
 }
 
