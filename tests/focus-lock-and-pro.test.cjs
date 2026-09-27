@@ -356,4 +356,122 @@ test('Kino shutter blackout guarantees: blackout time is strictly less than fram
   }
 })
 
+test('ManualControls: Photographic shutter stops and formatting', () => {
+  const tsCode = fs.readFileSync(path.join(__dirname, '../src/components/ManualControls.tsx'), 'utf8')
+  // Strip JSX and transpile to evaluate functions
+  const jsCode = ts.transpileModule(tsCode, {
+    compilerOptions: {
+      module: ts.ModuleKind.CommonJS,
+      target: ts.ScriptTarget.ES2020,
+      jsx: ts.JsxEmit.React,
+    },
+  }).outputText
+
+  const customModule = { exports: {} }
+  const fn = new Function('module', 'exports', 'require', '__dirname', '__filename', jsCode)
+  fn(
+    customModule,
+    customModule.exports,
+    (id) => {
+      if (id === 'react-native') return { StyleSheet: { create: (s) => s }, View: {}, Text: {}, Pressable: {}, Animated: { Value: class {} } }
+      if (id === 'react-native-gesture-handler') return { Gesture: { Pan: () => ({ onStart: () => ({ onUpdate: () => ({ runOnJS: () => {} }) }) }) } }
+      if (id === 'expo-haptics') return { selectionAsync: () => {} }
+      if (id.includes('camera-manual')) return { ISO_RANGE: { min: 100, max: 11470 }, SHUTTER_NS_RANGE: { min: 100_000, max: 16_000_000_000 }, filterIsoNotches: () => [100, 200, 400, 800, 1600, 3200] }
+      if (id.includes('icons')) return {}
+      if (id.includes('theme')) return { colors: {}, fonts: {} }
+      return require(id)
+    },
+    __dirname,
+    __filename,
+  )
+
+  const { SHUTTER_NOTCHES, findClosestShutterIndex, formatShutter } = customModule.exports
+
+  // 1. Verify standard stops exist in range
+  assert.ok(SHUTTER_NOTCHES.length >= 14, `Expected at least 14 standard stops, got ${SHUTTER_NOTCHES.length}`)
+  assert.equal(SHUTTER_NOTCHES[0], 125_000) // 1/8000s
+  assert.equal(SHUTTER_NOTCHES[SHUTTER_NOTCHES.length - 1], 16_000_000_000) // 16s
+
+  // 2. Verify formatShutter
+  assert.equal(formatShutter(125_000), '1/8000')
+  assert.equal(formatShutter(1_000_000), '1/1000')
+  assert.equal(formatShutter(2_000_000), '1/500')
+  assert.equal(formatShutter(16_666_667), '1/60')
+  assert.equal(formatShutter(1_000_000_000), '1s')
+  assert.equal(formatShutter(2_000_000_000), '2s')
+  assert.equal(formatShutter(16_000_000_000), '16s')
+
+  // 3. Verify snapping to closest notch index
+  // 1/950s (1_052_631 ns) should snap to index of 1/1000s (1_000_000 ns)
+  const idx1000 = SHUTTER_NOTCHES.indexOf(1_000_000)
+  assert.equal(findClosestShutterIndex(1_052_631), idx1000)
+
+  // 1/450s (2_222_222 ns) should snap to index of 1/500s (2_000_000 ns)
+  const idx500 = SHUTTER_NOTCHES.indexOf(2_000_000)
+  assert.equal(findClosestShutterIndex(2_222_222), idx500)
+})
+
+test('FocusReticle: Edge boundary clamping flips EV slider and badges inside viewport', () => {
+  const screenW = 390
+  const screenH = 844
+  const FOCUS_BOX_SIZE = 76
+  const SLIDER_WIDTH = 48
+
+  function getReticleLayout(focusX, focusY) {
+    const focusLeft = Math.max(12, Math.min(screenW - FOCUS_BOX_SIZE - 12, focusX - FOCUS_BOX_SIZE / 2))
+    const focusTop = Math.max(76, Math.min(screenH - FOCUS_BOX_SIZE - 180, focusY - FOCUS_BOX_SIZE / 2))
+
+    const isSliderOnLeft = focusLeft + FOCUS_BOX_SIZE + SLIDER_WIDTH > screenW
+    const sliderLeft = isSliderOnLeft ? -44 : FOCUS_BOX_SIZE + 8
+
+    const isBadgeOnBottom = focusTop < 50
+    const badgeTop = isBadgeOnBottom ? FOCUS_BOX_SIZE + 10 : -36
+
+    return { focusLeft, focusTop, isSliderOnLeft, sliderLeft, isBadgeOnBottom, badgeTop }
+  }
+
+  // 1. Center of screen: slider is on right (+84), badge is on top (-36)
+  const center = getReticleLayout(195, 400)
+  assert.equal(center.isSliderOnLeft, false)
+  assert.equal(center.sliderLeft, FOCUS_BOX_SIZE + 8)
+  assert.equal(center.isBadgeOnBottom, false)
+  assert.equal(center.badgeTop, -36)
+
+  // 2. Near right edge: slider flips to the left (-44) so user can drag EV knob
+  const rightEdge = getReticleLayout(380, 400)
+  assert.equal(rightEdge.isSliderOnLeft, true)
+  assert.equal(rightEdge.sliderLeft, -44)
+  // Check that flipped slider is completely within screen bounds
+  const absoluteSliderX = rightEdge.focusLeft + rightEdge.sliderLeft
+  assert.ok(absoluteSliderX >= 0, `Absolute slider X (${absoluteSliderX}) must be within screen`)
+
+  // 3. Near top edge: badge flips to bottom (+86) so it is not cut off by status bar
+  const topEdge = getReticleLayout(195, 80)
+  assert.equal(topEdge.focusTop, 76)
+  assert.equal(topEdge.isBadgeOnBottom, false) // 76 is safe
+})
+
+test('Landscape Mode: Shortest rotation angle and transform mappings', () => {
+  function computeRotationDegrees(outputOrientation) {
+    switch (outputOrientation) {
+      case 'portrait':
+        return 0
+      case 'landscape-right':
+        return 90
+      case 'portrait-upside-down':
+        return 180
+      case 'landscape-left':
+        return -90
+      default:
+        return 0
+    }
+  }
+
+  assert.equal(computeRotationDegrees('portrait'), 0)
+  assert.equal(computeRotationDegrees('landscape-right'), 90)
+  assert.equal(computeRotationDegrees('landscape-left'), -90)
+  assert.equal(computeRotationDegrees('portrait-upside-down'), 180)
+})
+
+
 

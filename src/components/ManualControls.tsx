@@ -29,7 +29,7 @@
 // native prop, not a Camera2Interop override) and is passed in as props.
 // This component is purely presentational.
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { View, Text, Pressable, StyleSheet } from 'react-native'
+import { View, Text, Pressable, StyleSheet, Animated } from 'react-native'
 import { Gesture, GestureDetector, GestureUpdateEvent, PanGestureHandlerEventPayload } from 'react-native-gesture-handler'
 import * as Haptics from 'expo-haptics'
 import {
@@ -64,16 +64,49 @@ const ISO_NOTCHES = filterIsoNotches(ISO_RANGE)
 function log2(n: number): number {
   return Math.log(n) / Math.LN2
 }
-const SHUTTER_STOPS = log2(SHUTTER_NS_RANGE.max / SHUTTER_NS_RANGE.min)
-function shutterToStops(ns: number): number {
-  return log2(ns / SHUTTER_NS_RANGE.min)
+
+// Standard photographic shutter stops (1/8000s to 16s)
+export const SHUTTER_NOTCHES_NS = [
+  125_000, // 1/8000s
+  250_000, // 1/4000s
+  500_000, // 1/2000s
+  1_000_000, // 1/1000s
+  2_000_000, // 1/500s
+  4_000_000, // 1/250s
+  8_000_000, // 1/125s
+  16_666_667, // 1/60s
+  33_333_333, // 1/30s
+  66_666_667, // 1/15s
+  125_000_000, // 1/8s
+  250_000_000, // 1/4s
+  500_000_000, // 1/2s
+  1_000_000_000, // 1s
+  2_000_000_000, // 2s
+  4_000_000_000, // 4s
+  8_000_000_000, // 8s
+  16_000_000_000, // 16s
+] as const
+
+export const SHUTTER_NOTCHES = SHUTTER_NOTCHES_NS.filter(
+  (ns) => ns >= SHUTTER_NS_RANGE.min && ns <= SHUTTER_NS_RANGE.max,
+)
+
+export function findClosestShutterIndex(ns: number): number {
+  let bestIdx = 0
+  let minDiff = Infinity
+  for (let i = 0; i < SHUTTER_NOTCHES.length; i++) {
+    const diff = Math.abs(Math.log2(ns / SHUTTER_NOTCHES[i]))
+    if (diff < minDiff) {
+      minDiff = diff
+      bestIdx = i
+    }
+  }
+  return bestIdx
 }
-function stopsToShutter(stops: number): number {
-  return SHUTTER_NS_RANGE.min * Math.pow(2, stops)
-}
-function formatShutter(ns: number): string {
+
+export function formatShutter(ns: number): string {
   const seconds = ns / 1e9
-  if (seconds >= 1) return `${seconds.toFixed(1)}s`
+  if (seconds >= 1) return `${Number.isInteger(seconds) ? seconds : seconds.toFixed(1)}s`
   return `1/${Math.round(1 / seconds)}`
 }
 // Focus also drags in log2 stops, not raw diopters — a linear-diopter scale
@@ -125,7 +158,15 @@ const WB_STRIP_LABEL: Record<WhiteBalancePresetName, string> = {
   SHADE: 'SHADE',
 }
 
-function AutoBadge({ active, onPress }: { active: boolean; onPress: () => void }) {
+function AutoBadge({
+  active,
+  onPress,
+  uiRotationStyle,
+}: {
+  active: boolean
+  onPress: () => void
+  uiRotationStyle?: object
+}) {
   return (
     <Pressable
       onPress={() => {
@@ -134,18 +175,16 @@ function AutoBadge({ active, onPress }: { active: boolean; onPress: () => void }
       }}
       style={[styles.autoBadge, active && styles.autoBadgeActive]}
     >
-      <Text style={[styles.autoBadgeText, active && styles.autoBadgeTextActive]}>A</Text>
+      <Animated.Text style={[styles.autoBadgeText, active && styles.autoBadgeTextActive, uiRotationStyle]}>
+        A
+      </Animated.Text>
     </Pressable>
   )
 }
 
 // Shared "ruler" for every numeric parameter (ISO, shutter, EV, focus
-// distance). ISO drags in index-space over ISO_NOTCHES so it snaps to the
-// six labelled stops; the others drag continuously. `labels` renders inside
-// the ruler itself via a space-between row, so it works identically for two
-// end labels (shutter/EV/focus) or six evenly-spaced ones (ISO) without any
-// percentage-based text centering (RN has no clean way to center text on a
-// percentage `left`, so evenly-spaced flex children stand in for it).
+// distance). ISO and shutter drag in notch index space so they snap to
+// standard photographic stops; the others drag continuously.
 type RulerProps = {
   value: number
   min: number
@@ -157,9 +196,8 @@ type RulerProps = {
   majorCount?: number
   minorCount?: number
   // Granularity for the haptic "click" while dragging. Defaults to one tick
-  // per rendered minor tick, matching the visual ruler; ISO overrides this
-  // to 1 (one click per notch) since minorCount there is purely visual
-  // density, not the actual six-value snap granularity.
+  // per rendered minor tick, matching the visual ruler; ISO and shutter override this
+  // to 1 (one click per notch).
   hapticStep?: number
 }
 
@@ -168,7 +206,6 @@ function Ruler({ value, min, max, pxRange, onDrag, dim, labels, majorCount, mino
   const lastDetent = useRef<number | null>(null)
   const step = hapticStep ?? (max - min) / minorCount
   const pan = Gesture.Pan()
-    .enabled(!dim)
     .onStart(() => {
       baseValue.current = value
       lastDetent.current = Math.round((value - min) / step)
@@ -212,14 +249,14 @@ function Ruler({ value, min, max, pxRange, onDrag, dim, labels, majorCount, mino
               ))}
             </View>
           )}
-          {!dim && <View style={[styles.rulerMarker, { left: `${fillPct}%` }]} />}
+          <View style={[styles.rulerMarker, dim && styles.rulerMarkerDim, { left: `${fillPct}%` }]} />
         </View>
       </GestureDetector>
     </View>
   )
 }
 
-function MeteringPanel({ controls }: { controls: ManualCameraState }) {
+function MeteringPanel({ controls, uiRotationStyle }: { controls: ManualCameraState; uiRotationStyle?: object }) {
   const { meteringMode, setMeteringMode } = controls
   return (
     <View style={styles.iconChoiceRow}>
@@ -235,7 +272,9 @@ function MeteringPanel({ controls }: { controls: ManualCameraState }) {
             }}
             style={styles.iconChoiceItem}
           >
-            <Icon size={26} color={active ? colors.accentSoft : colors.text} />
+            <Animated.View style={uiRotationStyle}>
+              <Icon size={26} color={active ? colors.accentSoft : colors.text} />
+            </Animated.View>
           </Pressable>
         )
       })}
@@ -243,54 +282,76 @@ function MeteringPanel({ controls }: { controls: ManualCameraState }) {
   )
 }
 
-function IsoPanel({ controls }: { controls: ManualCameraState }) {
+function IsoPanel({ controls, uiRotationStyle }: { controls: ManualCameraState; uiRotationStyle?: object }) {
   const { exposureMode, setExposureMode, manualIso, setManualIso } = controls
   const auto = exposureMode === 'auto'
   const isoIndex = Math.max(0, ISO_NOTCHES.indexOf(manualIso))
   return (
     <View style={styles.panelRow}>
-      <AutoBadge active={auto} onPress={() => setExposureMode(auto ? 'manual' : 'auto')} />
+      <AutoBadge active={auto} onPress={() => setExposureMode(auto ? 'manual' : 'auto')} uiRotationStyle={uiRotationStyle} />
       <Ruler
         value={isoIndex}
         min={0}
         max={ISO_NOTCHES.length - 1}
         pxRange={ISO_NOTCHES.length * ISO_PX_PER_NOTCH}
-        onDrag={(v) => setManualIso(ISO_NOTCHES[Math.round(v)])}
+        onDrag={(v) => {
+          if (auto) setExposureMode('manual')
+          setManualIso(ISO_NOTCHES[Math.round(v)])
+        }}
         dim={auto}
         majorCount={ISO_NOTCHES.length - 1}
         minorCount={24}
         hapticStep={1}
         labels={ISO_NOTCHES.map((n) => (
-          <Text key={n} style={styles.rulerLabelText}>
+          <Animated.Text
+            key={n}
+            style={[
+              styles.rulerLabelText,
+              !auto && manualIso === n && { color: colors.accentSoft, fontFamily: fonts.monoBold },
+              uiRotationStyle,
+            ]}
+          >
             {n}
-          </Text>
+          </Animated.Text>
         ))}
       />
     </View>
   )
 }
 
-function ShutterPanel({ controls }: { controls: ManualCameraState }) {
+function ShutterPanel({ controls, uiRotationStyle }: { controls: ManualCameraState; uiRotationStyle?: object }) {
   const { exposureMode, setExposureMode, manualShutterNs, setManualShutterNs } = controls
   const auto = exposureMode === 'auto'
+  const shutterIndex = findClosestShutterIndex(manualShutterNs)
   return (
     <View style={styles.panelRow}>
-      <AutoBadge active={auto} onPress={() => setExposureMode(auto ? 'manual' : 'auto')} />
+      <AutoBadge active={auto} onPress={() => setExposureMode(auto ? 'manual' : 'auto')} uiRotationStyle={uiRotationStyle} />
       <Ruler
-        value={shutterToStops(manualShutterNs)}
+        value={shutterIndex}
         min={0}
-        max={SHUTTER_STOPS}
-        pxRange={SHUTTER_STOPS * PX_PER_STOP}
-        onDrag={(s) => setManualShutterNs(Math.round(stopsToShutter(s)))}
+        max={SHUTTER_NOTCHES.length - 1}
+        pxRange={(SHUTTER_NOTCHES.length - 1) * 28}
+        onDrag={(v) => {
+          if (auto) setExposureMode('manual')
+          const idx = Math.max(0, Math.min(SHUTTER_NOTCHES.length - 1, Math.round(v)))
+          setManualShutterNs(SHUTTER_NOTCHES[idx])
+        }}
         dim={auto}
-        minorCount={30}
+        majorCount={SHUTTER_NOTCHES.length - 1}
+        minorCount={34}
+        hapticStep={1}
         labels={[
-          <Text key="min" style={styles.rulerLabelText}>
-            {formatShutter(SHUTTER_NS_RANGE.min)}
-          </Text>,
-          <Text key="max" style={styles.rulerLabelText}>
-            {formatShutter(SHUTTER_NS_RANGE.max)}
-          </Text>,
+          <Animated.Text key="min" style={[styles.rulerLabelText, uiRotationStyle]}>
+            {formatShutter(SHUTTER_NOTCHES[0])}
+          </Animated.Text>,
+          <Animated.View key="cur" style={[styles.rulerCurrentBadge, uiRotationStyle]}>
+            <Text style={styles.rulerCurrentText}>
+              {auto ? 'AUTO' : formatShutter(manualShutterNs)}
+            </Text>
+          </Animated.View>,
+          <Animated.Text key="max" style={[styles.rulerLabelText, uiRotationStyle]}>
+            {formatShutter(SHUTTER_NOTCHES[SHUTTER_NOTCHES.length - 1])}
+          </Animated.Text>,
         ]}
       />
     </View>
@@ -303,12 +364,14 @@ function EvPanel({
   minExposure,
   maxExposure,
   dim,
+  uiRotationStyle,
 }: {
   ev: number
   setEv: (v: number) => void
   minExposure: number
   maxExposure: number
   dim: boolean
+  uiRotationStyle?: object
 }) {
   return (
     <View style={styles.panelRow}>
@@ -323,17 +386,19 @@ function EvPanel({
         majorCount={4}
         minorCount={20}
         labels={[
-          <Text key="min" style={styles.rulerLabelText}>
+          <Animated.Text key="min" style={[styles.rulerLabelText, uiRotationStyle]}>
             {minExposure.toFixed(1)}
-          </Text>,
-          <Text key="max" style={styles.rulerLabelText}>{`+${maxExposure.toFixed(1)}`}</Text>,
+          </Animated.Text>,
+          <Animated.Text key="max" style={[styles.rulerLabelText, uiRotationStyle]}>
+            {`+${maxExposure.toFixed(1)}`}
+          </Animated.Text>,
         ]}
       />
     </View>
   )
 }
 
-function WhiteBalancePanel({ controls }: { controls: ManualCameraState }) {
+function WhiteBalancePanel({ controls, uiRotationStyle }: { controls: ManualCameraState; uiRotationStyle?: object }) {
   const { whiteBalance, setWhiteBalance } = controls
   return (
     <View style={styles.wbGrid}>
@@ -351,10 +416,14 @@ function WhiteBalancePanel({ controls }: { controls: ManualCameraState }) {
           >
             {preset === 'AUTO' ? (
               <View style={[styles.autoBadge, active && styles.autoBadgeActive]}>
-                <Text style={[styles.autoBadgeText, active && styles.autoBadgeTextActive]}>A</Text>
+                <Animated.Text style={[styles.autoBadgeText, active && styles.autoBadgeTextActive, uiRotationStyle]}>
+                  A
+                </Animated.Text>
               </View>
             ) : Icon ? (
-              <Icon size={24} color={active ? colors.accentSoft : colors.text} />
+              <Animated.View style={uiRotationStyle}>
+                <Icon size={24} color={active ? colors.accentSoft : colors.text} />
+              </Animated.View>
             ) : null}
           </Pressable>
         )
@@ -363,7 +432,15 @@ function WhiteBalancePanel({ controls }: { controls: ManualCameraState }) {
   )
 }
 
-function FocusPanel({ controls, onAutoSelected }: { controls: ManualCameraState; onAutoSelected: () => void }) {
+function FocusPanel({
+  controls,
+  onAutoSelected,
+  uiRotationStyle,
+}: {
+  controls: ManualCameraState
+  onAutoSelected: () => void
+  uiRotationStyle?: object
+}) {
   const { focusMode, setFocusMode, manualFocusDiopters, setManualFocusDiopters, maxFocusDiopters } = controls
   if (maxFocusDiopters == null) return null
 
@@ -371,7 +448,7 @@ function FocusPanel({ controls, onAutoSelected }: { controls: ManualCameraState;
     return (
       <View style={styles.twoChoiceRow}>
         <View style={styles.twoChoiceItem}>
-          <Text style={[styles.twoChoiceText, styles.twoChoiceTextActive]}>AF</Text>
+          <Animated.Text style={[styles.twoChoiceText, styles.twoChoiceTextActive, uiRotationStyle]}>AF</Animated.Text>
         </View>
         <Pressable
           onPress={() => {
@@ -380,7 +457,7 @@ function FocusPanel({ controls, onAutoSelected }: { controls: ManualCameraState;
           }}
           style={styles.twoChoiceItem}
         >
-          <Text style={styles.twoChoiceText}>MF</Text>
+          <Animated.Text style={[styles.twoChoiceText, uiRotationStyle]}>MF</Animated.Text>
         </Pressable>
       </View>
     )
@@ -389,20 +466,15 @@ function FocusPanel({ controls, onAutoSelected }: { controls: ManualCameraState;
   const maxStops = focusToStops(maxFocusDiopters)
   return (
     <View style={styles.panelRow}>
-      {/* Tapping A both returns to autofocus AND closes the panel in one
-          step — the AF/MF chooser re-showing here (AF already picked, since
-          that's what tapping A just did) was a redundant extra tap. */}
       <AutoBadge
         active={false}
         onPress={() => {
           setFocusMode('auto')
           onAutoSelected()
         }}
+        uiRotationStyle={uiRotationStyle}
       />
       <Ruler
-        // Drags in log2(diopters+1) stops (see focusToStops' comment), with
-        // the same NEAR-left/∞-right inversion as before: high diopters =
-        // near, 0 = infinity, but the ruler reads short-to-long left-to-right.
         value={maxStops - focusToStops(manualFocusDiopters)}
         min={0}
         max={maxStops}
@@ -411,8 +483,12 @@ function FocusPanel({ controls, onAutoSelected }: { controls: ManualCameraState;
         majorCount={5}
         minorCount={24}
         labels={[
-          <IconFocusNear key="near" size={17} color={colors.text} />,
-          <IconFocusFar key="far" size={17} color={colors.text} />,
+          <Animated.View key="near" style={uiRotationStyle}>
+            <IconFocusNear size={17} color={colors.text} />
+          </Animated.View>,
+          <Animated.View key="far" style={uiRotationStyle}>
+            <IconFocusFar size={17} color={colors.text} />
+          </Animated.View>,
         ]}
       />
     </View>
@@ -425,9 +501,17 @@ type Props = {
   setEv: (v: number) => void
   minExposure: number
   maxExposure: number
+  uiRotationAnim?: Animated.Value
 }
 
-export default function ManualControls({ controls, ev, setEv, minExposure, maxExposure }: Props) {
+export default function ManualControls({
+  controls,
+  ev,
+  setEv,
+  minExposure,
+  maxExposure,
+  uiRotationAnim,
+}: Props) {
   const [activeParam, setActiveParam] = useState<ParamKey | null>(null)
   const {
     exposureMode,
@@ -442,11 +526,14 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
   } = controls
   const canFocus = maxFocusDiopters != null && maxFocusDiopters > 0
 
-  // EV and metering only affect a running AE algorithm — if exposure went
-  // fully manual while one of their panels happened to be open, collapse it
-  // rather than leave a dead panel showing. In practice this can't currently
-  // happen (exposureMode only flips from inside the ISO/S panels), kept as
-  // a cheap guard against future navigation paths.
+  const uiRotationDeg = uiRotationAnim
+    ? uiRotationAnim.interpolate({
+        inputRange: [-360, 360],
+        outputRange: ['-360deg', '360deg'],
+      })
+    : '0deg'
+  const uiRotationStyle = { transform: [{ rotate: uiRotationDeg }] }
+
   useEffect(() => {
     if (fullyManual && (activeParam === 'EV' || activeParam === 'M')) setActiveParam(null)
   }, [fullyManual, activeParam])
@@ -461,14 +548,23 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
     <View>
       {activeParam != null && (
         <View style={styles.panel}>
-          {activeParam === 'M' && <MeteringPanel controls={controls} />}
-          {activeParam === 'ISO' && <IsoPanel controls={controls} />}
-          {activeParam === 'S' && <ShutterPanel controls={controls} />}
+          {activeParam === 'M' && <MeteringPanel controls={controls} uiRotationStyle={uiRotationStyle} />}
+          {activeParam === 'ISO' && <IsoPanel controls={controls} uiRotationStyle={uiRotationStyle} />}
+          {activeParam === 'S' && <ShutterPanel controls={controls} uiRotationStyle={uiRotationStyle} />}
           {activeParam === 'EV' && (
-            <EvPanel ev={ev} setEv={setEv} minExposure={minExposure} maxExposure={maxExposure} dim={fullyManual} />
+            <EvPanel
+              ev={ev}
+              setEv={setEv}
+              minExposure={minExposure}
+              maxExposure={maxExposure}
+              dim={fullyManual}
+              uiRotationStyle={uiRotationStyle}
+            />
           )}
-          {activeParam === 'WB' && <WhiteBalancePanel controls={controls} />}
-          {activeParam === 'AF' && <FocusPanel controls={controls} onAutoSelected={() => setActiveParam(null)} />}
+          {activeParam === 'WB' && <WhiteBalancePanel controls={controls} uiRotationStyle={uiRotationStyle} />}
+          {activeParam === 'AF' && (
+            <FocusPanel controls={controls} onAutoSelected={() => setActiveParam(null)} uiRotationStyle={uiRotationStyle} />
+          )}
           {(activeParam === 'ISO' || activeParam === 'S') && !canIndependentExposure && (
             <Text style={styles.capabilityNote}>ISO and shutter share one exposure mode on this camera.</Text>
           )}
@@ -477,47 +573,62 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
 
       <View style={styles.strip}>
         <Pressable style={styles.stripCol} onPress={() => toggle('M')}>
-          <Text style={[styles.stripLabel, activeParam === 'M' && styles.stripLabelActive]}>M</Text>
-          <View style={styles.stripValueRow}>
+          <Animated.Text style={[styles.stripLabel, activeParam === 'M' && styles.stripLabelActive, uiRotationStyle]}>
+            M
+          </Animated.Text>
+          <Animated.View style={[styles.stripValueRow, uiRotationStyle]}>
             <MeteringIcon size={17} color={fullyManual ? colors.textMuted : colors.text} />
-          </View>
+          </Animated.View>
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('ISO')}>
-          <Text style={[styles.stripLabel, activeParam === 'ISO' && styles.stripLabelActive]}>ISO</Text>
-          <View style={styles.stripValueRow}>
+          <Animated.Text style={[styles.stripLabel, activeParam === 'ISO' && styles.stripLabelActive, uiRotationStyle]}>
+            ISO
+          </Animated.Text>
+          <Animated.View style={[styles.stripValueRow, uiRotationStyle]}>
             <Text style={styles.stripValueText}>{exposureMode === 'auto' ? 'AUTO' : manualIso}</Text>
-          </View>
+          </Animated.View>
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('S')}>
-          <Text style={[styles.stripLabel, activeParam === 'S' && styles.stripLabelActive]}>S</Text>
-          <View style={styles.stripValueRow}>
+          <Animated.Text style={[styles.stripLabel, activeParam === 'S' && styles.stripLabelActive, uiRotationStyle]}>
+            S
+          </Animated.Text>
+          <Animated.View style={[styles.stripValueRow, uiRotationStyle]}>
             <Text style={styles.stripValueText}>
               {exposureMode === 'auto' ? 'AUTO' : formatShutter(manualShutterNs)}
             </Text>
-          </View>
+          </Animated.View>
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('EV')} disabled={fullyManual}>
-          <Text
-            style={[styles.stripLabel, activeParam === 'EV' && styles.stripLabelActive, fullyManual && styles.stripDisabled]}
+          <Animated.Text
+            style={[
+              styles.stripLabel,
+              activeParam === 'EV' && styles.stripLabelActive,
+              fullyManual && styles.stripDisabled,
+              uiRotationStyle,
+            ]}
           >
             EV
-          </Text>
-          <View style={styles.stripValueRow}>
+          </Animated.Text>
+          <Animated.View style={[styles.stripValueRow, uiRotationStyle]}>
             <Text style={[styles.stripValueText, fullyManual && styles.stripDisabled]}>{formatEv(ev)}</Text>
-          </View>
+          </Animated.View>
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('WB')}>
-          <Text style={[styles.stripLabel, activeParam === 'WB' && styles.stripLabelActive]}>WB</Text>
-          <View style={styles.stripValueRow}>
+          <Animated.Text style={[styles.stripLabel, activeParam === 'WB' && styles.stripLabelActive, uiRotationStyle]}>
+            WB
+          </Animated.Text>
+          <Animated.View style={[styles.stripValueRow, uiRotationStyle]}>
             <Text style={styles.stripValueText}>{WB_STRIP_LABEL[whiteBalance]}</Text>
-          </View>
+          </Animated.View>
         </Pressable>
         {canFocus && (
           <Pressable style={styles.stripCol} onPress={() => toggle('AF')}>
-            <Text style={[styles.stripLabel, activeParam === 'AF' && styles.stripLabelActive]}>AF</Text>
-            <View style={styles.stripValueRow}>
+            <Animated.Text style={[styles.stripLabel, activeParam === 'AF' && styles.stripLabelActive, uiRotationStyle]}>
+              AF
+            </Animated.Text>
+            <Animated.View style={[styles.stripValueRow, uiRotationStyle]}>
               <Text style={styles.stripValueText}>{focusMode === 'auto' ? 'AF' : 'MF'}</Text>
-            </View>
+            </Animated.View>
           </Pressable>
         )}
       </View>
@@ -606,6 +717,25 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     shadowOffset: { width: 0, height: 0 },
     elevation: 4,
+  },
+  rulerMarkerDim: {
+    opacity: 0.35,
+    backgroundColor: colors.textSoft,
+    shadowOpacity: 0,
+  },
+  rulerCurrentBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 213, 102, 0.14)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 213, 102, 0.4)',
+  },
+  rulerCurrentText: {
+    fontFamily: fonts.monoBold,
+    fontSize: 12,
+    color: colors.accentSoft,
+    letterSpacing: 0.4,
   },
 
   iconChoiceRow: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 6 },

@@ -20,7 +20,7 @@ import {
 import { useRouter } from 'expo-router'
 import { useIsFocused } from '@react-navigation/native'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
-import { Camera, useCameraDevice, useCameraPermission, PhotoFile, CameraRuntimeError } from 'react-native-vision-camera'
+import { Camera, useCameraDevice, useCameraPermission, PhotoFile, CameraRuntimeError, type Orientation } from 'react-native-vision-camera'
 import {
   Gesture,
   GestureDetector,
@@ -222,6 +222,31 @@ export default function CameraScreen() {
   const quickAspectLabel = QUICK_ASPECTS.find((a) => a.value === quickAspect)?.label ?? 'FULL'
   const effectiveAspect: AspectRatio = activeMode === 'roll' ? (activeRoll?.aspect ?? 'full') : quickAspect
   const { width: screenW, height: screenH } = useWindowDimensions()
+
+  // Target orientation & UI rotation for landscape / portrait layout adaptation
+  const uiRotationAnim = useRef(new Animated.Value(0)).current
+  const [_uiRotation, setUiRotation] = useState(0)
+
+  const handleUIRotationChanged = useCallback((degrees: number) => {
+    setUiRotation(degrees)
+    Animated.spring(uiRotationAnim, {
+      toValue: degrees,
+      useNativeDriver: true,
+      damping: 18,
+      stiffness: 140,
+      mass: 0.8,
+    }).start()
+  }, [uiRotationAnim])
+
+  const handleOutputOrientationChanged = useCallback((_outputOrientation: Orientation) => {
+    // VisionCamera updates uiRotation automatically
+  }, [])
+
+  const uiRotationDeg = uiRotationAnim.interpolate({
+    inputRange: [-360, 360],
+    outputRange: ['-360deg', '360deg'],
+  })
+  const hudRotateStyle = { transform: [{ rotate: uiRotationDeg }] }
 
   const rollIsFull = activeRoll !== null && activeRoll.frameIds.length >= activeRoll.size
   const remainingExp = activeRoll ? activeRoll.size - activeRoll.frameIds.length : 0
@@ -927,6 +952,9 @@ export default function CameraScreen() {
               zoom={zoom}
               exposure={ev}
               torch={torchActive ? 'on' : 'off'}
+              outputOrientation="device"
+              onUIRotationChanged={handleUIRotationChanged}
+              onOutputOrientationChanged={handleOutputOrientationChanged}
               onError={handleCameraError}
             />
 
@@ -991,6 +1019,7 @@ export default function CameraScreen() {
               opacity={focusOpacity}
               screenW={screenW}
               screenH={screenH}
+              uiRotationAnim={uiRotationAnim}
             />
           )}
         </View>
@@ -1033,18 +1062,22 @@ export default function CameraScreen() {
             disabled={!supportsFlash}
             style={[roundChip(42), { opacity: supportsFlash ? 1 : 0.4 }]}
           >
-            {flash === 'on' && supportsFlash ? (
-              <IconBolt size={19} color={colors.text} />
-            ) : (
-              <IconBoltOff size={19} color={colors.text} />
-            )}
+            <Animated.View style={hudRotateStyle}>
+              {flash === 'on' && supportsFlash ? (
+                <IconBolt size={19} color={colors.text} />
+              ) : (
+                <IconBoltOff size={19} color={colors.text} />
+              )}
+            </Animated.View>
           </Pressable>
 
           <Pressable
             onPress={() => setLocationMenuVisible(true)}
             style={[roundChip(42), { opacity: locationGranularity === 'off' ? 0.4 : 1 }]}
           >
-            <IconPin size={19} color={locationGranularity === 'off' ? colors.text : colors.accent} />
+            <Animated.View style={hudRotateStyle}>
+              <IconPin size={19} color={locationGranularity === 'off' ? colors.text : colors.accent} />
+            </Animated.View>
           </Pressable>
 
           <Pressable
@@ -1059,7 +1092,9 @@ export default function CameraScreen() {
               },
             ]}
           >
-            <IconGrid size={18} color={gridMode !== 'off' ? colors.accentSoft : colors.text} />
+            <Animated.View style={hudRotateStyle}>
+              <IconGrid size={18} color={gridMode !== 'off' ? colors.accentSoft : colors.text} />
+            </Animated.View>
           </Pressable>
 
           <Pressable
@@ -1077,16 +1112,19 @@ export default function CameraScreen() {
               },
             ]}
           >
-            <Text
-              style={{
-                fontFamily: fonts.sansBold,
-                fontSize: 11,
-                letterSpacing: tracking(0.1, 11),
-                color: proOpen ? colors.accentSoft : colors.text,
-              }}
+            <Animated.Text
+              style={[
+                {
+                  fontFamily: fonts.sansBold,
+                  fontSize: 11,
+                  letterSpacing: tracking(0.1, 11),
+                  color: proOpen ? colors.accentSoft : colors.text,
+                },
+                hudRotateStyle,
+              ]}
             >
               PRO
-            </Text>
+            </Animated.Text>
           </Pressable>
         </View>
 
@@ -1107,10 +1145,12 @@ export default function CameraScreen() {
               },
             ]}
           >
-            <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.green }} />
-            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.text }}>
-              {formatWalletDisplay(walletAddress, domain)}
-            </Text>
+            <Animated.View style={[{ flexDirection: 'row', alignItems: 'center', gap: 7 }, hudRotateStyle]}>
+              <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.green }} />
+              <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.text }}>
+                {formatWalletDisplay(walletAddress, domain)}
+              </Text>
+            </Animated.View>
             {showContactSheetNudge && (
               <View
                 pointerEvents="none"
@@ -1143,149 +1183,202 @@ export default function CameraScreen() {
               borderColor: colors.accent,
             }}
           >
-            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accentSoft }}>CONNECT</Text>
+            <Animated.Text style={[{ fontFamily: fonts.mono, fontSize: 11, color: colors.accentSoft }, hudRotateStyle]}>
+              CONNECT
+            </Animated.Text>
           </Pressable>
         )}
       </View>
 
-      {/* Second row — mode chip · EXP dial */}
-      <Pressable
-        onPress={() => router.push('/mode-select')}
-        style={[
-          chip,
-          {
-            position: 'absolute',
-            top: 74,
-            left: 18,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            paddingVertical: 7,
-            paddingHorizontal: 11,
-            borderRadius: 10,
-          },
-        ]}
+      {/* Second row — mode chip · aspect selector · EXP dial */}
+      <View
+        pointerEvents="box-none"
+        style={{
+          position: 'absolute',
+          top: 74,
+          left: 18,
+          right: 18,
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          zIndex: 20,
+        }}
       >
-        {activeMode === 'roll' ? (
-          <IconFilm size={15} color={colors.text} />
-        ) : (
-          <IconCamera size={15} color={colors.text} />
-        )}
-        <Text
-          style={{
-            fontFamily: fonts.sansBold,
-            fontSize: 11,
-            letterSpacing: tracking(0.1, 11),
-            color: colors.text,
-          }}
-        >
-          {activeMode === 'roll' ? 'FILM' : 'QUICK'}
-        </Text>
-        {(() => {
-          const currentFilm = activeMode === 'roll' && activeRoll !== null ? activeRoll.film : quickFilm
-          const stock = getFilmStock(
-            currentFilm?.stockId ?? (currentFilm?.mode === 'bw' ? 'standard-bw' : 'standard-color'),
-          )
-          return (
-            <>
-              <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>{stock.shortName}</Text>
-              {effectiveAspect !== 'full' && (
-                <>
-                  <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-                  <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>
-                    {effectiveAspect}
-                  </Text>
-                </>
-              )}
-            </>
-          )
-        })()}
-      </Pressable>
-
-      {/* EXP dial — frames remaining, counts down like a film counter */}
-      {activeMode === 'roll' && activeRoll !== null && (
-        <View
-          style={[roundChip(52), { position: 'absolute', top: 74, right: 18, borderColor: 'rgba(255,255,255,0.16)' }]}
-        >
-          <Text style={{ fontFamily: fonts.monoBold, fontSize: 18, lineHeight: 20, color: colors.text }}>
-            {remainingExp}
-          </Text>
-          <Text
-            style={{
-              fontFamily: fonts.mono,
-              fontSize: 7,
-              letterSpacing: tracking(0.18, 7),
-              color: colors.accentSoft,
-              marginTop: 1,
-            }}
-          >
-            EXP
-          </Text>
-        </View>
-      )}
-
-      {/* Quick-mode aspect dropdown — collapsed shows the current ratio */}
-      {activeMode === 'quick' && (
-        <View
-          pointerEvents="box-none"
-          style={{ position: 'absolute', top: 74, left: 0, right: 0, alignItems: 'center' }}
-        >
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10 }}>
+          {/* Mode & Film selection chip */}
           <Pressable
-            onPress={() => setAspectMenuOpen((o) => !o)}
+            onPress={() => router.push('/mode-select')}
             style={[
               chip,
               {
                 flexDirection: 'row',
                 alignItems: 'center',
-                gap: 7,
-                paddingVertical: 8,
-                paddingHorizontal: 14,
-                borderRadius: 999,
+                gap: 8,
+                paddingVertical: 7,
+                paddingHorizontal: 11,
+                borderRadius: 10,
               },
             ]}
           >
-            <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.text }}>{quickAspectLabel}</Text>
-            <Text style={{ fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft }}>
-              {aspectMenuOpen ? '▲' : '▼'}
-            </Text>
-          </Pressable>
-          {aspectMenuOpen && (
-            <View
-              style={{
-                marginTop: 6,
-                borderRadius: 14,
-                overflow: 'hidden',
-                backgroundColor: 'rgba(0,0,0,0.8)',
-                borderWidth: 1,
-                borderColor: colors.chipBorder,
-              }}
+            <Animated.View style={hudRotateStyle}>
+              {activeMode === 'roll' ? (
+                <IconFilm size={15} color={colors.text} />
+              ) : (
+                <IconCamera size={15} color={colors.text} />
+              )}
+            </Animated.View>
+            <Animated.Text
+              style={[
+                {
+                  fontFamily: fonts.sansBold,
+                  fontSize: 11,
+                  letterSpacing: tracking(0.1, 11),
+                  color: colors.text,
+                },
+                hudRotateStyle,
+              ]}
             >
-              {QUICK_ASPECTS.filter((a) => a.value !== quickAspect).map(({ value, label }) => (
-                <Pressable
-                  key={value}
-                  onPress={() => {
-                    setQuickAspect(value)
-                    setAspectMenuOpen(false)
-                  }}
-                  style={{ paddingHorizontal: 30, paddingVertical: 10 }}
-                >
-                  <Text
-                    style={{
-                      fontFamily: fonts.mono,
-                      fontSize: 11,
-                      color: colors.textSoft,
-                      textAlign: 'center',
-                    }}
+              {activeMode === 'roll' ? 'FILM' : 'QUICK'}
+            </Animated.Text>
+            {(() => {
+              const currentFilm = activeMode === 'roll' && activeRoll !== null ? activeRoll.film : quickFilm
+              const stock = getFilmStock(
+                currentFilm?.stockId ?? (currentFilm?.mode === 'bw' ? 'standard-bw' : 'standard-color'),
+              )
+              return (
+                <>
+                  <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+                  <Animated.Text
+                    style={[
+                      { fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft },
+                      hudRotateStyle,
+                    ]}
                   >
-                    {label}
-                  </Text>
-                </Pressable>
-              ))}
+                    {stock.shortName}
+                  </Animated.Text>
+                  {activeMode === 'roll' && effectiveAspect !== 'full' && (
+                    <>
+                      <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+                      <Animated.Text
+                        style={[
+                          { fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft },
+                          hudRotateStyle,
+                        ]}
+                      >
+                        {effectiveAspect}
+                      </Animated.Text>
+                    </>
+                  )}
+                </>
+              )
+            })()}
+          </Pressable>
+
+          {/* Quick-mode aspect dropdown — explicit gap separating from film selection chip */}
+          {activeMode === 'quick' && (
+            <View pointerEvents="box-none">
+              <Pressable
+                onPress={() => setAspectMenuOpen((o) => !o)}
+                style={[
+                  chip,
+                  {
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 6,
+                    paddingVertical: 7,
+                    paddingHorizontal: 12,
+                    borderRadius: 10,
+                  },
+                ]}
+              >
+                <Animated.Text
+                  style={[
+                    { fontFamily: fonts.monoBold, fontSize: 11, color: colors.text },
+                    hudRotateStyle,
+                  ]}
+                >
+                  {quickAspectLabel}
+                </Animated.Text>
+                <Animated.Text
+                  style={[
+                    { fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft },
+                    hudRotateStyle,
+                  ]}
+                >
+                  {aspectMenuOpen ? '▲' : '▼'}
+                </Animated.Text>
+              </Pressable>
+              {aspectMenuOpen && (
+                <View
+                  style={{
+                    marginTop: 6,
+                    borderRadius: 12,
+                    overflow: 'hidden',
+                    backgroundColor: 'rgba(0,0,0,0.88)',
+                    borderWidth: 1,
+                    borderColor: colors.chipBorder,
+                  }}
+                >
+                  {QUICK_ASPECTS.filter((a) => a.value !== quickAspect).map(({ value, label }) => (
+                    <Pressable
+                      key={value}
+                      onPress={() => {
+                        setQuickAspect(value)
+                        setAspectMenuOpen(false)
+                      }}
+                      style={{ paddingHorizontal: 22, paddingVertical: 9 }}
+                    >
+                      <Animated.Text
+                        style={[
+                          {
+                            fontFamily: fonts.mono,
+                            fontSize: 11,
+                            color: colors.textSoft,
+                            textAlign: 'center',
+                          },
+                          hudRotateStyle,
+                        ]}
+                      >
+                        {label}
+                      </Animated.Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
             </View>
           )}
         </View>
-      )}
+
+        {/* EXP dial — frames remaining */}
+        {activeMode === 'roll' && activeRoll !== null && (
+          <View
+            style={[roundChip(52), { borderColor: 'rgba(255,255,255,0.16)' }]}
+          >
+            <Animated.Text
+              style={[
+                { fontFamily: fonts.monoBold, fontSize: 18, lineHeight: 20, color: colors.text },
+                hudRotateStyle,
+              ]}
+            >
+              {remainingExp}
+            </Animated.Text>
+            <Animated.Text
+              style={[
+                {
+                  fontFamily: fonts.mono,
+                  fontSize: 7,
+                  letterSpacing: tracking(0.18, 7),
+                  color: colors.accentSoft,
+                  marginTop: 1,
+                },
+                hudRotateStyle,
+              ]}
+            >
+              EXP
+            </Animated.Text>
+          </View>
+        )}
+      </View>
 
       {/* Pro mode strip — persistent M · ISO · S · EV · WB · AF value strip
           pinned above the shutter row, one parameter expanded at a time.
@@ -1299,6 +1392,7 @@ export default function CameraScreen() {
             setEv={setEv}
             minExposure={minExposure}
             maxExposure={maxExposure}
+            uiRotationAnim={uiRotationAnim}
           />
         </View>
       )}
@@ -1384,7 +1478,9 @@ export default function CameraScreen() {
         }}
       >
         <Pressable onPress={toggleCamera} style={roundChip(44)}>
-          <IconFlip size={20} color={colors.text} />
+          <Animated.View style={hudRotateStyle}>
+            <IconFlip size={20} color={colors.text} />
+          </Animated.View>
         </Pressable>
 
         <View style={{ alignItems: 'center' }}>
@@ -1439,13 +1535,13 @@ export default function CameraScreen() {
               }}
             >
               {isCranking ? (
-                <Text style={{ fontFamily: fonts.monoBold, fontSize: 16, color: '#fff' }}>
+                <Animated.Text style={[{ fontFamily: fonts.monoBold, fontSize: 16, color: '#fff' }, hudRotateStyle]}>
                   {crankCount}
-                </Text>
+                </Animated.Text>
               ) : null}
             </View>
           </Pressable>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+          <Animated.View style={[{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }, hudRotateStyle]}>
             <Text
               style={{
                 fontFamily: fonts.mono,
@@ -1477,7 +1573,7 @@ export default function CameraScreen() {
                 </Text>
               </Pressable>
             )}
-          </View>
+          </Animated.View>
         </View>
 
         {/* Quick mode only — a roll's frames mint as a whole roll, not here */}
@@ -1486,7 +1582,9 @@ export default function CameraScreen() {
         ) : (
           <View style={{ alignItems: 'center', gap: 5 }}>
             <Pressable onPress={handleReview} style={roundChip(44)}>
-              <IconMint size={20} color={colors.text} strokeWidth={1.5} />
+              <Animated.View style={hudRotateStyle}>
+                <IconMint size={20} color={colors.text} strokeWidth={1.5} />
+              </Animated.View>
               {quickMintBadgeCount > 0 && (
                 <View
                   style={{
@@ -1508,16 +1606,19 @@ export default function CameraScreen() {
                 </View>
               )}
             </Pressable>
-            <Text
-              style={{
-                fontFamily: fonts.mono,
-                fontSize: 9,
-                letterSpacing: tracking(0.14, 9),
-                color: colors.textSoft,
-              }}
+            <Animated.Text
+              style={[
+                {
+                  fontFamily: fonts.mono,
+                  fontSize: 9,
+                  letterSpacing: tracking(0.14, 9),
+                  color: colors.textSoft,
+                },
+                hudRotateStyle,
+              ]}
             >
               MINT
-            </Text>
+            </Animated.Text>
           </View>
         )}
       </View>

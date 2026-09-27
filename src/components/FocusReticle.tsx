@@ -32,6 +32,7 @@ interface Props {
   opacity: Animated.Value
   screenW: number
   screenH: number
+  uiRotationAnim?: Animated.Value
 }
 
 const FOCUS_BOX_SIZE = 76
@@ -60,6 +61,7 @@ export function FocusReticle({
   opacity,
   screenW,
   screenH,
+  uiRotationAnim,
 }: Props) {
   if (!focusPoint) return null
 
@@ -170,6 +172,32 @@ export function FocusReticle({
     outputRange: ['0%', '100%'],
   })
 
+  // Edge boundary checks:
+  const currentExpBoxLeft = isSeparated ? expLeft : focusLeft
+  const currentExpBoxTop = isSeparated ? expTop : focusTop
+  const currentExpBoxSize = isSeparated ? EXP_BOX_SIZE : FOCUS_BOX_SIZE
+
+  // 1. If reticle is near the right screen edge, place EV slider on the left of the box so it remains accessible.
+  const isSliderOnLeft = currentExpBoxLeft + currentExpBoxSize + 48 > screenW
+  const sliderLeft = isSliderOnLeft ? -44 : currentExpBoxSize + 8
+
+  // 2. If focus reticle is near top screen edge, flip the badge header to the bottom of the box.
+  const isBadgeOnBottom = focusTop < 50
+  const badgeTop = isBadgeOnBottom ? FOCUS_BOX_SIZE + 10 : -36
+
+  // 3. If exposure reticle is near top screen edge, flip the AE lock pill to the bottom.
+  const isExpBadgeOnBottom = expTop < 45
+  const expBadgeTop = isExpBadgeOnBottom ? EXP_BOX_SIZE + 8 : -24
+
+  // Landscape mode UI rotation: rotate words and icons to reflect layout
+  const uiRotationDeg = uiRotationAnim
+    ? uiRotationAnim.interpolate({
+        inputRange: [-360, 360],
+        outputRange: ['-360deg', '360deg'],
+      })
+    : '0deg'
+  const hudRotateStyle = { transform: [{ rotate: uiRotationDeg }] }
+
   return (
     <Animated.View style={[StyleSheet.absoluteFill, { opacity }]} pointerEvents="box-none">
       {/* SVG Connecting line between separated Focus and Exposure boxes */}
@@ -202,21 +230,21 @@ export function FocusReticle({
         ]}
         pointerEvents="box-none"
       >
-        {/* Top Control Header above Focus Box */}
-        <View style={styles.badgeWrapper} pointerEvents="box-none">
+        {/* Top Control Header above Focus Box (or below if near top edge) */}
+        <View style={[styles.badgeWrapper, { top: badgeTop }]} pointerEvents="box-none">
           {/* Active Hold-to-Lock Visual Feedback */}
           {isHolding && !isLocked && (
-            <View style={styles.holdBanner}>
+            <Animated.View style={[styles.holdBanner, hudRotateStyle]}>
               <Text style={styles.holdBannerText}>HOLD TO LOCK</Text>
               <View style={styles.progressBarTrack}>
                 <Animated.View style={[styles.progressBarFill, { width: holdProgressWidth }]} />
               </View>
-            </View>
+            </Animated.View>
           )}
 
           {/* Locked Badge and Separate / Join Button */}
           {isLocked && (
-            <View style={styles.pillRow} pointerEvents="box-none">
+            <Animated.View style={[styles.pillRow, hudRotateStyle]} pointerEvents="box-none">
               <Pressable
                 onPress={(e) => {
                   e.stopPropagation()
@@ -246,7 +274,7 @@ export function FocusReticle({
               >
                 <Text style={styles.separateBtnText}>{isSeparated ? 'JOIN AE' : 'SEP AE'}</Text>
               </Pressable>
-            </View>
+            </Animated.View>
           )}
         </View>
 
@@ -299,9 +327,9 @@ export function FocusReticle({
           {/* Separated Exposure Reticle (Circle with Sun Icon) */}
           {isSeparated && (
             <View {...expPanResponder.panHandlers} style={styles.expCircleWrapper}>
-              <View style={styles.expPillBadge}>
+              <Animated.View style={[styles.expPillBadge, { top: expBadgeTop }, hudRotateStyle]}>
                 <Text style={styles.expPillText}>☀️ AE LOCK</Text>
-              </View>
+              </Animated.View>
 
               <View style={styles.expCircle}>
                 <IconSun size={20} color="#FFA726" strokeWidth={1.8} />
@@ -314,8 +342,8 @@ export function FocusReticle({
             style={[
               styles.sliderTrackContainer,
               {
-                left: (isSeparated ? EXP_BOX_SIZE : FOCUS_BOX_SIZE) + 8,
-                top: ((isSeparated ? EXP_BOX_SIZE : FOCUS_BOX_SIZE) - SLIDER_HEIGHT) / 2,
+                left: sliderLeft,
+                top: (currentExpBoxSize - SLIDER_HEIGHT) / 2,
               },
             ]}
             pointerEvents="box-none"
@@ -343,16 +371,24 @@ export function FocusReticle({
                 }}
                 style={styles.sunKnob}
               >
-                <IconSun size={17} color={ev !== 0 ? colors.accent : '#FFF'} strokeWidth={1.8} />
+                <Animated.View style={hudRotateStyle}>
+                  <IconSun size={17} color={ev !== 0 ? colors.accent : '#FFF'} strokeWidth={1.8} />
+                </Animated.View>
               </Pressable>
 
               {/* EV Readout Badge */}
               {Math.abs(ev) > 0.05 && (
-                <View style={styles.evBadge}>
+                <Animated.View
+                  style={[
+                    styles.evBadge,
+                    isSliderOnLeft ? { right: 36, left: undefined } : { left: 36 },
+                    hudRotateStyle,
+                  ]}
+                >
                   <Text style={styles.evBadgeText}>
                     {ev > 0 ? `+${ev.toFixed(1)}` : ev.toFixed(1)}
                   </Text>
-                </View>
+                </Animated.View>
               )}
             </View>
           </View>
