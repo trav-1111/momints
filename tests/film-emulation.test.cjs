@@ -17,6 +17,8 @@ const stockIds = [
   'momints-vivid-50',
   'momints-amber-200',
   'momints-silver-400',
+  'momints-bali-400',
+  'momints-martha',
 ]
 const assetMocks = Object.fromEntries(stockIds.map((id, index) => [`../../assets/luts/${id}.png`, index + 1]))
 const { FILM_STOCKS, getFilmStock } = sourceLoader(assetMocks)('src/config/filmStocks.ts')
@@ -63,13 +65,17 @@ function sampleLut(image, rgb255) {
 }
 
 test('catalog maps every film stock and resolves legacy identifiers', () => {
-  assert.equal(FILM_STOCKS.length, 7)
+  assert.equal(FILM_STOCKS.length, 9)
   for (const id of stockIds) assert.equal(getFilmStock(id).id, id)
   assert.equal(getFilmStock('kodak-portra-400').id, 'momints-aura-400')
   assert.equal(getFilmStock('cinestill-800t').id, 'momints-neon-800t')
   assert.equal(getFilmStock('fuji-velvia-50').id, 'momints-vivid-50')
   assert.equal(getFilmStock('kodak-gold-200').id, 'momints-amber-200')
   assert.equal(getFilmStock('kodak-tri-x-400').id, 'momints-silver-400')
+  assert.equal(getFilmStock('bali-400-v1').id, 'momints-bali-400')
+  assert.equal(getFilmStock('bali-400').id, 'momints-bali-400')
+  assert.equal(getFilmStock('martha-v1').id, 'momints-martha')
+  assert.equal(getFilmStock('martha').id, 'momints-martha')
   assert.equal(getFilmStock('unknown-stock').id, 'momints-aura-400')
 })
 
@@ -96,6 +102,8 @@ test('all configured LUTs have valid dimensions and distinct repeatable fixture 
     'momints-vivid-50': [130, 143, 145],
     'momints-amber-200': [152, 156, 158],
     'momints-silver-400': [136, 136, 136],
+    'momints-bali-400': [133, 125, 118],
+    'momints-martha': [139, 135, 134],
   }
 
   for (const id of stockIds) {

@@ -11,8 +11,10 @@ Verified generator source: [JanLohse/spectral_film_lut, revision 9d04d97ba8e20bf
 | Vivid 50      | `FUJI_VELVIA_50`                     | None                   |
 | Amber 200     | `KODAK_GOLD_200`                     | `KODAK_ENDURA_PREMIER` |
 | Silver 400    | `KODAK_TRI_X_400`, inversion enabled | None                   |
+| Bali 400      | `bali-400-v1.cube` (Portra 400 XMP)  | DaVinci/ACR (Trav)     |
+| Martha        | `martha-v1.cube` (Resolve CUBE)      | DaVinci Resolve (Trav) |
 
-All use `input_colorspace="sRGB"`, `gamma_func="sRGB"`. The legacy-named PNG duplicates are byte-identical to their Momints equivalents. Runtime catalog entries load the Momints files; legacy session IDs resolve to those entries. The spectral project license does not by itself settle trademark, datasheet, marketing, or commercial-clearance questions.
+All use `input_colorspace="sRGB"`, `gamma_func="sRGB"`. Bali 400 and Martha are compiled from the production 33-point CUBE profiles authored and supplied by Trav (`worker/filmstock-sources/{bali-400-v1,martha-v1}/source/`), resampled via trilinear interpolation into the 1024×32 format matching the runtime SkSL and OpenGL ES shaders. The legacy-named PNG duplicates are byte-identical to their Momints equivalents. Runtime catalog entries load the Momints files; legacy session IDs resolve to those entries. The spectral project license does not by itself settle trademark, datasheet, marketing, or commercial-clearance questions.
 
 Source software license notice, copied from the installed distribution:
 

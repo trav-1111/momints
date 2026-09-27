@@ -6,12 +6,18 @@ export type FilmStockId =
   | 'momints-vivid-50'
   | 'momints-amber-200'
   | 'momints-silver-400'
-  // Legacy aliases for stored user sessions
+  | 'momints-bali-400'
+  | 'momints-martha'
+  // Legacy aliases for stored user sessions & worker catalogue IDs
   | 'kodak-portra-400'
   | 'cinestill-800t'
   | 'fuji-velvia-50'
   | 'kodak-gold-200'
   | 'kodak-tri-x-400'
+  | 'bali-400-v1'
+  | 'bali-400'
+  | 'martha-v1'
+  | 'martha'
 
 export interface FilmStockConfig {
   id: FilmStockId
@@ -102,6 +108,33 @@ export const FILM_STOCKS: readonly FilmStockConfig[] = [
     grain: { intensity: 0.14, size: 2.2 },
   },
   {
+    id: 'momints-bali-400',
+    name: 'Momints Bali 400',
+    shortName: 'BALI 400',
+    manufacturer: 'Momints Lab',
+    tagline: 'Warm, nostalgic colour & dense shadows',
+    description: 'Warm skin tones, restrained highlights, muted greens, and subtle grain.',
+    mode: 'color',
+    iso: 400,
+    type: 'Color Negative',
+    lutAsset: require('../../assets/luts/momints-bali-400.png'),
+    grain: { intensity: 0.13, size: 1.9 },
+    halation: { intensity: 0.025, radius: 10.0 },
+  },
+  {
+    id: 'momints-martha',
+    name: 'Momints Martha',
+    shortName: 'MARTHA',
+    manufacturer: 'Momints Lab',
+    tagline: 'Lush saturation, rich colors & vintage tone',
+    description: 'Lush saturation, rich colors, lifted blacks, and vintage tone.',
+    mode: 'color',
+    iso: 400,
+    type: 'Color Negative',
+    lutAsset: require('../../assets/luts/momints-martha.png'),
+    grain: { intensity: 0.12, size: 1.8 },
+  },
+  {
     id: 'standard-color',
     name: 'Standard Color',
     shortName: 'COLOR',
@@ -135,6 +168,10 @@ const LEGACY_ID_MAP: Record<string, FilmStockId> = {
   'fuji-velvia-50': 'momints-vivid-50',
   'kodak-gold-200': 'momints-amber-200',
   'kodak-tri-x-400': 'momints-silver-400',
+  'bali-400-v1': 'momints-bali-400',
+  'bali-400': 'momints-bali-400',
+  'martha-v1': 'momints-martha',
+  'martha': 'momints-martha',
 }
 
 export function getFilmStock(stockId?: string | null): FilmStockConfig {

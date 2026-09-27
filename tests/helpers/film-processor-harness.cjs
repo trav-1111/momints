@@ -8,6 +8,8 @@ const stockIds = [
   'momints-vivid-50',
   'momints-amber-200',
   'momints-silver-400',
+  'momints-bali-400',
+  'momints-martha',
 ]
 const assetMocks = Object.fromEntries(stockIds.map((id, index) => [`../../assets/luts/${id}.png`, index + 1]))
 
