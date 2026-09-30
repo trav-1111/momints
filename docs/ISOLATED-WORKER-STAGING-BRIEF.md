@@ -2,6 +2,27 @@
 
 Prepared: 30 September 2026.
 
+**Execution successor:** [New backend cutover brief](NEW-BACKEND-CUTOVER-BRIEF.md). The owner has clarified that they are the only tester with no open rolls or unfinished mints; the next task prepares a single-service production cutover and pauses for their manual secret entry. The staging build below is historical context.
+
+## Subsequent owner decision — reuse production credentials
+
+The staging build described below is complete. The owner subsequently requested reuse of the existing production credentials rather than managing new API keys and wallets. This supersedes this brief's earlier requirement for a distinct staging signer and treasury. It does not authorize payments, minting, production cutover or changes to existing production data by itself.
+
+The credential switch has **not** been applied. The deployed staging Worker still uses its dedicated signer, treasury and operator token. The existing RPC credential is already reused by staging's configuration helper.
+
+Before enabling shared payment credentials for end-to-end testing, address the payment replay boundary: `rolls/verify.ts` verifies the payer, recipient and amount, while `rolls/create.ts` checks payment-signature reuse only in its own D1 database. Two public Workers with the same treasury and independent databases could accept the same qualifying SOL payment separately. Unique indexes in each database do not prevent this. Assess Quick and SKR payment paths too; do not assume their environment separation is sufficient.
+
+Two viable rollout designs must be considered before applying the credential change:
+
+1. Keep both services capable of paid operations only after implementing and testing effective cross-environment payment-claim protection. Protection must cover both services, including the currently deployed older Worker; adding a field or memo checked only by staging is insufficient if production still accepts the same transaction.
+2. Reuse the production credential set during a controlled cutover to the tested new Worker, preserve the production payment ledger and other production state, and stop new paid operations on the old service. Maintain a deliberate path for already-paid pending work, with a single authoritative consumer/scheduler configuration.
+
+Cloudflare staging data/storage/queues should remain separate during the current testing phase. Shared signer credentials also share its SOL funding, Turbo credit balance and on-chain authority; the environment must no longer be described as financially isolated after that switch. Reusing credentials does not require rotating or replacing the production set.
+
+Coordinate any approved change across the secret configuration helper (which currently rejects the production signer), the Worker treasury value, the staging app treasury value and operator test tooling. Never print secret values. Leave Discord notifications disabled unless separately requested. Record actual deployed identity state and reverify it after any change.
+
+The remainder of this document is the original staging-build brief and its historical constraints; use this addendum for the latest credential preference and unresolved migration prerequisite.
+
 ## Objective
 
 Provision, deploy and operationally test the current Momints Worker changes in an isolated staging environment at **`staging-api.momints.xyz`**. Use the same application code as production with explicit staging configuration. Preserve the existing service on `traviskeir.dev` throughout this task.

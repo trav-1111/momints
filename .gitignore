@@ -44,6 +44,9 @@ app-example
 /ios
 /android
 /worker/filmstock-validation/
+/worker/.staging-secrets/
+/worker/.staging-evidence/
+/worker/.production-evidence/
 modules/*/android/build
 modules/*/android/.cxx
 

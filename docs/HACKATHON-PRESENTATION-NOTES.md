@@ -40,11 +40,23 @@ Each new roll photograph uses the same storage allowance as a Quick Shot. Momint
 - A 12-frame roll therefore allows at most **36 MiB of photograph data**, and a 24-frame roll **72 MiB**, excluding metadata and the collection cover.
 - Keep the existing JPEG output and geometry limits: **12 megapixels**, with a maximum **4,000-pixel long edge**. Encoding can reduce quality or dimensions to fit; these are maximum dimensions, not a guarantee of unchanged resolution.
 - If processing cannot produce a verified image within the limit, it must fail before the photograph is accepted or the roll exposure advances.
-- Source inspection confirms these checks already exist in the local app and Worker changes. The focused image-artifact and Worker roll-contract suites passed **15 tests** on 30 September. Some integration assertions are source checks; these results do not replace real-device or deployed endpoint verification.
+- The focused app and Worker contract suites passed, and the isolated staging Worker subsequently passed **65/65 deployed no-funds checks** covering authorization, byte/dimension rejection, receipts, cleanup, catalogue integrity and rate limiting. Real paid-roll verification remains separate.
 - The Worker retains a separate **8 MiB compatibility allowance for pre-contract rolls**. It is not the allowance for newly created rolls.
-- No allowance, compression setting, or price was changed by this review. The owner subsequently accepted quality 60 as the emergency floor on 30 September after the full canonical comparison. Worker deployment, migrations and real paid-roll verification remain separate gates.
+- No allowance, compression setting, or price was changed by this review. The owner subsequently accepted quality 60 as the emergency floor on 30 September after the full canonical comparison. Isolated Worker staging and migrations now pass; real paid-roll verification remains a separate gate.
+
+### Backend evidence
+
+The current Worker code first ran in an isolated environment at `staging-api.momints.xyz`, where a synthetic no-funds suite passed 65/65 checks and returned staging D1/R2 state to empty. It was then promoted, without copying synthetic records, to `api.momints.xyz`. The existing production identity, treasury, database and storage were independently verified before the single production consumer/schedule set was activated. No verification step initiated a mainnet transaction, Arweave upload or notification.
 
 References: [app limits](../src/config/imageArtifact.ts), [capture checks](../src/app/camera.tsx), [Worker validation](../worker/src/rolls/imageArtifact.ts), and [production checklist](ROLL-FRAME-PRODUCTION-CHECKLIST.md).
+
+## Backend release preparation
+
+Recorded: 30 September 2026. Status: production backend active; owner-led paid tests pending.
+
+Presentation note: Momints first tested its backend changes in a separate environment, passing 65 no-funds operational checks. The tested service now answers on the app's own API domain with the existing production database, storage, payment history and signing identity preserved. Exactly one production Queue execution path and one intended schedule set are active.
+
+The live inventory found no pending Quick work, queue backlog or unfinished handoff, but it did find one dormant pre-contract roll from 27 July with three minted frames. That record and all payment-signature history were preserved. The old service is inaccessible and detached. The production signer, mainnet RPC, treasury, balances, protected operator routes and Seeker catalogue were verified without spending funds. This activation does not establish funded end-to-end mint success; real Quick and 12/24-frame tests remain outstanding.
 
 ## Adding future notes
 

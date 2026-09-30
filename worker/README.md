@@ -2,7 +2,9 @@
 
 Filmstock catalogue, immutable recipe delivery, and stateless developed-roll unlock reconstruction are documented in [`../docs/FILMSTOCKS.md`](../docs/FILMSTOCKS.md). The filmstock subsystem adds no D1 user or entitlement records.
 
-Filmstock operators should start from `filmstock-package-template/`. `npm run publish:filmstock` validates and compiles a 33-point sRGB `.cube`; `npm run schedule:filmstock` changes a returning stock's availability; and `npm run deploy` performs immutable R2 preflight, Worker deployment, and production asset smoke tests. See the linked contract before using the lower-level `deploy:worker` command.
+Filmstock operators should start from `filmstock-package-template/`. `npm run publish:filmstock` validates and compiles a 33-point sRGB `.cube`; `npm run schedule:filmstock` changes a returning stock's availability; and `npm run deploy` performs immutable R2 preflight, a maintenance-mode Worker deployment, and production asset smoke tests. See the linked contract before using the lower-level `deploy:worker` command.
+
+Production deployment and rollback are documented in [`../docs/STAGING-WORKER-RUNBOOK.md`](../docs/STAGING-WORKER-RUNBOOK.md). The default configuration targets the promoted service at `api.momints.xyz` with production resources and **maintenance enabled**. Activation requires its separately guarded command. Historical staging tools cannot target the promoted service.
 
 Single Cloudflare Worker backing the Momints roll feature: prepaid rolls of 12
 or 24 exposures, each roll an immutable Metaplex Core collection, each frame a
@@ -120,8 +122,8 @@ Roll/mint/cover logic calls only these interfaces (`src/providers/types.ts`):
 
 ```
 GET  /health                       config + D1 reachability
-GET  /funding/status               Turbo credit balance vs one typical frame + roll headroom (operator)
-GET  /treasury/status              accrued fees pending manual conversion (operator)
+GET  /funding/status               Turbo credit balance + roll headroom (needs OPS_AUTH_TOKEN)
+GET  /treasury/status              accrued fees pending conversion (needs OPS_AUTH_TOKEN)
 GET  /fees                         current cost-plus mint fees (quick, roll 12/24) — app fetches this at confirm time
 GET  /ops/status                   monitor's current level, roll headroom, last-alerted state (needs OPS_AUTH_TOKEN)
 GET  /ops/test-alert?severity=…    post a dummy Discord alert: low | critical | healthy (needs OPS_AUTH_TOKEN)
@@ -246,40 +248,25 @@ that way by decision, not oversight — no migration is planned for them.
 
 ## Setup
 
+The production resources already exist. Do not recreate them or paste new IDs
+into configuration. The authoritative paused configuration is `wrangler.toml`;
+`wrangler.production-active.toml` is the reviewed activation configuration,
+and `wrangler.rollback.toml` preserves the retired service as a maintenance-only
+rollback target. Follow `../docs/STAGING-WORKER-RUNBOOK.md` for the current
+resource inventory, migration procedure, secret entry and rollback sequence.
+
 ```sh
 npm install
-wrangler d1 create momints-rolls        # paste the id into wrangler.toml (TODO marker)
-npm run db:migrate:remote               # or db:migrate:local for wrangler dev --local
-
-wrangler secret put IRYS_FUNDING_KEY    # funding wallet, base58 secret key — MAINNET, real funds.
-                                         # Also the Turbo/Arweave signing key (name kept for
-                                         # continuity; no longer Irys-specific)
-wrangler secret put SOLANA_RPC_URL      # dedicated mainnet RPC (e.g. Helius mainnet)
-
-wrangler secret put DISCORD_WEBHOOK_URL # optional: treasury-monitor + fee-recompute alert channel
-wrangler secret put OPERATOR_DISCORD_ID # optional: your Discord user ID (@-mention on critical)
-wrangler secret put OPS_AUTH_TOKEN      # gates /ops/status, /ops/test-alert, /ops/recompute-fees,
-                                         # /ops/sweep-quick-mints
-wrangler secret put SOLANA_RPC_URL_MAINNET  # optional: use a DIFFERENT mainnet RPC than
-                                         # SOLANA_RPC_URL just for the cost-plus fee recompute's
-                                         # rent read (see "Cost-plus fee pricing") — falls back to
-                                         # SOLANA_RPC_URL itself if unset
-
-# Quick-mint infrastructure (Workers PAID plan — Queues is not on Free)
-wrangler queues create momints-quick-finalize
-wrangler queues create momints-quick-finalize-dlq
-wrangler r2 bucket create momints-quick-staging
-wrangler r2 bucket lifecycle add momints-quick-staging \
-  --name expire-staging --prefix quick-staging/ --expire-days 1
-
-# Fund the signing wallet's Turbo credit balance BEFORE uploading the
-# placeholder (see "Top up the Turbo credit balance" below) — the upload will
-# 402 otherwise. Then upload the placeholder ONCE and paste the URI into
-# wrangler.toml [vars], replacing the old gateway.irys.xyz value:
-IRYS_FUNDING_KEY=<base58> node scripts/upload-placeholder.mjs ../CollectionPlaceholder.png
-
 npm run typecheck
-npm run deploy
+npm run test:maintenance
+npm run test:production-tooling
+npm run validate:filmstocks
+
+# Safe default: deploy/update the promoted Worker while maintenance remains on.
+npm run deploy:worker
+
+# Only after the owner has entered and verified the existing production secrets:
+npm run deploy:production:activate -- --confirm-owner-secrets-and-production-activation
 ```
 
 `QUICK_TREASURY_ADDRESS` in `wrangler.toml [vars]` **must match the app's
@@ -294,14 +281,13 @@ on-chain payer/authority for collection creation and frame mints, and as the
 `SolanaSigner` key that signs every Turbo/Arweave upload; no code generates,
 prints, or logs key material.
 
-Pending TODOs in code: mint fees are now cost-plus (see [Cost-plus fee
-pricing](#cost-plus-fee-pricing)) rather than a TODO, but
-`SOLANA_RPC_URL_MAINNET` should point at a dedicated mainnet RPC (Helius or
-similar) before trusting the recompute in production — the public fallback is
-known to block at least some cloud egress IPs. Also still pending:
-`QUICK_TREASURY_ADDRESS`, the D1 `database_id`, the final base cover artwork
-(`assets/base-cover.jpg` is a placeholder), `AutomatedSink`,
-`AutomatedFunding`, and the
+Pending TODOs in code: mint fees are cost-plus (see [Cost-plus fee
+pricing](#cost-plus-fee-pricing)). `SOLANA_RPC_URL_MAINNET` should point at a
+dedicated mainnet RPC (Helius or similar) before trusting the recompute in
+production — the public fallback is known to block at least some cloud egress
+IPs. The production treasury and D1 IDs are configured. Still pending are the
+final base cover artwork (`assets/base-cover.jpg` is a placeholder),
+`AutomatedSink`, `AutomatedFunding`, and the
 [Turbo credit withdrawability](#open-question-turbo-credit-withdrawability)
 question below.
 
@@ -316,7 +302,7 @@ response to failures.
 
 **When:** the [treasury monitor](#treasury-monitor--discord-alerts) tells you —
 it posts to Discord the moment the balance crosses into `low`, days of runway
-ahead. Otherwise: check `GET /funding/status` before any demo/session and
+ahead. Otherwise: check authenticated `GET /funding/status` before any demo/session and
 whenever a response carries a `fundingWarning` (it warns while balance is below
 2× the anticipated work — i.e. before requests start failing). Low-balance
 warnings also appear in `wrangler tail` as `[funding] …`.
@@ -339,7 +325,7 @@ curl -s "https://payment.ardrive.io/v1/account/balance/solana?address=<funding-w
 ```
 
 Size the top-up to anticipated work: a 24-frame roll is ~24 × 3 MiB + cover;
-`GET /funding/status` reports the winc price of a typical frame (via
+Authenticated `GET /funding/status` reports the winc price of a typical frame (via
 `GET https://payment.ardrive.io/v1/price/bytes/<n>`) — multiply out and keep
 comfortable headroom. Verify afterwards with `/funding/status` (`sufficient:
 true`, no warning). Unlike Irys's ~2-minute `.fund()`, Turbo crediting time
@@ -651,11 +637,11 @@ is bumped on every run, so a stale timestamp means the cron itself stopped.
 Accrued roll fees are recorded in D1 as `CONVERSION_PENDING` (ManualSink —
 nothing auto-swaps).
 
-**When:** on a calendar cadence (e.g. weekly) or when `GET /treasury/status`
+**When:** on a calendar cadence (e.g. weekly) or when authenticated `GET /treasury/status`
 shows `pendingLamports` above your threshold.
 
 **How:**
-1. `GET /treasury/status` → note `pendingLamports` / `pendingCount`.
+1. Authenticated `GET /treasury/status` → note `pendingLamports` / `pendingCount`.
 2. Swap that SOL → $SKR manually from the treasury wallet (e.g. Jupiter).
    The treasury address itself is still TODO/pending configuration.
 3. Mark the rows converted:

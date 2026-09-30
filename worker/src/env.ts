@@ -4,6 +4,14 @@ export interface QuickFinalizeMessage {
 }
 
 export interface Env {
+  /** Explicit deployment label surfaced by /health; never changes behaviour. */
+  DEPLOYMENT_ENV?: string
+  /**
+   * Explicit production circuit breaker. When `true`, HTTP mint/payment
+   * mutations are refused and Queue/Cron handlers perform no work. This is
+   * deliberately separate from DEPLOYMENT_ENV.
+   */
+  MAINTENANCE_MODE?: string
   DB: D1Database
   /** Public, immutable film recipes, preview images and texture assets. */
   FILMSTOCK_ASSETS: R2Bucket
@@ -83,7 +91,8 @@ export interface Env {
    */
   QUICK_TREASURY_ADDRESS?: string
   /**
-   * Bearer token (Worker Secret) gating GET /ops/status and GET /ops/test-alert.
+   * Bearer token (Worker Secret) gating every operator route, including
+   * funding and treasury status.
    * These read funding-wallet internals and can trigger a Discord post — fine
    * for an operator to hit directly, not fine for anyone who learns the
    * Worker's base URL (which becomes public the moment the app ships it in an

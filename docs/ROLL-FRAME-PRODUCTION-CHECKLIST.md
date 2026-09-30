@@ -110,8 +110,11 @@ Branch: `fix/roll-frame-contract`
 - [ ] Complete a real prepaid 12-frame and 24-frame roll through permanent verification.
 - [x] Test active-roll restart, offline reuse, film pinning and catalogue rotation.
 - [x] Confirm Arweave propagation remains `confirming`, never a false failure.
-- [ ] Confirm Worker frame/completion authorization and operational endpoints are production-safe.
+- [x] Confirm Worker frame/completion authorization and operational endpoints are production-safe.
 - [x] Run app typecheck/lint/tests and Worker tests/typecheck.
+- [x] Back up and migrate the preserved production D1 through 0010.
+- [x] Promote the tested Worker to `api.momints.xyz` in maintenance with no background execution.
+- [x] Replace the staging signer/operator token with the existing production secrets and complete Phase 3 activation checks.
 - [ ] Resolve the repository-wide Prettier baseline: `npm run fmt:check` currently reports 131 pre-existing/unrelated files, including generated and private draft paths.
 - [ ] Review privacy storage on device after capture, restart, history, contact sheet and completed-roll cleanup.
 
@@ -123,6 +126,31 @@ Branch: `fix/roll-frame-contract`
 - [x] No plaintext active-roll frame persists outside a bounded just-in-time operation.
 - [x] No unauthenticated caller can spend a prepaid roll or complete it.
 - [x] Product/visual approval is recorded for the final JPEG quality policy.
+
+## Isolated Worker staging results — 2026-09-30 (historical)
+
+- `https://staging-api.momints.xyz` hosted Worker version `70c85bf1-d388-4682-bee9-124a20e3b98d`, deployment `f8b5762e-0766-49c7-84b0-336518cda5bf`, during isolated testing. The hostname has since been removed as part of the documented production preparation.
+- Dedicated staging D1, Quick R2, filmstock R2, finalize/DLQ queues, rate-limit namespaces, signer, treasury and operator token are bound. No automatic schedules are configured.
+- The full migration chain applied to the new database. A separate synthetic pre-contract upgrade through 0009/0010 preserved protocol v1 and null receipt fields as intended.
+- The deployed synthetic suite passed 65/65 checks: health/D1, public fees, staging-origin catalogue, immutable asset hashes/cache headers, operator auth/CORS, DAS read, roll capability isolation, wallet-signed legacy recovery, exact new/legacy byte boundaries, malformed/truncated/spoofed/dimension rejection, Quick receipt/R2 release cleanup and controlled rate limiting.
+- `/funding/status` and `/treasury/status` were found publicly readable despite being operator routes; both now use the existing `OPS_AUTH_TOKEN` gate and passed missing/wrong/valid-token checks.
+- Initial and final synthetic state matched at zero rolls, frames, Quick mints, frame locks and treasury rows. The exact Quick R2 object was hash-verified then confirmed absent after release. No finalize was accepted.
+- The unfunded staging signer and treasury each had zero mainnet signatures after testing. No Turbo/Arweave upload, payment, mint or Discord notification occurred during that test. Production was unchanged by the staging test itself; the later controlled promotion is recorded below.
+- Reproducible details: [staging runbook](STAGING-WORKER-RUNBOOK.md) and [test report](STAGING-WORKER-TEST-REPORT-2026-09-30.md). Paid 12/24-roll testing and the Seeker peak-memory decision remain open.
+
+## Production backend activation — 2026-09-30
+
+- `https://api.momints.xyz` now targets `momints-roll-worker-staging` version `6b168483-5cfb-4540-bcbd-b86d7f010f75`, deployment `53d17f08-060d-4b3e-ae7d-f24a67a7e0f9`.
+- The promoted service uses the preserved production D1 (`c4897487-5eef-4569-87a4-14306d4eac72`), Quick bucket, filmstock bucket, treasury, placeholder and rate-limit namespaces.
+- Migrations 0009/0010 applied additively. Record counts and payment-signature counts were unchanged; historical rows retained protocol-v1/null receipt defaults.
+- A private full SQL export was restored successfully before migration. Its location and hash are recorded in [the cutover report](NEW-BACKEND-CUTOVER-REPORT.md).
+- One dormant, unexpected legacy open roll was found and preserved: a 12-frame July roll with 3 minted frames. It has no lock, pending Queue work or handoff. It remains recoverable and was not silently closed.
+- The old Worker has no workers.dev/preview route, schedules, Queue producer or consumers. Its former URL returns 404.
+- Phase 3 verified the expected production signer, mainnet genesis, existing treasury, SOL/Turbo balances, protected routes, preserved records and fee computation while maintenance and Queue delivery remained paused.
+- The promoted service is active with exactly two schedules, one finalize producer/consumer and one dead-letter consumer. Both production queues were empty when resumed; disposable staging queues remain paused and detached.
+- Production HTTPS/DNS, read-only health and every immutable filmstock asset/hash passed. The Seeker debug build refreshed all four filmstocks from `api.momints.xyz` without clearing app data.
+- Turbo reported capacity for four 24-frame rolls. The signer held 0.071924295 SOL, which is tight for sequential paid 12- and 24-frame tests; the owner should top it up manually before attempting both if needed.
+- Exact evidence and next steps: [cutover report](NEW-BACKEND-CUTOVER-REPORT.md), [runbook](STAGING-WORKER-RUNBOOK.md), and [owner secrets guide](NEW-BACKEND-SECRETS-GUIDE.md).
 
 ## Measured baseline
 
@@ -264,7 +292,9 @@ Branch: `fix/roll-frame-contract`
 
 ## Decision review — 2026-09-30
 
-### Agreed next quality check
+Latest backend handoff: [new-backend cutover brief](NEW-BACKEND-CUTOVER-BRIEF.md), [cutover report](NEW-BACKEND-CUTOVER-REPORT.md) and [owner secrets guide](NEW-BACKEND-SECRETS-GUIDE.md). Phase 3 is complete: production history is preserved, the existing identity is verified and the single production execution topology is active. D1 contains one dormant legacy open roll; it remains unchanged. No end-to-end paid path has yet been verified.
+
+### Quality decision completed
 
 - Execution brief: [Quality-60 visual review](QUALITY-60-VISUAL-REVIEW-BRIEF.md). Finish the comparison and obtain the owner's quality decision before starting staging Worker work.
 - Run an A/B visual comparison across the private canonical corpus before deciding whether quality 60 is acceptable. Approval to run the comparison is not approval of its output or of a shipping quality floor.
@@ -272,21 +302,20 @@ Branch: `fix/roll-frame-contract`
 - Record byte sizes, hashes and dimensions. Flag any resizing separately so it is not mistaken for a quality-only difference. Verify the forced path actually starts at 60 rather than allowing the normal ladder to stop at 85 or 95.
 - Provide normal viewing sizes and matching 100% crops for visual review. Keep all corpus inputs and comparison outputs private, ignored and undeployed. Do not register test images as exposures or mint them.
 - The existing canonical manifest contains 27 photographs and two generated controls. The earlier comparison used eight selected inputs; the new comparison should cover the full manifest.
-- Status: the full 58-pair / 116-output Seeker comparison is complete with zero failures and private review materials prepared. The owner approved quality 60 as the emergency floor on 30 September 2026. Staging remains a separate task and was not started by recording this decision.
+- Status: the full 58-pair / 116-output Seeker comparison is complete with zero failures and private review materials prepared. The owner approved quality 60 as the emergency floor on 30 September 2026. Isolated Worker staging was subsequently built and verified without changing the quality policy.
 
-### Worker rollout recommendation — not yet deployed
+### Worker rollout status — production active, paid tests pending
 
-- Execution brief: [Build and verify the isolated staging Worker](ISOLATED-WORKER-STAGING-BRIEF.md). Quality-60 approval is recorded; proceed with staging when this brief is handed off. Brief preparation checked Cloudflare login only and did not create staging resources.
-- Test the same Worker code in a separate staging deployment with its own database, writable storage and queues, explicitly scoped credentials and rate limits. Do not point a newly named staging Worker at production's mutable resources.
-- The update changes roll authorization, image validation/receipts, retry/completion handling and Quick Shot validation. It adds two database migrations and two rate-limit bindings; this is more than an image-size constant change.
-- Updated rollout direction from the domain discussion: validate the new deployment in staging, then establish the production API under the app's `momints.xyz` domain. Suggested hostnames are `staging-api.momints.xyz` and `api.momints.xyz`, leaving the apex for the website; hostnames and Cloudflare zone availability still need confirmation. The current endpoint is on `traviskeir.dev` according to the owner.
-- Promote the tested code/configuration into the new production deployment, with existing production records and signing authority deliberately preserved. Do not promote disposable staging data as production data. Back up the database, apply the additive migrations before code that requires their columns, and coordinate the app update because old app builds do not send the new roll authorization fields.
-- Moving the hostname does not itself migrate data, queues or secrets. Plan the old endpoint's compatibility period and a single authoritative queue/scheduled-job configuration during cutover. Retire the old service only after existing rolls and pending Quick finalizations have been accounted for.
-- Preserve and test legacy-roll recovery and existing pending Quick finalizations. Keep paid-roll testing until fixes and rollout checks are ready, as requested.
+- The isolated staging deployment first passed 65/65 no-funds checks. Its service has now been promoted in place to `api.momints.xyz`; disposable staging records/resources were not promoted.
+- Production D1/storage/payment history are preserved and migrations 0009/0010 are applied. The old service is inaccessible and detached; there is only one future activation target.
+- Maintenance behavior remains the rollback/pause control. The active service has exactly one production Queue execution path and the two intended schedules; the retired Worker has none.
+- The production signer, mainnet RPC, treasury, balances and operator protection were verified without paying or minting. Discord secrets remain absent.
+- The ignored local `.env` and installed Seeker debug build now use `api.momints.xyz`; the refreshed catalogue and asset origins were verified on device.
+- Real Quick and prepaid 12/24-frame tests, permanent Arweave verification, handoff recovery and encrypted-vault deletion remain owner-led release gates.
 
 ### Formatting explanation and proposed handling
 
 - Prettier checks source layout (spacing, wrapping and similar style rules); its failures do not by themselves indicate functional app failures. They still fail the repository's formatting check and therefore its full CI command.
 - A fresh read-only check reported **130 files** on 30 September, compared with the earlier recorded 131. The output includes unrelated source/docs and local draft/configuration paths. This review did not establish that every current warning predates the feature.
 - Recommended handling: format/check changed deliverable files, review exclusions for generated/private/local-only material, then handle the remaining tracked formatting backlog in a separate formatting-only change. Do not exclude application source merely to make the check pass.
-- No formatting rewrite, production deployment, database migration, payment or mint was performed in this review. The Seeker memory-envelope decision remains open.
+- No repository-wide formatting rewrite, payment or mint was performed. Production activation is complete, while owner-led paid tests and the Seeker memory-envelope decision remain open.

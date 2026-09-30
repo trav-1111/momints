@@ -17,6 +17,12 @@ import { FeeCache } from './fees/cache'
 import { runFeeRecompute } from './fees/compute'
 import { isBase58Address } from './lib/address'
 import { HttpError, json } from './lib/http'
+import {
+  isHttpRouteBlockedByMaintenance,
+  isMaintenanceMode,
+  MAINTENANCE_QUEUE_RETRY_SECONDS,
+  MAINTENANCE_RETRY_AFTER_SECONDS,
+} from './maintenance'
 import { sanitizeAttributes } from './lib/sanitize'
 import { getHealthSnapshot, getMetricsSnapshot, getWalletsSnapshot, type MetricsWindow } from './ops/dashboard'
 import { postDiscordAlert, type AlertSeverity } from './ops/discord'
@@ -68,8 +74,8 @@ function connectingIp(request: Request): string {
 
 const USAGE = `Momints roll backend.
   GET  /health                          config + D1 reachability
-  GET  /funding/status                  Turbo credit balance sufficiency (operator)
-  GET  /treasury/status                 accrued fees pending manual conversion (operator)
+  GET  /funding/status                  Turbo credit balance sufficiency (operator; bearer token required)
+  GET  /treasury/status                 accrued fees pending manual conversion (operator; bearer token required)
   GET  /fees                            current cost-plus mint fees (quick, roll 12/24)
   GET  /identity/skr?wallet=<address>  read-only reverse skr display identity
   GET  /ops/status                      treasury monitor: current level, roll headroom, last alert
@@ -459,6 +465,8 @@ async function handleGetOpenRoll(ctx: WorkerContext, url: URL): Promise<Response
 
 async function handleHealth(env: Env): Promise<Response> {
   const checks: Record<string, boolean | string> = {
+    deployment: env.DEPLOYMENT_ENV ?? 'unspecified',
+    maintenance: isMaintenanceMode(env),
     rpcConfigured: Boolean(env.SOLANA_RPC_URL),
     fundingKeyConfigured: Boolean(env.IRYS_FUNDING_KEY),
     // Informational only — alerting is optional and deliberately not part of `ok`.
@@ -825,6 +833,20 @@ export default {
           return json({ error: `No route: ${request.method} ${path}. GET / for usage.` }, 404)
         }
 
+        // This guard runs before secret validation, request-body parsing,
+        // storage, D1 mutation, queue sends or signer construction. It remains
+        // effective even after valid production credentials are installed.
+        if (isMaintenanceMode(env) && isHttpRouteBlockedByMaintenance(route.kind)) {
+          return json(
+            {
+              error: 'Momints minting is temporarily paused for maintenance. No payment or image was accepted.',
+              maintenance: true,
+            },
+            503,
+            { 'cache-control': 'no-store', 'retry-after': String(MAINTENANCE_RETRY_AFTER_SECONDS) },
+          )
+        }
+
         if (route.kind === 'filmstock-catalogue') {
           const serverTime = new Date()
           return json(
@@ -876,6 +898,7 @@ export default {
             })
           }
           case 'funding-status': {
+            requireOpsAuth(ctx, request)
             const { funding } = await ctx.storageSeams()
             // Same single balance read the cron uses (ops/monitor.ts). Response
             // is the original FundingStatus plus the derived roll headroom.
@@ -889,6 +912,7 @@ export default {
             })
           }
           case 'treasury-status':
+            requireOpsAuth(ctx, request)
             return json(await ctx.treasury.status())
           case 'fees':
             return await handleGetFees(ctx)
@@ -973,6 +997,16 @@ export default {
    * moves it to the DLQ — where it becomes an operator alert, not a silent loss.
    */
   async queue(batch: MessageBatch<QuickFinalizeMessage>, env: Env, _ctx: ExecutionContext): Promise<void> {
+    if (isMaintenanceMode(env)) {
+      // Never acknowledge paid work while paused. Delivery is also paused and
+      // consumers are detached during cutover; this is defense in depth for a
+      // stale/in-flight invocation.
+      for (const message of batch.messages) {
+        message.retry({ delaySeconds: MAINTENANCE_QUEUE_RETRY_SECONDS })
+      }
+      console.warn(`[maintenance] deferred ${batch.messages.length} queue message(s) from ${batch.queue}`)
+      return
+    }
     const ctx = new WorkerContext(validateEnv(env))
     const alert = discordAlerts(env)
 
@@ -1035,6 +1069,10 @@ export default {
    * roll-handoff sweep retries revokes that failed at completion time.
    */
   async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    if (isMaintenanceMode(env)) {
+      console.warn(`[maintenance] skipped scheduled run ${controller.cron}`)
+      return
+    }
     let ctx: WorkerContext
     try {
       ctx = new WorkerContext(validateEnv(env))
