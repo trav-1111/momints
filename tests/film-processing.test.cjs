@@ -95,6 +95,8 @@ function harness() {
           lutSha256: recipe.lut.sha256,
           outputUri: options.outputUri,
           outputSha256: digest(files.get(options.outputUri)),
+          mime: 'image/jpeg',
+          byteLength: files.get(options.outputUri).length,
           width: 4000,
           height: 3000,
           renderer: 'native-egl-v2',
@@ -132,6 +134,7 @@ test('production package and exact output are bound to a verified native receipt
   assert.ok(h.files.has(receipt.outputUri))
   assert.equal(h.calls[0].lutUri, 'file:///packages/runtime.lut')
   assert.equal(h.calls[0].jpegQuality, 95)
+  assert.equal(h.calls[0].jpegTargetBytes, 2_900_000)
 })
 
 for (const [field, invalid] of Object.entries({
@@ -140,6 +143,8 @@ for (const [field, invalid] of Object.entries({
   lutSha256: null,
   outputUri: 'file:///gallery/user-photo.jpg',
   outputSha256: '0'.repeat(64),
+  mime: 'image/png',
+  byteLength: 999,
   width: 2048,
   height: 1024,
   renderer: 'skia-v2',

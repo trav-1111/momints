@@ -69,7 +69,7 @@ function usePrivacyStartupCleanup(): boolean {
             if (roll.collectionAddress) useRollRegistry.getState().closeRoll(roll.collectionAddress)
             useSessionStore.getState().completeRoll()
           } else {
-            const restored = await restoreRollVault(roll.id)
+            const restored = await restoreRollVault(roll.id, roll.film.filmStockId)
             if (restored.frameIds.length < roll.frameIds.length) {
               throw new Error('The encrypted roll vault is missing one or more recorded frames.')
             }

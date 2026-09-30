@@ -1,6 +1,11 @@
 import { createHash } from 'react-native-quick-crypto'
 import { File } from 'expo-file-system'
 import type { FilmProcessingReceipt } from '../../modules/film-gl'
+import {
+  assertPermanentImageArtifact,
+  assertPermanentImageGeometry,
+  PERMANENT_IMAGE_MIME,
+} from '../config/imageArtifact'
 
 export function sha256(bytes: Uint8Array | string): string {
   return createHash('sha256').update(bytes).digest().toString('hex')
@@ -52,15 +57,25 @@ export async function verifyFilmOutput(
     receipt.outputUri !== expected.outputUri ||
     receipt.renderer !== expected.renderer ||
     receipt.colorSpace !== 'sRGB' ||
+    receipt.mime !== PERMANENT_IMAGE_MIME ||
+    !Number.isInteger(receipt.byteLength) ||
+    receipt.byteLength <= 0 ||
     !/^[a-f0-9]{64}$/.test(receipt.outputSha256)
   ) {
     throw new Error('Film processing receipt does not match the selected package')
   }
   const bytes = await new File(expected.outputUri).bytes()
   const size = jpegDimensions(bytes)
-  if (size.width !== receipt.width || size.height !== receipt.height || sha256(bytes) !== receipt.outputSha256) {
+  assertPermanentImageGeometry(size)
+  if (
+    size.width !== receipt.width ||
+    size.height !== receipt.height ||
+    bytes.length !== receipt.byteLength ||
+    sha256(bytes) !== receipt.outputSha256
+  ) {
     throw new Error('Film output failed integrity or dimension verification')
   }
+  assertPermanentImageArtifact(receipt)
   return receipt
 }
 
@@ -69,7 +84,11 @@ export async function verifyCompressedFilmOutput(
   receipt: FilmProcessingReceipt,
   outputUri: string,
 ): Promise<FilmProcessingReceipt> {
-  if (outputUri === receipt.outputUri) return verifyFilmOutput(receipt, receipt)
+  if (outputUri === receipt.outputUri) {
+    const verified = await verifyFilmOutput(receipt, receipt)
+    assertPermanentImageArtifact(verified)
+    return verified
+  }
   const bytes = await new File(outputUri).bytes()
   const size = jpegDimensions(bytes)
   if (
@@ -79,5 +98,14 @@ export async function verifyCompressedFilmOutput(
   ) {
     throw new Error('Compressed film output changed dimensions unexpectedly')
   }
-  return { ...receipt, ...size, outputUri, outputSha256: sha256(bytes) }
+  const fitted = {
+    ...receipt,
+    ...size,
+    mime: PERMANENT_IMAGE_MIME,
+    byteLength: bytes.length,
+    outputUri,
+    outputSha256: sha256(bytes),
+  }
+  assertPermanentImageArtifact(fitted)
+  return fitted
 }

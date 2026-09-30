@@ -45,6 +45,11 @@ export interface FinalizeQuickMintResult {
   /** The permanent metadata URI, once the consumer has uploaded it. */
   metadataUri: string | null
   imageUri: string | null
+  mime: string
+  byteLength: number | null
+  width: number | null
+  height: number | null
+  imageHash: string | null
   /** True when this request found work already in flight or done. */
   alreadyFinalizing: boolean
 }
@@ -57,6 +62,11 @@ function describe(row: QuickMintRow, alreadyFinalizing: boolean): FinalizeQuickM
     status: row.status === 'STAGED' ? 'FINALIZING' : row.status,
     metadataUri: row.arweave_uri,
     imageUri: row.image_uri,
+    mime: row.mime,
+    byteLength: row.byte_length,
+    width: row.width,
+    height: row.height,
+    imageHash: row.image_hash,
     alreadyFinalizing,
   }
 }
@@ -118,8 +128,7 @@ export async function finalizeQuickMint(
     if (err instanceof DuplicateSignatureError) {
       throw new HttpError(
         409,
-        `Transaction ${req.signature} has already paid for a different quick mint. ` +
-          'One payment buys one upload.',
+        `Transaction ${req.signature} has already paid for a different quick mint. ` + 'One payment buys one upload.',
       )
     }
     throw err
@@ -173,7 +182,7 @@ export async function finalizeQuickMint(
         'A quick-mint finalize was definitively rejected, but verify only reaches that verdict after reading a ' +
         'transaction that already landed on-chain — this may be a real paid mint, not a bogus attempt. Marked ' +
         'DEAD rather than deleted so it can be investigated. The staged image in R2 is preserved but expires ' +
-        'under the bucket\'s 24h lifecycle rule — recover it soon if the image is needed.',
+        "under the bucket's 24h lifecycle rule — recover it soon if the image is needed.",
       fields: [
         { name: 'Quick mint', value: row.id },
         { name: 'Asset', value: req.assetAddress },
@@ -194,8 +203,7 @@ export async function finalizeQuickMint(
     if (err instanceof DuplicateSignatureError) {
       throw new HttpError(
         409,
-        `Transaction ${req.signature} has already paid for a different quick mint. ` +
-          'One payment buys one upload.',
+        `Transaction ${req.signature} has already paid for a different quick mint. ` + 'One payment buys one upload.',
       )
     }
     throw err
@@ -245,6 +253,11 @@ export async function finalizeQuickMint(
     status: 'FINALIZING',
     metadataUri: null,
     imageUri: null,
+    mime: row.mime,
+    byteLength: row.byte_length,
+    width: row.width,
+    height: row.height,
+    imageHash: row.image_hash,
     alreadyFinalizing: false,
   }
 }

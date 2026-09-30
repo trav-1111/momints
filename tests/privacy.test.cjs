@@ -7,6 +7,7 @@ const { join } = require('node:path')
 const {
   canonicalFilePath,
   isFileUriInsideDirectory,
+  isLegacyRootCacheImageName,
   isPermanentArweaveUri,
   runWithCleanup,
 } = require('../src/services/privacyPathGuard.cjs')
@@ -26,6 +27,15 @@ test('encoded traversal cannot escape an app-owned directory guard', () => {
   const escaped = captureRoot + '/%2e%2e/%2e%2e/files/private.jpg'
   assert.equal(canonicalFilePath(escaped), '/data/user/0/com.momints.app/files/private.jpg')
   assert.equal(isFileUriInsideDirectory(escaped, captureRoot), false)
+})
+
+test('legacy root-cache cleanup matches only exact historical app output names', () => {
+  assert.equal(isLegacyRootCacheImageName('photo_0080ecdc-fd7b-4bbd-859f-d543062a3a90_film.jpg'), true)
+  assert.equal(isLegacyRootCacheImageName('photo_0080ecdc-fd7b-4bbd-859f-d543062a3a90_bali-400-v1.jpg'), true)
+  assert.equal(isLegacyRootCacheImageName('photo_1790645661999_fit.jpg'), true)
+  assert.equal(isLegacyRootCacheImageName('photo_family_film.jpg'), false)
+  assert.equal(isLegacyRootCacheImageName('IMG_4704.HEIC'), false)
+  assert.equal(isLegacyRootCacheImageName('../photo_0080ecdc-fd7b-4bbd-859f-d543062a3a90_film.jpg'), false)
 })
 
 test('durable history accepts only HTTPS Arweave image references', () => {
@@ -51,6 +61,23 @@ test('contact-sheet cleanup runs when rendering throws', async () => {
     /forced renderer failure/,
   )
   assert.equal(cleanups, 1)
+})
+
+test('contact-sheet output is deleted on back, share/save completion, late render and unmount', () => {
+  const source = readFileSync(join(__dirname, '../src/app/contact-sheet.tsx'), 'utf8')
+  const renderer = readFileSync(join(__dirname, '../src/services/contactSheet.ts'), 'utf8')
+  assert.match(source, /const setOwnedPreview = useCallback/)
+  assert.match(source, /if \(previous && previous\.render\.uri !== next\?\.render\.uri\)/)
+  assert.match(source, /if \(owned\) deleteAppOwnedImage\(owned\.render\.uri\)/)
+  assert.match(source, /if \(!mountedRef\.current\) \{\s*deleteAppOwnedImage\(render\.uri\)/)
+  assert.match(source, /if \(preview\) \{\s*setOwnedPreview\(null\)/)
+  assert.match(source, /if \(shared\) \{\s*setOwnedPreview\(null\)/)
+  assert.match(source, /if \(saved\) \{\s*setOwnedPreview\(null\)/)
+  assert.match(renderer, /Skia\.Surface\.Make\(OUTPUT_WIDTH, outputHeight\)/)
+  assert.doesNotMatch(renderer, /Skia\.Surface\.MakeOffscreen/)
+  assert.match(renderer, /snapshot\?\.dispose\(\)/)
+  assert.match(renderer, /surface\.dispose\(\)/)
+  assert.match(renderer, /if \(!outputComplete && output\) deleteAppOwnedImage\(output\.uri\)/)
 })
 
 test('finalize drain preserves a mint recorded after its snapshot', () => {
@@ -91,6 +118,17 @@ test('private photo views downscale without persistent or decoded-image caching'
   assert.match(preview, /release\(baseContext\)/)
   assert.match(privacy, /deleteDisplayPreview\(uri\)/)
   assert.match(privacy, /deleteOwnedDirectory\(DISPLAY_PREVIEW_DIRECTORY\)/)
+  assert.match(privacy, /'ImageManipulator'/)
+})
+
+test('roll preview releases native refs before deleting ImageManipulator output', () => {
+  const source = readFileSync(join(__dirname, '../src/services/rollVaultPreview.ts'), 'utf8')
+  const releaseIndex = source.indexOf('release(image)')
+  const cleanupIndex = source.indexOf('if (savedUri)')
+
+  assert.notEqual(releaseIndex, -1)
+  assert.notEqual(cleanupIndex, -1)
+  assert.ok(releaseIndex < cleanupIndex)
 })
 
 test('quick-shot review keeps a bounded number of decoded pages mounted', () => {

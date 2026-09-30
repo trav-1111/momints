@@ -10,6 +10,7 @@ export interface FilmGlOptions {
   lutUri: string | null
   seed: number
   jpegQuality: number
+  jpegTargetBytes: number
 }
 
 export interface FilmProcessingReceipt {
@@ -18,6 +19,8 @@ export interface FilmProcessingReceipt {
   lutSha256: string | null
   outputUri: string
   outputSha256: string
+  mime: 'image/jpeg'
+  byteLength: number
   width: number
   height: number
   renderer: 'native-egl-v2' | 'skia-v2'

@@ -9,6 +9,10 @@ export interface Env {
   FILMSTOCK_ASSETS: R2Bucket
   /** Stateless abuse protection for the public DAS-backed unlock endpoint. */
   FILMSTOCK_UNLOCK_LIMITER: RateLimit
+  /** Per-roll authenticated mutation limiter; keyed by collection address. */
+  ROLL_MUTATION_LIMITER: RateLimit
+  /** Public quick staging/finalize abuse limiter; keyed by connecting IP. */
+  QUICK_MINT_LIMITER: RateLimit
   /** Staged quick-mint images, pending a verified fee. 24h lifecycle rule. */
   QUICK_STAGING: R2Bucket
   /**

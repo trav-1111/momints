@@ -22,9 +22,16 @@ import java.io.InputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import kotlin.math.max
+import kotlin.math.roundToInt
+
+private data class EncodedJpeg(val width: Int, val height: Int, val quality: Int)
 
 /** A fresh isolated EGL context for each frame; no GL handles escape render(). */
 class FilmRenderer(private val context: Context) {
+  private val maximumPixels = 12_000_000L
+  private val maximumLongEdge = 4_000
+  private val resizeLongEdges = intArrayOf(2048, 1600, 1280)
   private fun hash(bytes: ByteArray): String = hex(MessageDigest.getInstance("SHA-256").digest(bytes))
   private fun hex(bytes: ByteArray): String = bytes.joinToString("") { "%02x".format(it.toInt() and 255) }
   private fun input(uri: String): InputStream = when {
@@ -61,7 +68,48 @@ class FilmRenderer(private val context: Context) {
     }
     require(options.seed.isFinite() && options.seed >= 0f && options.seed < 100000f) { "Invalid grain seed" }
     require(options.jpegQuality in 1..100) { "Invalid JPEG quality" }
+    require(options.jpegTargetBytes in 1..3 * 1024 * 1024) { "Invalid JPEG byte target" }
     return recipe
+  }
+
+  private fun writeJpeg(bitmap: Bitmap, output: File, quality: Int, targetBytes: Int): Boolean {
+    var fitted = false
+    FileOutputStream(output, false).use { stream ->
+      check(bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)) { "JPEG encode failed" }
+      stream.flush()
+      fitted = output.length() > 0 && output.length() <= targetBytes.toLong()
+      if (fitted) stream.fd.sync()
+    }
+    return fitted
+  }
+
+  private fun encodeJpegToBudget(bitmap: Bitmap, output: File, options: FilmGlOptionsRecord): EncodedJpeg {
+    val qualities = intArrayOf(options.jpegQuality, 90, 85, 80, 75, 70, 65, 60)
+      .filter { it <= options.jpegQuality }
+      .distinct()
+    for (quality in qualities) {
+      if (writeJpeg(bitmap, output, quality, options.jpegTargetBytes)) {
+        return EncodedJpeg(bitmap.width, bitmap.height, quality)
+      }
+    }
+
+    val longEdge = max(bitmap.width, bitmap.height)
+    val floorQuality = qualities.last()
+    for (edge in resizeLongEdges) {
+      if (edge >= longEdge) continue
+      val scale = edge.toDouble() / longEdge.toDouble()
+      val width = max(1, (bitmap.width * scale).roundToInt())
+      val height = max(1, (bitmap.height * scale).roundToInt())
+      val resized = Bitmap.createScaledBitmap(bitmap, width, height, true)
+      try {
+        if (writeJpeg(resized, output, floorQuality, options.jpegTargetBytes)) {
+          return EncodedJpeg(width, height, floorQuality)
+        }
+      } finally {
+        if (resized !== bitmap) resized.recycle()
+      }
+    }
+    error("Developed image could not fit below ${options.jpegTargetBytes} bytes")
   }
   private fun runtimeLut(uri: String, expectedHash: String): ByteArray {
     val bytes = input(uri).use { it.readBytes() }
@@ -201,6 +249,13 @@ class FilmRenderer(private val context: Context) {
     val vbos = IntArray(1)
     var shaderProgram = 0
     try {
+      val sourceBounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+      input(options.inputUri).use { BitmapFactory.decodeStream(it, null, sourceBounds) }
+      require(sourceBounds.outWidth > 0 && sourceBounds.outHeight > 0) { "Source dimensions unavailable" }
+      require(
+        sourceBounds.outWidth.toLong() * sourceBounds.outHeight.toLong() <= maximumPixels &&
+          max(sourceBounds.outWidth, sourceBounds.outHeight) <= maximumLongEdge
+      ) { "Image exceeds the ${maximumPixels}-pixel/${maximumLongEdge}-edge processing contract" }
       val decode = BitmapFactory.Options().apply {
         inPreferredConfig = Bitmap.Config.ARGB_8888
         if (Build.VERSION.SDK_INT >= 26) inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
@@ -348,14 +403,12 @@ class FilmRenderer(private val context: Context) {
       checkGl("readback"); buffer.rewind()
       result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
       result.copyPixelsFromBuffer(buffer)
-      FileOutputStream(output).use { stream ->
-        check(result.compress(Bitmap.CompressFormat.JPEG, options.jpegQuality, stream)) { "JPEG encode failed" }
-        stream.fd.sync()
-      }
+      val encoded = encodeJpegToBudget(result, output, options)
       result.recycle(); result = null
       val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
       BitmapFactory.decodeFile(output.path, bounds)
-      check(output.length() > 0 && bounds.outWidth == width && bounds.outHeight == height && bounds.outMimeType == "image/jpeg") { "Output verification failed" }
+      check(output.length() > 0 && output.length() <= options.jpegTargetBytes.toLong() && bounds.outWidth == encoded.width &&
+        bounds.outHeight == encoded.height && bounds.outMimeType == "image/jpeg") { "Output verification failed" }
       val outputHash = FileInputStream(output).use { stream ->
         val digest = MessageDigest.getInstance("SHA-256")
         val chunk = ByteArray(65536)
@@ -366,7 +419,8 @@ class FilmRenderer(private val context: Context) {
       succeeded = true
       return mapOf("outputUri" to options.outputUri, "filmStockId" to options.filmStockId,
         "recipeSha256" to options.recipeSha256, "lutSha256" to lutHash, "outputSha256" to outputHash,
-        "width" to width, "height" to height, "renderer" to "native-egl-v2", "colorSpace" to "sRGB")
+        "mime" to "image/jpeg", "byteLength" to output.length(), "width" to encoded.width, "height" to encoded.height,
+        "renderer" to "native-egl-v2", "colorSpace" to "sRGB")
     } finally {
       source?.recycle(); normalized?.recycle(); result?.recycle()
       if (current) {

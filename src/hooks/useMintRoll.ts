@@ -9,6 +9,7 @@ import { useRollRegistry } from '../store/rollRegistry'
 import { useWalletDomain } from './useWalletDomain'
 import { acknowledgeVerifiedRollCompletion, verifyAndDiscardCompletedRollVault } from '../services/rollVault'
 import { useFilmStockStore } from '../store/filmstocks'
+import { ensureWorkerRollAuthorization } from '../services/rollApi'
 
 /**
  * Mint the active (developed) roll: auto-queue every remaining frame with
@@ -20,7 +21,7 @@ import { useFilmStockStore } from '../store/filmstocks'
  */
 export function useMintRoll() {
   const router = useRouter()
-  const { account, connect } = useMobileWallet()
+  const { account, connect, signMessage } = useMobileWallet()
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
 
@@ -37,6 +38,18 @@ export function useMintRoll() {
         { text: 'Connect', onPress: () => connect() },
       ])
       return false
+    }
+
+    if (activeRoll.collectionAddress) {
+      try {
+        await ensureWorkerRollAuthorization(activeRoll.collectionAddress, walletAddress, signMessage)
+      } catch (error) {
+        Alert.alert(
+          'Roll Authorization Required',
+          error instanceof Error ? error.message : 'This roll could not be authorized safely.',
+        )
+        return false
+      }
     }
 
     const { photos, setAction } = usePhotoStore.getState()
@@ -103,6 +116,7 @@ export function useMintRoll() {
         captureMeta: photo.meta,
         filmUsed,
         aspect: activeRoll.aspect,
+        artifact: photo.artifact,
         rollContext: {
           rollId: activeRoll.id,
           rollName: activeRoll.name,
@@ -116,7 +130,7 @@ export function useMintRoll() {
 
     router.push('/mint/progress')
     return true
-  }, [account, walletAddress, domain, connect, router])
+  }, [account, walletAddress, domain, connect, signMessage, router])
 
   return { mintRoll }
 }

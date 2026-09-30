@@ -44,6 +44,7 @@ import type { AspectRatio } from '../store/session'
 import { useLocationSettingsStore } from '../store/locationSettings'
 import type { LocationGranularity } from '../store/locationSettings'
 import { useContactSheetDiscovery } from '../store/contactSheetDiscovery'
+import { PERMANENT_IMAGE_MAX_LONG_EDGE, PERMANENT_IMAGE_MAX_PIXELS } from '../config/imageArtifact'
 import { colors, fonts, tracking } from '../theme'
 import { DEFAULT_COLOR_FILM_ID, ensureFilmStockRecipe, isFilmStockDownloaded } from '../services/filmstocks'
 import { useFilmStockStore } from '../store/filmstocks'
@@ -129,6 +130,7 @@ export default function CameraScreen() {
   const addPhoto = usePhotoStore((state) => state.addPhoto)
   const setAction = usePhotoStore((state) => state.setAction)
   const setPhotoMeta = usePhotoStore((state) => state.setPhotoMeta)
+  const updatePhotoUri = usePhotoStore((state) => state.updatePhotoUri)
   const removePhoto = usePhotoStore((state) => state.removePhoto)
 
   const walletAddress = account?.address?.toString() ?? null
@@ -193,6 +195,16 @@ export default function CameraScreen() {
   const frontDevice = useCameraDevice('front')
   const backDevice = useCameraDevice('back')
   const activeDevice = cameraPosition === 'front' ? frontDevice : backDevice
+  const captureFormat = useMemo(() => {
+    if (!activeDevice) return undefined
+    return [...activeDevice.formats]
+      .filter(
+        (format) =>
+          format.photoWidth * format.photoHeight <= PERMANENT_IMAGE_MAX_PIXELS &&
+          Math.max(format.photoWidth, format.photoHeight) <= PERMANENT_IMAGE_MAX_LONG_EDGE,
+      )
+      .sort((left, right) => right.photoWidth * right.photoHeight - left.photoWidth * left.photoHeight)[0]
+  }, [activeDevice])
 
   const supportsFlash = activeDevice?.hasFlash && cameraPosition === 'back'
   const supportsTorch = activeDevice?.hasTorch && cameraPosition === 'back'
@@ -337,17 +349,11 @@ export default function CameraScreen() {
       }
       let receipt = await processFilm(captureUri, effectiveFilm)
       captureUri = receipt.outputUri
-      // Quick shots only. Roll frames have no server-side size ceiling, so they
-      // keep full capture quality. This is the same predicate addPhoto uses to
-      // stamp rollId below, which is exactly what the gallery filters on to
-      // decide what mints through the quick path — so the two cannot disagree.
-      //
-      // Must come after processing: film re-encodes at quality 95 and would
-      // otherwise be free to push an already-fitted image back over.
-      if (activeMode !== 'roll' || activeRoll === null) {
-        captureUri = await ensureUnderCeiling(captureUri)
-        receipt = await verifyCompressedFilmOutput(receipt, captureUri)
-      }
+      // Quick Shots and prepaid frames share one permanent artifact contract.
+      // Fit after film rendering, then bind the exact encoded bytes into the
+      // receipt before store/vault registration or exposure advancement.
+      captureUri = await ensureUnderCeiling(captureUri)
+      receipt = await verifyCompressedFilmOutput(receipt, captureUri)
       const photoId = addPhoto(
         receipt.outputUri,
         activeMode === 'roll' && activeRoll !== null
@@ -355,6 +361,16 @@ export default function CameraScreen() {
           : undefined,
         effectiveAspect,
         receipt.filmStockId,
+        {
+          mime: receipt.mime,
+          byteLength: receipt.byteLength,
+          width: receipt.width,
+          height: receipt.height,
+          imageHash: receipt.outputSha256,
+          renderer: receipt.renderer,
+          recipeSha256: receipt.recipeSha256,
+          lutSha256: receipt.lutSha256,
+        },
       )
       createdPhotoId = photoId
 
@@ -369,7 +385,9 @@ export default function CameraScreen() {
         // Commit the encrypted durable copy before advancing the roll counter.
         // A crash between these operations remains recoverable from the vault
         // manifest; the opposite order could lose a prepaid exposure.
-        await persistRollFrame(storedPhoto, activeRoll.frameIds.length + 1)
+        const vaultUri = await persistRollFrame(storedPhoto, activeRoll.frameIds.length + 1)
+        updatePhotoUri(photoId, vaultUri)
+        captureUri = null
         addFrameToRoll(photoId)
 
         // That capture finished the roll. A roll is always shot to the end, so
@@ -416,6 +434,7 @@ export default function CameraScreen() {
     addFrameToRoll,
     setAction,
     setPhotoMeta,
+    updatePhotoUri,
     removePhoto,
     effectiveAspect,
     shutterFlashAnim,
@@ -606,6 +625,16 @@ export default function CameraScreen() {
     )
   }
 
+  if (!captureFormat) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', padding: 28 }}>
+        <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 18, color: colors.text, textAlign: 'center' }}>
+          This camera has no photo format inside the supported 12 MP processing envelope.
+        </Text>
+      </View>
+    )
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <GestureDetector gesture={pinchGesture}>
@@ -614,6 +643,7 @@ export default function CameraScreen() {
             ref={cameraReadiness.ref}
             style={StyleSheet.absoluteFill}
             device={activeDevice}
+            format={captureFormat}
             isActive={isFocused && appActive}
             onInitialized={cameraReadiness.onInitialized}
             onStarted={cameraReadiness.onStarted}

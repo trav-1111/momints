@@ -1,11 +1,12 @@
 import { ImageManipulator, SaveFormat, type ImageManipulatorContext, type ImageRef } from 'expo-image-manipulator'
 import { File } from 'expo-file-system'
+import { PERMANENT_IMAGE_TARGET_BYTES } from '../config/imageArtifact'
 
 // Sits deliberately under the Worker's quick-mint ceiling of 3,145,728 bytes
 // (MAX_QUICK_IMAGE_BYTES in worker/src/quick/config.ts). The gap is margin: a
 // client result that squeaked in at 2.99 MB would still be at the mercy of the
 // server's exact comparison. KEEP IN SYNC with that constant.
-const TARGET_BYTES = 2_900_000
+const TARGET_BYTES = PERMANENT_IMAGE_TARGET_BYTES
 
 // An explicit ladder rather than a decrementing float — stepping 0.85 by 0.1
 // lands on 0.55 and skips the floor entirely. Same idiom as JPEG_QUALITIES in
@@ -29,7 +30,7 @@ function discard(uri: string): void {
 }
 
 /**
- * Shrink a captured JPEG to fit under the quick-mint upload ceiling, and only
+ * Shrink a developed JPEG to fit under the permanent-image ceiling, and only
  * if it is actually over. Returns the URI to store: the original `uri`
  * untouched when it already fits, otherwise a new file in the photos dir (the
  * original is deleted — "replace", same contract as cropToAspect/applyFilm).
@@ -41,9 +42,8 @@ function discard(uri: string): void {
  * Quality first, resolution only as a backstop — dropping detail is a worse
  * trade than dropping compression ratio for a photograph.
  *
- * Defensive: any failure returns the original `uri`. A photo that fails to
- * compress may be rejected at mint, which the user can retry; a photo lost to a
- * processing error cannot be recovered. Never throws.
+ * Fails closed. A caller must not register the photo or advance a prepaid
+ * exposure unless this returns a verified artifact inside the byte budget.
  */
 export async function ensureUnderCeiling(uri: string): Promise<string> {
   let baseContext: ImageManipulatorContext | null = null
@@ -104,7 +104,9 @@ export async function ensureUnderCeiling(uri: string): Promise<string> {
         `ensureUnderCeiling: ${originalBytes}B would not fit under ${TARGET_BYTES}B ` +
           'even at the smallest size — keeping the original.',
       )
-      return uri
+      throw new Error(
+        `Image is ${originalBytes} bytes and could not be fitted below the ${TARGET_BYTES}-byte permanent limit`,
+      )
     }
 
     // Keep every replacement beside its temporary input.
@@ -118,8 +120,10 @@ export async function ensureUnderCeiling(uri: string): Promise<string> {
 
     return dest.uri
   } catch (error) {
-    console.error('ensureUnderCeiling failed, keeping original:', error)
-    return uri
+    console.error('ensureUnderCeiling failed:', error)
+    throw new Error('Could not fit the developed image inside the permanent-image limit', {
+      cause: error instanceof Error ? error : undefined,
+    })
   } finally {
     baseContext?.release()
     base?.release()

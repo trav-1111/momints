@@ -2,6 +2,17 @@ import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import type { AspectRatio } from './session'
 
+export interface PhotoArtifact {
+  mime: 'image/jpeg'
+  byteLength: number
+  width: number
+  height: number
+  imageHash: string
+  renderer: 'native-egl-v2' | 'skia-v2' | 'legacy-v1'
+  recipeSha256?: string
+  lutSha256: string | null
+}
+
 export interface CaptureMeta {
   location?: string // "Austin, Texas" — granularity the user chose, never raw coords
 }
@@ -18,6 +29,8 @@ export interface Photo {
   aspect?: AspectRatio
   /** Exact recipe already applied to this capture. */
   filmStockId?: string
+  /** Verified developed-artifact metadata. Contains no image bytes. */
+  artifact?: PhotoArtifact
   meta?: CaptureMeta
   // Roll membership, stamped at capture. Deliberately stored on the photo
   // rather than read from session.activeRoll.frameIds: completeRoll() nulls
@@ -38,7 +51,13 @@ export interface PhotoRollRef {
 
 interface PhotoStore {
   photos: Photo[]
-  addPhoto: (uri: string, roll?: PhotoRollRef, aspect?: AspectRatio, filmStockId?: string) => string
+  addPhoto: (
+    uri: string,
+    roll?: PhotoRollRef,
+    aspect?: AspectRatio,
+    filmStockId?: string,
+    artifact?: PhotoArtifact,
+  ) => string
   setAction: (id: string, action: Photo['action']) => void
   setBulkAction: (ids: string[], action: Photo['action']) => void
   setPhotoMeta: (id: string, meta: CaptureMeta) => void
@@ -55,7 +74,7 @@ interface PhotoStore {
 export const usePhotoStore = create<PhotoStore>((set, get) => ({
   photos: [],
 
-  addPhoto: (uri: string, roll?: PhotoRollRef, aspect?: AspectRatio, filmStockId?: string): string => {
+  addPhoto: (uri, roll, aspect, filmStockId, artifact): string => {
     const newPhoto: Photo = {
       id: uuidv4(),
       uri,
@@ -63,6 +82,7 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
       action: 'pending',
       aspect,
       filmStockId,
+      artifact,
       rollId: roll?.id,
       rollName: roll?.name,
       rollFrameNumber: roll?.frameNumber,

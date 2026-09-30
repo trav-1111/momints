@@ -4,13 +4,16 @@ import { Directory, File, Paths } from 'expo-file-system'
 import * as SecureStore from 'expo-secure-store'
 import { fetchAssetV1 } from '@metaplex-foundation/mpl-core'
 import { publicKey } from '@metaplex-foundation/umi'
-import type { Photo, CaptureMeta } from '../store/photos'
+import type { Photo, CaptureMeta, PhotoArtifact } from '../store/photos'
 import type { ActiveRoll, AspectRatio } from '../store/session'
 import { createMintUmi } from './mint'
 import { getClusterRpc } from '../store/network'
 import { getWorkerRoll } from './rollApi'
-import { CAPTURE_TEMP_DIRECTORY, isPermanentArweaveUri, normalizeArweaveUri } from './imagePrivacy'
+import { deleteRollCapability } from './rollCapability'
+import { CAPTURE_TEMP_DIRECTORY, deleteCapture, isPermanentArweaveUri, normalizeArweaveUri } from './imagePrivacy'
+import { assertPermanentImageArtifact } from '../config/imageArtifact'
 import { mayPurgeVerifiedRoll } from './rollVaultPolicy.cjs'
+import { createRollVaultUri, jpegDimensions, parseRollVaultUri } from './rollVaultFormat.cjs'
 
 const VAULT_ROOT = new Directory(Paths.document, 'momints-roll-vaults')
 const KEY_NAME = 'momints.roll-vault-key.v1'
@@ -19,7 +22,7 @@ const ALGORITHM = 'aes-256-gcm'
 const MAGIC = Buffer.from('MOMRLL01', 'ascii')
 const IV_BYTES = 12
 const TAG_BYTES = 16
-const MANIFEST_VERSION = 1
+const MANIFEST_VERSION = 2
 const VERIFIED_RECEIPT = new File(Paths.document, 'roll-vault-verified.json')
 
 interface StoredRollFrame {
@@ -30,10 +33,12 @@ interface StoredRollFrame {
   frameNumber: number
   aspect?: AspectRatio
   meta?: CaptureMeta
+  filmStockId?: string
+  artifact?: PhotoArtifact
 }
 
 interface RollVaultManifest {
-  version: 1
+  version: 1 | 2
   revision: number
   rollId: string
   rollName: string
@@ -100,7 +105,40 @@ function hashBytes(bytes: Uint8Array): string {
   return createHash('sha256').update(Buffer.from(bytes)).digest().toString('hex')
 }
 
-function parseFrame(raw: unknown): StoredRollFrame | null {
+function parseArtifact(raw: unknown): PhotoArtifact | null {
+  if (raw === null || typeof raw !== 'object') return null
+  const artifact = raw as Record<string, unknown>
+  const renderer = artifact.renderer
+  const recipeSha256 = artifact.recipeSha256
+  const lutSha256 = artifact.lutSha256
+  if (
+    artifact.mime !== 'image/jpeg' ||
+    typeof artifact.byteLength !== 'number' ||
+    typeof artifact.width !== 'number' ||
+    typeof artifact.height !== 'number' ||
+    typeof artifact.imageHash !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(artifact.imageHash) ||
+    (renderer !== 'native-egl-v2' && renderer !== 'skia-v2' && renderer !== 'legacy-v1') ||
+    (recipeSha256 !== undefined &&
+      (typeof recipeSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(recipeSha256))) ||
+    (lutSha256 !== null && lutSha256 !== undefined &&
+      (typeof lutSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(lutSha256)))
+  ) {
+    return null
+  }
+  return {
+    mime: 'image/jpeg',
+    byteLength: artifact.byteLength,
+    width: artifact.width,
+    height: artifact.height,
+    imageHash: artifact.imageHash,
+    renderer,
+    recipeSha256: recipeSha256 as string | undefined,
+    lutSha256: typeof lutSha256 === 'string' ? lutSha256 : null,
+  }
+}
+
+function parseFrame(raw: unknown, version: 1 | 2): StoredRollFrame | null {
   if (raw === null || typeof raw !== 'object') return null
   const frame = raw as Record<string, unknown>
   if (
@@ -112,7 +150,8 @@ function parseFrame(raw: unknown): StoredRollFrame | null {
   ) {
     return null
   }
-  if (!/^[A-Za-z0-9_-]+\.frame$/.test(frame.fileName)) return null
+  if (!/^[A-Za-z0-9_-]+$/.test(frame.id) || !/^[A-Za-z0-9_-]+\.frame$/.test(frame.fileName)) return null
+  if (!/^[a-f0-9]{64}$/.test(frame.sha256)) return null
   const aspect = frame.aspect
   const parsedAspect =
     aspect === '1:1' || aspect === '4:3' || aspect === '16:9' || aspect === 'full' ? aspect : undefined
@@ -120,6 +159,12 @@ function parseFrame(raw: unknown): StoredRollFrame | null {
     frame.meta && typeof frame.meta === 'object' && typeof (frame.meta as Record<string, unknown>).location === 'string'
       ? { location: String((frame.meta as Record<string, unknown>).location) }
       : undefined
+  const filmStockId =
+    typeof frame.filmStockId === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*-v[1-9]\d*$/.test(frame.filmStockId)
+      ? frame.filmStockId
+      : undefined
+  const artifact = parseArtifact(frame.artifact)
+  if (version === 2 && (!filmStockId || !artifact || artifact.imageHash !== frame.sha256)) return null
   return {
     id: frame.id,
     fileName: frame.fileName,
@@ -128,6 +173,8 @@ function parseFrame(raw: unknown): StoredRollFrame | null {
     frameNumber: frame.frameNumber,
     aspect: parsedAspect,
     meta,
+    filmStockId,
+    artifact: artifact ?? undefined,
   }
 }
 
@@ -135,7 +182,7 @@ function parseManifest(raw: unknown, rollId: string): RollVaultManifest | null {
   if (raw === null || typeof raw !== 'object') return null
   const manifest = raw as Record<string, unknown>
   if (
-    manifest.version !== MANIFEST_VERSION ||
+    (manifest.version !== 1 && manifest.version !== MANIFEST_VERSION) ||
     manifest.rollId !== rollId ||
     typeof manifest.rollName !== 'string' ||
     typeof manifest.revision !== 'number' ||
@@ -143,10 +190,11 @@ function parseManifest(raw: unknown, rollId: string): RollVaultManifest | null {
   ) {
     return null
   }
-  const frames = manifest.frames.map(parseFrame)
+  const version = manifest.version as 1 | 2
+  const frames = manifest.frames.map((frame) => parseFrame(frame, version))
   if (frames.some((frame) => frame === null)) return null
   return {
-    version: MANIFEST_VERSION,
+    version,
     revision: manifest.revision,
     rollId,
     rollName: manifest.rollName,
@@ -180,8 +228,68 @@ async function writeManifest(manifest: RollVaultManifest, key: Buffer): Promise<
   target.write(seal(Buffer.from(JSON.stringify(manifest), 'utf8'), key))
 }
 
-export async function persistRollFrame(photo: Photo, frameNumber: number): Promise<void> {
+function legacyArtifact(bytes: Uint8Array, expectedHash: string): PhotoArtifact {
+  const dimensions = jpegDimensions(bytes) as { width: number; height: number } | null
+  if (!dimensions) throw new Error('A legacy encrypted roll frame is not a complete JPEG.')
+  const imageHash = hashBytes(bytes)
+  if (imageHash !== expectedHash) throw new Error('A legacy encrypted roll frame failed integrity.')
+  return {
+    mime: 'image/jpeg',
+    byteLength: bytes.length,
+    width: dimensions.width,
+    height: dimensions.height,
+    imageHash,
+    renderer: 'legacy-v1',
+    lutSha256: null,
+  }
+}
+
+async function upgradeLegacyManifest(
+  manifest: RollVaultManifest,
+  key: Buffer,
+  fallbackFilmStockId?: string,
+): Promise<RollVaultManifest> {
+  if (manifest.version === 2) return manifest
+  if (!fallbackFilmStockId || !/^[a-z0-9]+(?:-[a-z0-9]+)*-v[1-9]\d*$/.test(fallbackFilmStockId)) {
+    throw new Error('The legacy roll is missing its immutable film identity.')
+  }
+  const directory = directoryForRoll(manifest.rollId)
+  const frames: StoredRollFrame[] = []
+  for (const frame of manifest.frames) {
+    const encrypted = new File(directory, frame.fileName)
+    if (!encrypted.exists) throw new Error(`Encrypted roll frame ${frame.frameNumber} is missing.`)
+    const plaintext = open(await encrypted.bytes(), key)
+    frames.push({
+      ...frame,
+      filmStockId: fallbackFilmStockId,
+      artifact: legacyArtifact(plaintext, frame.sha256),
+    })
+  }
+  return { ...manifest, version: 2, revision: manifest.revision + 1, frames }
+}
+
+function verifiedPhotoArtifact(photo: Photo, bytes: Uint8Array): PhotoArtifact {
+  const artifact = photo.artifact
+  if (!artifact || artifact.renderer === 'legacy-v1' || !artifact.recipeSha256) {
+    throw new Error('The roll frame does not have a complete verified processing receipt.')
+  }
+  assertPermanentImageArtifact(artifact)
+  const dimensions = jpegDimensions(bytes) as { width: number; height: number } | null
+  if (!dimensions) throw new Error('The roll frame is not a complete JPEG.')
+  if (
+    artifact.byteLength !== bytes.length ||
+    artifact.width !== dimensions.width ||
+    artifact.height !== dimensions.height ||
+    artifact.imageHash !== hashBytes(bytes)
+  ) {
+    throw new Error('The roll frame bytes do not match their verified processing receipt.')
+  }
+  return artifact
+}
+
+export async function persistRollFrame(photo: Photo, frameNumber: number): Promise<string> {
   if (!photo.rollId || !photo.rollName) throw new Error('A roll frame must have roll membership.')
+  if (!photo.filmStockId) throw new Error('A roll frame must have immutable film identity.')
   assertSafeId(photo.id, 'photo id')
   const key = await vaultKey()
   const directory = directoryForRoll(photo.rollId)
@@ -189,20 +297,27 @@ export async function persistRollFrame(photo: Photo, frameNumber: number): Promi
   ensureDirectory(directory)
   const source = new File(photo.uri)
   const bytes = await source.bytes()
+  const artifact = verifiedPhotoArtifact(photo, bytes)
   const fileName = `${photo.id}.frame`
   const encryptedFrame = new File(directory, fileName)
   encryptedFrame.write(seal(bytes, key))
+  let manifestCommitted = false
 
   try {
-    const current = await readManifest(photo.rollId, key)
+    const persisted = open(await encryptedFrame.bytes(), key)
+    if (hashBytes(persisted) !== artifact.imageHash) throw new Error('The encrypted roll frame failed commit verification.')
+    const existing = await readManifest(photo.rollId, key)
+    const current = existing ? await upgradeLegacyManifest(existing, key, photo.filmStockId) : null
     const frame: StoredRollFrame = {
       id: photo.id,
       fileName,
-      sha256: hashBytes(bytes),
+      sha256: artifact.imageHash,
       capturedAt: photo.capturedAt,
       frameNumber,
       aspect: photo.aspect,
       meta: photo.meta,
+      filmStockId: photo.filmStockId,
+      artifact,
     }
     const frames = [...(current?.frames.filter((item) => item.id !== photo.id) ?? []), frame].sort(
       (a, b) => a.frameNumber - b.frameNumber,
@@ -217,9 +332,16 @@ export async function persistRollFrame(photo: Photo, frameNumber: number): Promi
       },
       key,
     )
+    manifestCommitted = true
+    if (!deleteCapture(photo.uri) && !deleteCapture(photo.uri)) {
+      // Do not make a durably committed prepaid exposure look failed and invite
+      // a duplicate frame. The exact capture directory is swept next startup.
+      console.error('The encrypted roll frame was committed but plaintext cleanup needs the startup sweep.')
+    }
+    return createRollVaultUri(photo.rollId, photo.id) as string
   } catch (error) {
     try {
-      if (encryptedFrame.exists) encryptedFrame.delete()
+      if (!manifestCommitted && encryptedFrame.exists) encryptedFrame.delete()
     } catch {}
     throw error
   }
@@ -240,27 +362,33 @@ export async function updateStoredRollFrameMeta(rollId: string, photoId: string,
   )
 }
 
-export async function restoreRollVault(rollId: string): Promise<RestoredRollVault> {
+export function isRollVaultPhotoUri(uri: unknown): boolean {
+  return typeof uri === 'string' && parseRollVaultUri(uri) !== null
+}
+
+export async function restoreRollVault(rollId: string, fallbackFilmStockId?: string): Promise<RestoredRollVault> {
   const key = await vaultKey()
-  const manifest = await readManifest(rollId, key)
-  if (!manifest) return { photos: [], frameIds: [] }
-  ensureDirectory(CAPTURE_TEMP_DIRECTORY)
+  const stored = await readManifest(rollId, key)
+  if (!stored) return { photos: [], frameIds: [] }
+  const manifest = await upgradeLegacyManifest(stored, key, fallbackFilmStockId)
+  if (stored.version === 1) await writeManifest(manifest, key)
   const directory = directoryForRoll(rollId)
   const photos: Photo[] = []
   for (const frame of manifest.frames) {
     const encrypted = new File(directory, frame.fileName)
     if (!encrypted.exists) throw new Error(`Encrypted roll frame ${frame.frameNumber} is missing.`)
-    const plaintext = open(await encrypted.bytes(), key)
-    if (hashBytes(plaintext) !== frame.sha256)
-      throw new Error(`Encrypted roll frame ${frame.frameNumber} failed integrity.`)
-    const output = new File(CAPTURE_TEMP_DIRECTORY, `roll-${rollId}-${frame.id}.jpg`)
-    output.write(plaintext)
+    if (!frame.artifact || !frame.filmStockId) throw new Error(`Encrypted roll frame ${frame.frameNumber} is incomplete.`)
+    if (fallbackFilmStockId && frame.filmStockId !== fallbackFilmStockId) {
+      throw new Error(`Encrypted roll frame ${frame.frameNumber} has the wrong film identity.`)
+    }
     photos.push({
       id: frame.id,
-      uri: output.uri,
+      uri: createRollVaultUri(rollId, frame.id) as string,
       capturedAt: frame.capturedAt,
       action: 'mint',
       aspect: frame.aspect,
+      filmStockId: frame.filmStockId,
+      artifact: frame.artifact,
       meta: frame.meta,
       rollId,
       rollName: manifest.rollName,
@@ -268,6 +396,50 @@ export async function restoreRollVault(rollId: string): Promise<RestoredRollVaul
     })
   }
   return { photos, frameIds: photos.map((photo) => photo.id) }
+}
+
+/**
+ * Materialize exactly one authenticated frame for the lifetime of an upload or
+ * bounded preview operation. The caller never owns the file and cannot extend
+ * its lifetime beyond the awaited callback.
+ */
+export async function withDecryptedRollFrame<T>(
+  vaultUri: string,
+  operation: (
+    temporaryUri: string,
+    artifact: PhotoArtifact,
+    reference: { rollId: string; photoId: string; frameNumber: number },
+  ) => Promise<T>,
+): Promise<T> {
+  const reference = parseRollVaultUri(vaultUri) as { rollId: string; photoId: string } | null
+  if (!reference) throw new Error('Invalid roll vault reference.')
+  const key = await vaultKey()
+  const manifest = await readManifest(reference.rollId, key)
+  if (!manifest || manifest.version !== 2) throw new Error('The encrypted roll manifest is unavailable.')
+  const frame = manifest.frames.find((item) => item.id === reference.photoId)
+  if (!frame?.artifact) throw new Error('The encrypted roll frame metadata is unavailable.')
+  const encrypted = new File(directoryForRoll(reference.rollId), frame.fileName)
+  if (!encrypted.exists) throw new Error(`Encrypted roll frame ${frame.frameNumber} is missing.`)
+  const plaintext = open(await encrypted.bytes(), key)
+  const dimensions = jpegDimensions(plaintext) as { width: number; height: number } | null
+  if (
+    hashBytes(plaintext) !== frame.artifact.imageHash ||
+    plaintext.length !== frame.artifact.byteLength ||
+    !dimensions ||
+    dimensions.width !== frame.artifact.width ||
+    dimensions.height !== frame.artifact.height
+  ) {
+    throw new Error(`Encrypted roll frame ${frame.frameNumber} failed integrity.`)
+  }
+  ensureDirectory(CAPTURE_TEMP_DIRECTORY)
+  const nonce = randomBytes(8).toString('hex')
+  const output = new File(CAPTURE_TEMP_DIRECTORY, `roll-jit-${reference.rollId}-${reference.photoId}-${nonce}.jpg`)
+  output.write(plaintext)
+  try {
+    return await operation(output.uri, frame.artifact, { ...reference, frameNumber: frame.frameNumber })
+  } finally {
+    deleteCapture(output.uri)
+  }
 }
 
 export async function discardRollVault(rollId: string): Promise<void> {
@@ -307,6 +479,7 @@ export async function consumeVerifiedRollReceipt(activeRoll: ActiveRoll): Promis
     return false
   }
   await discardRollVault(activeRoll.id)
+  if (activeRoll.collectionAddress) await deleteRollCapability(activeRoll.collectionAddress)
   if (VERIFIED_RECEIPT.exists) VERIFIED_RECEIPT.delete()
   return true
 }
@@ -319,12 +492,15 @@ export function acknowledgeVerifiedRollCompletion(): void {
   }
 }
 
-async function fetchAndHash(uri: string): Promise<string> {
+async function fetchPermanentArtifact(uri: string): Promise<{ imageHash: string; width: number; height: number }> {
   const normalized = normalizeArweaveUri(uri)
   if (!isPermanentArweaveUri(normalized)) throw new Error('A roll frame does not have a permanent Arweave URI.')
   const response = await fetch(normalized, { headers: { 'Cache-Control': 'no-store' }, cache: 'no-store' })
   if (!response.ok) throw new Error(`Permanent roll image is not retrievable yet (${response.status}).`)
-  return hashBytes(new Uint8Array(await response.arrayBuffer()))
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  const dimensions = jpegDimensions(bytes) as { width: number; height: number } | null
+  if (!dimensions) throw new Error('Permanent roll image is not a complete JPEG.')
+  return { imageHash: hashBytes(bytes), ...dimensions }
 }
 
 /**
@@ -335,7 +511,8 @@ async function fetchAndHash(uri: string): Promise<string> {
 export async function verifyAndDiscardCompletedRollVault(activeRoll: ActiveRoll, wallet: string): Promise<void> {
   if (!activeRoll.collectionAddress) throw new Error('The roll has no collection address.')
   const key = await vaultKey()
-  const manifest = await readManifest(activeRoll.id, key)
+  const stored = await readManifest(activeRoll.id, key)
+  const manifest = stored ? await upgradeLegacyManifest(stored, key, activeRoll.film.filmStockId) : null
   if (!manifest || manifest.frames.length !== activeRoll.size) {
     throw new Error(`The encrypted roll contains ${manifest?.frames.length ?? 0} of ${activeRoll.size} frames.`)
   }
@@ -351,6 +528,8 @@ export async function verifyAndDiscardCompletedRollVault(activeRoll: ActiveRoll,
   const { umi } = createMintUmi(wallet, getClusterRpc())
   let verifiedFrames = 0
   for (const local of manifest.frames) {
+    if (!local.artifact) throw new Error(`Frame ${local.frameNumber} has no verified local artifact receipt.`)
+    const localArtifact = local.artifact
     const remote = detail.frames.find((frame) => frame.frameIndex === local.frameNumber)
     if (
       !remote ||
@@ -385,7 +564,19 @@ export async function verifyAndDiscardCompletedRollVault(activeRoll: ActiveRoll,
     ) {
       throw new Error(`Frame ${local.frameNumber} metadata points to the wrong image.`)
     }
-    if ((await fetchAndHash(remote.imageUri)) !== local.sha256) {
+    if (
+      (remote.imageHash !== null && remote.imageHash !== localArtifact.imageHash) ||
+      (remote.width !== null && remote.width !== localArtifact.width) ||
+      (remote.height !== null && remote.height !== localArtifact.height)
+    ) {
+      throw new Error(`Frame ${local.frameNumber} Worker receipt does not match the encrypted original.`)
+    }
+    const permanent = await fetchPermanentArtifact(remote.imageUri)
+    if (
+      permanent.imageHash !== local.sha256 ||
+      permanent.width !== localArtifact.width ||
+      permanent.height !== localArtifact.height
+    ) {
       throw new Error(`Frame ${local.frameNumber} permanent image does not match the encrypted original.`)
     }
     verifiedFrames++
@@ -410,4 +601,5 @@ export async function verifyAndDiscardCompletedRollVault(activeRoll: ActiveRoll,
     }),
   )
   await discardRollVault(activeRoll.id)
+  await deleteRollCapability(activeRoll.collectionAddress)
 }

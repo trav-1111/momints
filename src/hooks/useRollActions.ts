@@ -1,10 +1,12 @@
 import { useCallback } from 'react'
+import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore } from '../store/photos'
 import { useSessionStore } from '../store/session'
-import { completeWorkerRoll } from '../services/rollApi'
+import { completeWorkerRoll, ensureWorkerRollAuthorization } from '../services/rollApi'
 import { isWorkerRollEnabled } from '../config/rollApi'
 import { deleteCapture } from '../services/imagePrivacy'
 import { discardRollVault } from '../services/rollVault'
+import { deleteRollCapability } from '../services/rollCapability'
 
 /**
  * Discarding a roll touches the session store, the photo store / filesystem,
@@ -16,6 +18,7 @@ import { discardRollVault } from '../services/rollVault'
  */
 export function useRollActions() {
   const abandonRoll = useSessionStore((s) => s.abandonRoll)
+  const { account, signMessage } = useMobileWallet()
 
   const discardRoll = useCallback(async () => {
     const roll = useSessionStore.getState().activeRoll
@@ -28,7 +31,11 @@ export function useRollActions() {
       // forever unless it is closed explicitly.
       if (isWorkerRollEnabled() && roll.collectionAddress) {
         try {
+          const wallet = account?.address.toString()
+          if (!wallet) throw new Error('Connect the roll wallet to close this roll on the backend.')
+          await ensureWorkerRollAuthorization(roll.collectionAddress, wallet, signMessage)
           await completeWorkerRoll(roll.collectionAddress)
+          await deleteRollCapability(roll.collectionAddress)
         } catch (err) {
           // Never block the local discard on a backend hiccup — the roll can
           // still be closed later from the unfinished-roll card.
@@ -38,7 +45,7 @@ export function useRollActions() {
       await discardRollVault(roll.id)
     }
     abandonRoll()
-  }, [abandonRoll])
+  }, [abandonRoll, account, signMessage])
 
   return { discardRoll }
 }

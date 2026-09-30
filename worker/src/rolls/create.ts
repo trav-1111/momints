@@ -16,6 +16,7 @@ import { generateCover } from './cover'
 import { estimatedRollBytes, isRollSize, type RollSize } from './config'
 import { verifyRollFeePayment } from './verify'
 import { knownFilmStock } from '../filmstocks/catalogue'
+import { assertRollCapability, hashRollCapability } from './auth'
 
 export interface CreateRollRequest {
   wallet: string
@@ -32,6 +33,8 @@ export interface CreateRollRequest {
   payment?: 'SOL' | 'SKR'
   /** Immutable recipe identity selected before the first exposure. */
   filmStockId?: string
+  /** Device-held bearer secret used to authorize this roll's mutations. */
+  rollCapability: string
 }
 
 export interface CreateRollDeps {
@@ -109,6 +112,8 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
     throw new HttpError(400, 'artist is empty after sanitization')
   }
   const dateLabel = resolveDateLabel(req.localDate)
+  assertRollCapability(req.rollCapability)
+  const authHash = await hashRollCapability(req.rollCapability)
 
   // ---- Single active roll ----
   const open = await db.getOpenRoll(req.wallet)
@@ -298,6 +303,8 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
     feeSignature: req.feeSignature,
     feeCurrency: paidWithSkr ? 'SKR' : 'SOL',
     skrFeeAtomic: skrQuoteAtomic,
+    protocolVersion: 2,
+    authHash,
   })
 
   const feeLamports = requiredFeeLamports

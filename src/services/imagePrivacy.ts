@@ -1,6 +1,10 @@
 import { Directory, File, Paths } from 'expo-file-system'
 import { Image as ExpoImage } from 'expo-image'
-import { isFileUriInsideDirectory, isPermanentArweaveUri as isPermanentArweaveUriGuard } from './privacyPathGuard.cjs'
+import {
+  isFileUriInsideDirectory,
+  isLegacyRootCacheImageName,
+  isPermanentArweaveUri as isPermanentArweaveUriGuard,
+} from './privacyPathGuard.cjs'
 import { deleteDisplayPreview, DISPLAY_PREVIEW_DIRECTORY } from './displayPreview'
 
 export const CAPTURE_TEMP_DIRECTORY = new Directory(Paths.cache, 'momints-captures')
@@ -118,6 +122,11 @@ export async function runPrivacyStartupSweep(): Promise<void> {
     'image_manager_disk_cache',
     'small_image_cache',
     'expo-image-cache',
+    // expo-image-manipulator writes every saveAsync result here. Individual
+    // operations delete or move their result, but Android can keep a file open
+    // until its native ImageRef is released. A crash can also strand a result.
+    // This exact app-cache directory never contains user-owned gallery files.
+    'ImageManipulator',
   ]) {
     try {
       const imageCache = new Directory(Paths.cache, name)
@@ -129,10 +138,15 @@ export async function runPrivacyStartupSweep(): Promise<void> {
   try {
     const cacheRoot = new Directory(Paths.cache)
     for (const entry of cacheRoot.list()) {
-      if (entry instanceof File && /\/momints-contact-sheet-[^/]+\.png$/i.test(entry.uri)) entry.delete()
+      if (
+        entry instanceof File &&
+        (/\/momints-contact-sheet-[^/]+\.png$/i.test(entry.uri) || isLegacyRootCacheImageName(entry.name))
+      ) {
+        entry.delete()
+      }
     }
   } catch {
-    // Legacy sheet outputs only; unrelated cache files are intentionally left alone.
+    // Exact legacy app-output names only; unrelated cache files are intentionally left alone.
   }
   try {
     await ExpoImage.clearDiskCache()

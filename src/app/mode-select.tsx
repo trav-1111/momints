@@ -10,7 +10,13 @@ import { useMintRoll } from '../hooks/useMintRoll'
 import { PREPAID_ROLL_SIZES, getRollFeeLamports, formatSol, type PrepaidRollSize } from '../config/roll'
 import { formatSkr } from '../config/skr'
 import { isWorkerRollEnabled } from '../config/rollApi'
-import { completeWorkerRoll, getOpenWorkerRoll, getWorkerFees, type OpenRollSummary } from '../services/rollApi'
+import {
+  completeWorkerRoll,
+  ensureWorkerRollAuthorization,
+  getOpenWorkerRoll,
+  getWorkerFees,
+  type OpenRollSummary,
+} from '../services/rollApi'
 import { isSkrQuoteUnavailable, quoteSkrFee } from '../services/skrApi'
 import { ARTIST_NAME_MAX_LENGTH } from '../services/rollIdentity'
 import { colors, fonts, tracking } from '../theme'
@@ -89,7 +95,7 @@ export default function ModeSelectScreen() {
   const resumeRoll = useSessionStore((s) => s.resumeRoll)
   const activeRoll = useSessionStore((s) => s.activeRoll)
 
-  const { account, connect } = useMobileWallet()
+  const { account, connect, signMessage } = useMobileWallet()
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
   const { createRoll, phase, error: createError, isCreating } = useCreateRoll()
@@ -227,6 +233,8 @@ export default function ModeSelectScreen() {
     if (!strandedRoll || isClosingStranded) return
     setIsClosingStranded(true)
     try {
+      if (!walletAddress) throw new Error('Connect the roll wallet first.')
+      await ensureWorkerRollAuthorization(strandedRoll.collectionAddress, walletAddress, signMessage)
       await completeWorkerRoll(strandedRoll.collectionAddress)
       setStrandedRoll(null)
     } catch (err) {
@@ -234,7 +242,7 @@ export default function ModeSelectScreen() {
     } finally {
       setIsClosingStranded(false)
     }
-  }, [strandedRoll, isClosingStranded])
+  }, [strandedRoll, isClosingStranded, walletAddress, signMessage])
 
   const handleLoadCamera = useCallback(async () => {
     if (selectedMode === 'quick') {

@@ -54,9 +54,10 @@ function computeCropRect(w: number, h: number, aspect: Exclude<AspectRatio, 'ful
  * store: the original `uri` for `full` (or if no crop is needed), otherwise a
  * new cropped file in the photos dir (the original is deleted — "replace").
  *
- * Defensive: any failure returns the original `uri` so a capture is never lost.
- * expo-image-manipulator loads the display-oriented image, so cropping and the
- * dimensions read from it share one coordinate space.
+ * Fails closed: recording the chosen ratio while silently substituting a full
+ * frame would make roll and contact-sheet metadata false. The camera leaves the
+ * exposure uncommitted when this throws. expo-image-manipulator loads the
+ * display-oriented image, so cropping and dimensions share one coordinate space.
  */
 export async function cropToAspect(uri: string, aspect: AspectRatio): Promise<string> {
   if (aspect === 'full') return uri
@@ -91,8 +92,8 @@ export async function cropToAspect(uri: string, aspect: AspectRatio): Promise<st
 
     return dest.uri
   } catch (error) {
-    console.error('cropToAspect failed, keeping full frame:', error)
-    return uri
+    console.error('cropToAspect failed:', error)
+    throw new Error(`Could not crop the capture to ${aspect}`, { cause: error instanceof Error ? error : undefined })
   } finally {
     cropContext?.release()
     baseContext?.release()

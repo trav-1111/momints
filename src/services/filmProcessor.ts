@@ -16,6 +16,7 @@ import { applyFilmNative, type FilmProcessingReceipt } from '../../modules/film-
 import { jpegDimensions, sha256, verifyFilmOutput } from './filmOutput'
 import { deleteCapture } from './imagePrivacy'
 import type { FilmSettings } from '../store/session'
+import { PERMANENT_IMAGE_TARGET_BYTES } from '../config/imageArtifact'
 import {
   LUT_SIZE,
   loadFilmStockPackage,
@@ -25,6 +26,8 @@ import {
 } from './filmstocks'
 
 const JPEG_QUALITY = 95
+const JPEG_QUALITIES = [JPEG_QUALITY, 90, 85, 80, 75, 70, 65, 60]
+const RESIZE_LONG_EDGES = [2048, 1600, 1280]
 const TILE_SIZE = 1024
 
 // Fixed engine order: normalized sRGB input → exposure → LUT → halation →
@@ -138,15 +141,58 @@ function removeSource(source: File): void {
   deleteCapture(source.uri)
 }
 
+function encodeSnapshotToBudget(destination: File, snapshot: SkImage): boolean {
+  for (const quality of JPEG_QUALITIES) {
+    const encoded = snapshot.encodeToBytes(ImageFormat.JPEG, quality)
+    if (encoded.length <= PERMANENT_IMAGE_TARGET_BYTES) {
+      destination.write(encoded)
+      return true
+    }
+  }
+  return false
+}
+
 function encodeSurface(destination: File, image: ReturnType<typeof Skia.Surface.MakeOffscreen>): string {
   if (!image) throw new Error('Film processing surface could not be created')
   try {
     image.flush()
     const snapshot = image.makeImageSnapshot()
     try {
-      const encoded = snapshot.encodeToBytes(ImageFormat.JPEG, JPEG_QUALITY)
-      destination.write(encoded)
-      return destination.uri
+      if (encodeSnapshotToBudget(destination, snapshot)) return destination.uri
+
+      const longEdge = Math.max(snapshot.width(), snapshot.height())
+      for (const edge of RESIZE_LONG_EDGES) {
+        if (edge >= longEdge) continue
+        const scale = edge / longEdge
+        const width = Math.max(1, Math.round(snapshot.width() * scale))
+        const height = Math.max(1, Math.round(snapshot.height() * scale))
+        const resizedSurface = Skia.Surface.MakeOffscreen(width, height)
+        if (!resizedSurface) throw new Error('Film resize surface could not be created')
+        const resizePaint = Skia.Paint()
+        try {
+          resizedSurface.getCanvas().drawImageRect(
+            snapshot,
+            Skia.XYWHRect(0, 0, snapshot.width(), snapshot.height()),
+            Skia.XYWHRect(0, 0, width, height),
+            resizePaint,
+          )
+          resizedSurface.flush()
+          const resized = resizedSurface.makeImageSnapshot()
+          try {
+            const encoded = resized.encodeToBytes(ImageFormat.JPEG, JPEG_QUALITIES[JPEG_QUALITIES.length - 1])
+            if (encoded.length <= PERMANENT_IMAGE_TARGET_BYTES) {
+              destination.write(encoded)
+              return destination.uri
+            }
+          } finally {
+            resized.dispose()
+          }
+        } finally {
+          resizePaint.dispose()
+          resizedSurface.dispose()
+        }
+      }
+      throw new Error(`Developed image could not fit below ${PERMANENT_IMAGE_TARGET_BYTES} bytes`)
     } finally {
       snapshot.dispose()
     }
@@ -404,6 +450,7 @@ async function processFilmOnce(uri: string, film: FilmSettings): Promise<FilmPro
         lutUri: filmPackage.runtimeLutUri ?? null,
         seed,
         jpegQuality: JPEG_QUALITY,
+        jpegTargetBytes: PERMANENT_IMAGE_TARGET_BYTES,
       })
     } else {
       await applyFilmSkia(uri, film, filmPackage, destination)
@@ -414,6 +461,8 @@ async function processFilmOnce(uri: string, film: FilmSettings): Promise<FilmPro
         lutSha256,
         outputUri: destination.uri,
         outputSha256: sha256(bytes),
+        mime: 'image/jpeg',
+        byteLength: bytes.length,
         ...jpegDimensions(bytes),
         renderer,
         colorSpace: 'sRGB',

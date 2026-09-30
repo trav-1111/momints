@@ -40,6 +40,15 @@ function isPermanentArweaveUri(uri) {
   }
 }
 
+function isLegacyRootCacheImageName(name) {
+  if (typeof name !== 'string') return false
+  const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+  const filmId = '[a-z0-9]+(?:-[a-z0-9]+)*-v[1-9][0-9]*'
+  return (
+    new RegExp(`^photo_${uuid}_(?:film|${filmId})\\.jpg$`, 'i').test(name) || /^photo_[0-9]{10,}_fit\.jpg$/i.test(name)
+  )
+}
+
 async function runWithCleanup(work, cleanup) {
   try {
     return await work()
@@ -48,4 +57,10 @@ async function runWithCleanup(work, cleanup) {
   }
 }
 
-module.exports = { canonicalFilePath, isFileUriInsideDirectory, isPermanentArweaveUri, runWithCleanup }
+module.exports = {
+  canonicalFilePath,
+  isFileUriInsideDirectory,
+  isLegacyRootCacheImageName,
+  isPermanentArweaveUri,
+  runWithCleanup,
+}

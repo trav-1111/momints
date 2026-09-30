@@ -14,6 +14,7 @@ class FilmGlOptionsRecord : Record {
   @Field var lutUri: String? = null
   @Field var seed: Float = 0f
   @Field var jpegQuality: Int = 95
+  @Field var jpegTargetBytes: Int = 2_900_000
 }
 
 class FilmGlModule : Module() {

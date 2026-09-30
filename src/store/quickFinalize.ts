@@ -43,6 +43,7 @@ export interface PendingFinalize {
     capturedAt: number
     filmUsed?: MintFilmUsed
     aspect?: AspectRatio
+    artifact?: { imageHash: string; width: number; height: number }
   }
   createdAt: number
   attempts: number
@@ -196,6 +197,10 @@ export async function drainPendingFinalizes(): Promise<DrainResult> {
         await historyHydrated
         const exists = useMintQueue.getState().mintHistory.some((item) => item.mintAddress === entry.assetAddress)
         if (!exists) {
+          const artifact =
+            result.imageHash && result.width && result.height
+              ? { imageHash: result.imageHash, width: result.width, height: result.height }
+              : entry.history.artifact
           useMintQueue.getState().addToHistory({
             id: entry.photoId,
             imageUri,
@@ -207,6 +212,9 @@ export async function drainPendingFinalizes(): Promise<DrainResult> {
             capturedAt: entry.history.capturedAt,
             filmUsed: entry.history.filmUsed,
             aspect: entry.history.aspect,
+            imageHash: artifact?.imageHash,
+            width: artifact?.width,
+            height: artifact?.height,
           })
         }
       }
@@ -262,7 +270,14 @@ const RECOVERY_WINDOW_MS = 3 * 60 * 1000
 
 export type PriorAttemptCheck =
   | { action: 'none' }
-  | { action: 'resolved'; stagingKey: string; signature: string; assetAddress: string; imageUri: string }
+  | {
+      action: 'resolved'
+      stagingKey: string
+      signature: string
+      assetAddress: string
+      imageUri: string
+      artifact?: { imageHash: string; width: number; height: number }
+    }
   | { action: 'wait'; signature: string; assetAddress: string }
   | { action: 'clear' }
 
@@ -306,6 +321,10 @@ export async function checkPriorAttempt(photoId: string): Promise<PriorAttemptCh
       signature: entry.signature,
       assetAddress: entry.assetAddress,
       imageUri,
+      artifact:
+        result.imageHash && result.width && result.height
+          ? { imageHash: result.imageHash, width: result.width, height: result.height }
+          : entry.history?.artifact,
     }
   } catch (err) {
     if (isDefinitive(err) || Date.now() - entry.createdAt >= RECOVERY_WINDOW_MS) {

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Image, type ImageProps } from 'expo-image'
 import { PixelRatio } from 'react-native'
 import { ensureDisplayPreview } from '../services/displayPreview'
+import { isRollVaultPhotoUri } from '../services/rollVault'
+import { createRollVaultPreviewDataUri } from '../services/rollVaultPreview'
 
 type PrivatePhotoImageProps = Omit<
   ImageProps,
@@ -28,6 +30,18 @@ export function PrivatePhotoImage({ uri, photoId, displayWidth, displayHeight, .
   useEffect(() => {
     let mounted = true
     setDisplayUri(null)
+    if (isRollVaultPhotoUri(uri)) {
+      createRollVaultPreviewDataUri(uri, Math.max(displayWidth, displayHeight) * PixelRatio.get())
+        .then((previewUri) => {
+          if (mounted) setDisplayUri(previewUri)
+        })
+        .catch((error) => {
+          console.error('Could not decrypt a bounded roll preview:', error)
+        })
+      return () => {
+        mounted = false
+      }
+    }
     if (!uri.startsWith('file://')) {
       setDisplayUri(uri)
       return () => {
@@ -45,7 +59,7 @@ export function PrivatePhotoImage({ uri, photoId, displayWidth, displayHeight, .
     return () => {
       mounted = false
     }
-  }, [uri])
+  }, [displayHeight, displayWidth, uri])
 
   return (
     <Image

@@ -39,6 +39,11 @@ export interface StageQuickMintResponse {
   treasury: string
   updateAuthority: string
   maxImageBytes: number
+  mime: 'image/jpeg'
+  byteLength: number
+  width: number
+  height: number
+  imageHash: string
 }
 
 export interface FinalizeQuickMintParams {
@@ -55,6 +60,11 @@ export interface FinalizeQuickMintResponse {
   metadataUri: string | null
   imageUri: string | null
   alreadyFinalizing: boolean
+  mime: string
+  byteLength: number | null
+  width: number | null
+  height: number | null
+  imageHash: string | null
 }
 
 export interface QuickMintStatusResponse {
@@ -66,6 +76,11 @@ export interface QuickMintStatusResponse {
   signature: string | null
   createdAt: string
   finalizedAt: string | null
+  mime: string
+  byteLength: number | null
+  width: number | null
+  height: number | null
+  imageHash: string | null
 }
 
 /** Park the image and get the terms for the transaction the user will sign. */

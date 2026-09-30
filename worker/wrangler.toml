@@ -111,6 +111,16 @@ name = "FILMSTOCK_UNLOCK_LIMITER"
 namespace_id = "1001"
 simple = { limit = 30, period = 60 }
 
+[[ratelimits]]
+name = "ROLL_MUTATION_LIMITER"
+namespace_id = "1002"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "QUICK_MINT_LIMITER"
+namespace_id = "1003"
+simple = { limit = 20, period = 60 }
+
 # Finalize jobs, enqueued only after a fee-paying mint is VERIFIED on-chain.
 [[queues.producers]]
 binding = "QUICK_FINALIZE"

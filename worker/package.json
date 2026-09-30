@@ -11,6 +11,7 @@
     "publish:filmstock": "node scripts/publish-filmstock.mjs",
     "schedule:filmstock": "node scripts/schedule-filmstock.mjs",
     "test:filmstocks": "node --test tests/filmstock-package.test.mjs",
+    "test:roll-contract": "node --test tests/roll-frame-contract.test.mjs",
     "validate:filmstocks": "node scripts/validate-filmstocks.mjs",
     "typecheck": "tsc --noEmit",
     "bundle-size": "wrangler deploy --dry-run --outdir .bundle-check",

@@ -39,9 +39,17 @@ import { finalizeQuickMint, type FinalizeQuickMintRequest } from './quick/finali
 import { releaseQuickStage, stageQuickMint } from './quick/stage'
 import { redriveDeferredFinalizes, sweepQuickMints } from './quick/sweep'
 import { createRoll, type CreateRollRequest } from './rolls/create'
+import { completeAuthorizedRoll } from './rolls/complete'
 import { isRollSize } from './rolls/config'
 import { mintFrame, summarizeFrames } from './rolls/frames'
 import { revokeRollDelegate, revokeRollDelegateSafely } from './rolls/handoff'
+import {
+  assertRollCapability,
+  authorizeRollRequest,
+  hashRollCapability,
+  verifyLegacyClaimSignature,
+} from './rolls/auth'
+import { verifyFrameArtifact } from './rolls/imageArtifact'
 import { issueSkrQuote, type SkrQuoteRequest } from './skr/quote'
 import { createWorkerUmi, getWorkerPublicKey } from './solana/client'
 import { resolveSkrNames } from './skr/resolve'
@@ -53,6 +61,10 @@ import { deriveUnlockedFilmStocks } from './filmstocks/das'
 // The OTHER schedule (treasury monitor + sweeps, every 6h) has no constant of
 // its own: it is simply "not this one" in scheduled()'s dispatch.
 const FEE_RECOMPUTE_CRON = '0 */3 * * *'
+
+function connectingIp(request: Request): string {
+  return request.headers.get('cf-connecting-ip') ?? 'unknown'
+}
 
 const USAGE = `Momints roll backend.
   GET  /health                          config + D1 reachability
@@ -72,6 +84,7 @@ const USAGE = `Momints roll backend.
   GET  /rolls/open?wallet=<address>     the wallet's open roll, if any
   GET  /rolls/<collection>              roll + per-frame checkpoint status
   POST /rolls/<collection>/frames       mint one frame (multipart form)
+  POST /rolls/<collection>/authorize    wallet-signed recovery for a pre-contract roll
   POST /rolls/<collection>/complete     close a roll early (frees the wallet's slot)
   POST /quick/stage                     park a quick-mint image, get its mint params (multipart form)
   POST /quick/finalize                  prove the fee landed on-chain, queue the Arweave upload (JSON body)
@@ -141,7 +154,7 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
   } catch {
     throw new HttpError(
       400,
-      'Body must be JSON: { wallet, size, filmStockId, feeSignature, artist?, skrIdentity?, localDate?, payment? }',
+      'Body must be JSON: { wallet, size, filmStockId, feeSignature, rollCapability, artist?, skrIdentity?, localDate?, payment? }',
     )
   }
   // Not folded into validateEnv: a half-configured quick flow (missing
@@ -168,6 +181,11 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
 }
 
 async function handleMintFrame(ctx: WorkerContext, request: Request, collectionAddress: string): Promise<Response> {
+  // This D1 read and capability comparison must happen before formData(),
+  // which consumes and buffers the multipart image body.
+  const roll = await authorizeRollRequest(ctx.db, request, collectionAddress)
+  const limit = await ctx.env.ROLL_MUTATION_LIMITER.limit({ key: collectionAddress })
+  if (!limit.success) throw new HttpError(429, 'Roll frame rate limit exceeded')
   let form: FormData
   try {
     form = await request.formData()
@@ -185,6 +203,8 @@ async function handleMintFrame(ctx: WorkerContext, request: Request, collectionA
   if (!(image instanceof File)) {
     throw new HttpError(400, 'Missing "image" file field')
   }
+  const imageBytes = new Uint8Array(await image.arrayBuffer())
+  const artifact = await verifyFrameArtifact(imageBytes, roll.protocol_version)
   let attributes: Array<{ trait_type: string; value: string }> | undefined
   if (typeof attributesRaw === 'string' && attributesRaw.length > 0) {
     try {
@@ -206,8 +226,9 @@ async function handleMintFrame(ctx: WorkerContext, request: Request, collectionA
     {
       collectionAddress,
       frameIndex,
-      imageBytes: new Uint8Array(await image.arrayBuffer()),
-      mime: image.type || 'image/jpeg',
+      imageBytes,
+      artifact,
+      mime: artifact.mime,
       description: typeof description === 'string' && description ? description : undefined,
       attributes,
     },
@@ -215,9 +236,8 @@ async function handleMintFrame(ctx: WorkerContext, request: Request, collectionA
   return json(result, result.alreadyMinted ? 200 : 201)
 }
 
-async function handleGetRoll(ctx: WorkerContext, collectionAddress: string): Promise<Response> {
-  const roll = await ctx.db.getRoll(collectionAddress)
-  if (!roll) throw new HttpError(404, `No roll with collection address ${collectionAddress}`)
+async function handleGetRoll(ctx: WorkerContext, request: Request, collectionAddress: string): Promise<Response> {
+  const roll = await authorizeRollRequest(ctx.db, request, collectionAddress)
   const frames = await ctx.db.listFrames(collectionAddress)
   return json({
     collectionAddress: roll.collection_address,
@@ -236,40 +256,81 @@ async function handleGetRoll(ctx: WorkerContext, collectionAddress: string): Pro
   })
 }
 
+async function handleAuthorizeLegacyRoll(
+  ctx: WorkerContext,
+  request: Request,
+  collectionAddress: string,
+): Promise<Response> {
+  const limit = await ctx.env.ROLL_MUTATION_LIMITER.limit({ key: `authorize:${collectionAddress}` })
+  if (!limit.success) throw new HttpError(429, 'Roll authorization rate limit exceeded')
+  let body: { wallet?: unknown; rollCapability?: unknown; issuedAt?: unknown; signature?: unknown }
+  try {
+    body = (await request.json()) as typeof body
+  } catch {
+    throw new HttpError(400, 'Body must be JSON: { wallet, rollCapability, issuedAt, signature }')
+  }
+  const roll = await ctx.db.getRoll(collectionAddress)
+  if (!roll) throw new HttpError(404, `No roll with collection address ${collectionAddress}`)
+  if (typeof body.wallet !== 'string' || body.wallet !== roll.wallet) {
+    throw new HttpError(403, 'Only the roll wallet can recover its authorization')
+  }
+  assertRollCapability(body.rollCapability)
+  const capabilityHash = await hashRollCapability(body.rollCapability)
+  if (roll.auth_hash) {
+    if (roll.auth_hash !== capabilityHash) throw new HttpError(409, 'This roll already has different authorization')
+    return json({ collectionAddress, protocolVersion: roll.protocol_version, alreadyAuthorized: true })
+  }
+  if (roll.protocol_version !== 1) throw new HttpError(409, 'Only a pre-contract roll can use authorization recovery')
+  if (typeof body.issuedAt !== 'string' || typeof body.signature !== 'string') {
+    throw new HttpError(400, 'issuedAt and signature are required')
+  }
+  const verified = await verifyLegacyClaimSignature({
+    collectionAddress,
+    wallet: body.wallet,
+    capabilityHash,
+    issuedAt: body.issuedAt,
+    signature: body.signature,
+  })
+  if (!verified) throw new HttpError(403, 'Wallet signature did not authorize this roll')
+  const claimed = await ctx.db.claimLegacyRollCapability(collectionAddress, body.wallet, capabilityHash)
+  if (!claimed) {
+    const current = await ctx.db.getRoll(collectionAddress)
+    if (current?.auth_hash !== capabilityHash) throw new HttpError(409, 'This roll was authorized by another request')
+  }
+  return json({ collectionAddress, protocolVersion: 1, alreadyAuthorized: false })
+}
+
 /**
  * Close a roll early. Idempotent: completing an already-COMPLETE roll is a
  * success, so a client that retries (or races its own auto-completion when the
  * last frame lands) never sees a spurious failure.
  */
-async function handleCompleteRoll(ctx: WorkerContext, collectionAddress: string): Promise<Response> {
-  const roll = await ctx.db.getRoll(collectionAddress)
-  if (!roll) throw new HttpError(404, `No roll with collection address ${collectionAddress}`)
-
-  const alreadyComplete = roll.status === 'COMPLETE'
-  if (!alreadyComplete) {
-    await ctx.db.closeRoll(collectionAddress)
-  }
-  // Non-fatal and safe to call unconditionally: a no-op if already handed off,
-  // and a free extra retry attempt if a previous try (this request or the
-  // frame that completed the roll) failed silently before the sweep got to it.
-  await revokeRollDelegateSafely(
-    { db: ctx.db, rpcUrl: ctx.env.SOLANA_RPC_URL, getUmi: () => createWorkerUmi(ctx.env) },
-    collectionAddress,
+async function handleCompleteRoll(ctx: WorkerContext, request: Request, collectionAddress: string): Promise<Response> {
+  const roll = await authorizeRollRequest(ctx.db, request, collectionAddress)
+  const limit = await ctx.env.ROLL_MUTATION_LIMITER.limit({ key: collectionAddress })
+  if (!limit.success) throw new HttpError(429, 'Roll completion rate limit exceeded')
+  const result = await completeAuthorizedRoll(
+    {
+      closeRoll: (address) => ctx.db.closeRoll(address),
+      // Non-fatal and safe to call unconditionally: a no-op if already handed
+      // off, and another attempt if an earlier response was lost mid-handoff.
+      retryHandoff: (address) =>
+        revokeRollDelegateSafely(
+          { db: ctx.db, rpcUrl: ctx.env.SOLANA_RPC_URL, getUmi: () => createWorkerUmi(ctx.env) },
+          address,
+        ),
+    },
+    roll,
   )
-  return json({
-    collectionAddress: roll.collection_address,
-    name: roll.name,
-    size: roll.size,
-    mintedCount: roll.minted_count,
-    status: 'COMPLETE' as const,
-    alreadyComplete,
-  })
+  return json(result)
 }
 
 // ─── Quick mints ──────────────────────────────────────────────────────────────
 
 async function handleStageQuickMint(ctx: WorkerContext, request: Request): Promise<Response> {
   const env = validateQuickEnv(ctx.env)
+  const limit = await ctx.env.QUICK_MINT_LIMITER.limit({ key: `stage:${connectingIp(request)}` })
+  if (!limit.success) throw new HttpError(429, 'Quick mint staging rate limit exceeded')
 
   let form: FormData
   try {
@@ -284,9 +345,11 @@ async function handleStageQuickMint(ctx: WorkerContext, request: Request): Promi
   if (!(image instanceof File)) {
     throw new HttpError(400, 'Missing "image" file field')
   }
-  if (typeof wallet !== 'string') {
-    throw new HttpError(400, 'Missing "wallet" field')
+  if (typeof wallet !== 'string' || !isBase58Address(wallet)) {
+    throw new HttpError(400, 'wallet must be a valid Solana public key')
   }
+  const imageBytes = new Uint8Array(await image.arrayBuffer())
+  const artifact = await verifyFrameArtifact(imageBytes, 2)
   let metadata: unknown
   try {
     metadata = typeof metadataRaw === 'string' && metadataRaw ? JSON.parse(metadataRaw) : {}
@@ -305,8 +368,9 @@ async function handleStageQuickMint(ctx: WorkerContext, request: Request): Promi
     },
     {
       wallet,
-      imageBytes: new Uint8Array(await image.arrayBuffer()),
-      mime: image.type || 'image/jpeg',
+      imageBytes,
+      mime: artifact.mime,
+      artifact,
       metadata,
     },
   )
@@ -315,6 +379,8 @@ async function handleStageQuickMint(ctx: WorkerContext, request: Request): Promi
 
 async function handleFinalizeQuickMint(ctx: WorkerContext, request: Request): Promise<Response> {
   const env = validateQuickEnv(ctx.env)
+  const limit = await ctx.env.QUICK_MINT_LIMITER.limit({ key: `finalize:${connectingIp(request)}` })
+  if (!limit.success) throw new HttpError(429, 'Quick mint finalize rate limit exceeded')
 
   let body: FinalizeQuickMintRequest
   try {
@@ -356,6 +422,11 @@ async function handleGetQuickMint(ctx: WorkerContext, assetAddress: string): Pro
     signature: row.signature,
     createdAt: row.created_at,
     finalizedAt: row.finalized_at,
+    mime: row.mime,
+    byteLength: row.byte_length,
+    width: row.width,
+    height: row.height,
+    imageHash: row.image_hash,
   })
 }
 
@@ -675,6 +746,7 @@ type Route =
   | { kind: 'open-roll' }
   | { kind: 'get-roll'; collection: string }
   | { kind: 'mint-frame'; collection: string }
+  | { kind: 'authorize-roll'; collection: string }
   | { kind: 'complete-roll'; collection: string }
   | { kind: 'stage-quick' }
   | { kind: 'finalize-quick' }
@@ -711,11 +783,12 @@ function matchRoute(method: string, path: string): Route | null {
   // stagingKey is a uuid, not an address — matched before the base58 rule below.
   const releaseMatch = path.match(/^\/quick\/stage\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)
   if (releaseMatch && method === 'DELETE') return { kind: 'release-quick', stagingKey: releaseMatch[1] }
-  const rollMatch = path.match(/^\/rolls\/([1-9A-HJ-NP-Za-km-z]{32,44})(\/frames|\/complete)?$/)
+  const rollMatch = path.match(/^\/rolls\/([1-9A-HJ-NP-Za-km-z]{32,44})(\/frames|\/authorize|\/complete)?$/)
   if (rollMatch) {
     const [, collection, suffix] = rollMatch
     if (!suffix && method === 'GET') return { kind: 'get-roll', collection }
     if (suffix === '/frames' && method === 'POST') return { kind: 'mint-frame', collection }
+    if (suffix === '/authorize' && method === 'POST') return { kind: 'authorize-roll', collection }
     if (suffix === '/complete' && method === 'POST') return { kind: 'complete-roll', collection }
   }
   // Checked after the literals above; "stage"/"finalize" are too short to be
@@ -836,11 +909,13 @@ export default {
           case 'open-roll':
             return await handleGetOpenRoll(ctx, url)
           case 'get-roll':
-            return await handleGetRoll(ctx, route.collection)
+            return await handleGetRoll(ctx, request, route.collection)
           case 'mint-frame':
             return await handleMintFrame(ctx, request, route.collection)
+          case 'authorize-roll':
+            return await handleAuthorizeLegacyRoll(ctx, request, route.collection)
           case 'complete-roll':
-            return await handleCompleteRoll(ctx, route.collection)
+            return await handleCompleteRoll(ctx, request, route.collection)
           case 'stage-quick':
             return await handleStageQuickMint(ctx, request)
           case 'finalize-quick':

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import { Paths, File } from 'expo-file-system'
-import type { CaptureMeta } from './photos'
+import type { CaptureMeta, PhotoArtifact } from './photos'
 import type { AspectRatio } from './session'
 import { resolvePermanentImageUri } from '../services/permanentAsset'
 import { isPermanentArweaveUri, normalizeArweaveUri } from '../services/imagePrivacy'
@@ -35,6 +35,8 @@ export interface MintQueueItem {
   /** App-side display metadata for contact sheets; not sent to mint rails. */
   filmUsed?: MintFilmUsed
   aspect?: AspectRatio
+  /** Verified local artifact receipt; Worker independently derives its own. */
+  artifact?: PhotoArtifact
   /** Quick mint only — which currency should pay the fee. Defaults 'SOL'. A Worker quote failure falls back to SOL. */
   paymentCurrency?: 'SOL' | 'SKR'
 }

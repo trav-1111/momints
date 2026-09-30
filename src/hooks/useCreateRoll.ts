@@ -11,6 +11,11 @@ import { localDateLabel } from '../config/rollApi'
 import type { PrepaidRollSize } from '../config/roll'
 import { ensureFilmStockRecipe } from '../services/filmstocks'
 import { rollEligible, useFilmStockStore } from '../store/filmstocks'
+import {
+  bindStagedRollCapability,
+  createRollCapability,
+  stageRollCapability,
+} from '../services/rollCapability'
 
 export type CreateRollPhase = 'cover' | 'uploading' | 'signing' | 'confirming' | 'creating'
 
@@ -92,6 +97,12 @@ export function useCreateRoll() {
           return false
         }
 
+        // Persist before payment/creation. If the Worker creates the roll but
+        // the response is lost, the one-open-roll lookup can bind this same
+        // secret to the recovered collection on the next launch.
+        const rollCapability = createRollCapability()
+        await stageRollCapability(walletAddress, rollCapability)
+
         const payment = opts.payment ?? 'SOL'
         let feeSignature: string
         if (payment === 'SKR') {
@@ -125,7 +136,9 @@ export function useCreateRoll() {
             localDate: localDateLabel(now),
             feeSignature,
             payment,
+            rollCapability,
           })
+          await bindStagedRollCapability(walletAddress, roll.collectionAddress)
           created = { collectionAddress: roll.collectionAddress, name: roll.name }
         } catch (err) {
           // The fee already moved. Surface the signature so the charge is

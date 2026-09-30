@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
@@ -111,6 +111,8 @@ function asFrame(item: MintHistoryItem, order: number, filmUsed: string, aspect?
     artist: item.artist,
     filmUsed,
     aspect,
+    width: item.width,
+    height: item.height,
   }
 }
 
@@ -150,6 +152,26 @@ export default function ContactSheetScreen() {
   const [selectedRollId, setSelectedRollId] = useState<string | null>(null)
   const [selectedQuickIds, setSelectedQuickIds] = useState<Set<string>>(new Set())
   const [preview, setPreview] = useState<PreviewState | null>(null)
+  const previewRef = useRef<PreviewState | null>(null)
+  const mountedRef = useRef(true)
+  const setOwnedPreview = useCallback((next: PreviewState | null) => {
+    const previous = previewRef.current
+    if (previous && previous.render.uri !== next?.render.uri) {
+      deleteAppOwnedImage(previous.render.uri)
+    }
+    previewRef.current = next
+    setPreview(next)
+  }, [])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      const owned = previewRef.current
+      previewRef.current = null
+      if (owned) deleteAppOwnedImage(owned.render.uri)
+    }
+  }, [])
   const [isGenerating, setIsGenerating] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
@@ -247,7 +269,7 @@ export default function ContactSheetScreen() {
 
   const handleBack = useCallback(() => {
     if (preview) {
-      setPreview(null)
+      setOwnedPreview(null)
     } else if (path) {
       setPath(null)
       setSelectedRollId(null)
@@ -255,7 +277,7 @@ export default function ContactSheetScreen() {
     } else {
       router.back()
     }
-  }, [path, preview, router])
+  }, [path, preview, router, setOwnedPreview])
 
   const toggleQuickMint = useCallback((id: string) => {
     setSelectedQuickIds((current) => {
@@ -312,13 +334,17 @@ export default function ContactSheetScreen() {
     try {
       const logoUri = await momintsLogoUri()
       const render = await renderContactSheet(frames, { title, artist, date, filmUsed, aspect, logoUri })
-      setPreview({ render, artist, date, filmUsed, aspect: render.aspectUsed })
+      if (!mountedRef.current) {
+        deleteAppOwnedImage(render.uri)
+        return
+      }
+      setOwnedPreview({ render, artist, date, filmUsed, aspect: render.aspectUsed })
     } catch (error) {
       Alert.alert('Couldn’t create sheet', error instanceof Error ? error.message : 'The image could not be rendered.')
     } finally {
       setIsGenerating(false)
     }
-  }, [path, photoById, quickCanGenerate, quickMintsInMintOrder, selectedQuickIds, selectedRoll])
+  }, [path, photoById, quickCanGenerate, quickMintsInMintOrder, selectedQuickIds, selectedRoll, setOwnedPreview])
 
   const handleShare = useCallback(async () => {
     if (!preview) return
@@ -338,11 +364,10 @@ export default function ContactSheetScreen() {
       Alert.alert('Couldn’t share', error instanceof Error ? error.message : 'The share sheet could not be opened.')
     } finally {
       if (shared) {
-        deleteAppOwnedImage(preview.render.uri)
-        setPreview(null)
+        setOwnedPreview(null)
       }
     }
-  }, [preview])
+  }, [preview, setOwnedPreview])
 
   const handleSave = useCallback(async () => {
     if (!preview || isSaving) return
@@ -361,12 +386,11 @@ export default function ContactSheetScreen() {
       Alert.alert('Couldn’t save', error instanceof Error ? error.message : 'The image could not be saved.')
     } finally {
       if (saved) {
-        deleteAppOwnedImage(preview.render.uri)
-        setPreview(null)
+        setOwnedPreview(null)
       }
       setIsSaving(false)
     }
-  }, [isSaving, preview])
+  }, [isSaving, preview, setOwnedPreview])
 
   const footerLabel =
     path === 'quick'

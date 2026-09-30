@@ -15,10 +15,11 @@ import {
 } from '../store/quickFinalize'
 import { getClusterRpc } from '../store/network'
 import type { MintFilmUsed, RollContext } from '../store/mintQueue'
-import type { CaptureMeta } from '../store/photos'
+import type { CaptureMeta, PhotoArtifact } from '../store/photos'
 import type { AspectRatio } from '../store/session'
 import { tryPermanentQuickImage } from '../services/permanentAsset'
 import { isPermanentImagePending, verifyPermanentImage } from '../services/imagePrivacy'
+import { isRollVaultPhotoUri, withDecryptedRollFrame } from '../services/rollVault'
 
 const SKR_UNAVAILABLE_NOTE = '$SKR unavailable — paying with SOL instead'
 
@@ -37,15 +38,25 @@ export interface BatchItemInput {
   captureMeta?: CaptureMeta
   filmUsed?: MintFilmUsed
   aspect?: AspectRatio
+  artifact?: PhotoArtifact
   /** Quick mint only. Defaults 'SOL'. A Worker quote failure falls back to SOL automatically. */
   paymentCurrency?: 'SOL' | 'SKR'
 }
 
 export type BatchItemUpdate =
   | { status: 'uploading' | 'signing'; note?: string }
-  | { status: 'confirming'; note?: string; signature?: string; mintAddress?: string; imageUri?: string }
-  | { status: 'success'; signature: string; mintAddress: string; imageUri: string }
+  | {
+      status: 'confirming'
+      note?: string
+      signature?: string
+      mintAddress?: string
+      imageUri?: string
+      artifact?: MintArtifactReceipt
+    }
+  | { status: 'success'; signature: string; mintAddress: string; imageUri: string; artifact?: MintArtifactReceipt }
   | { status: 'failed'; error: string }
+
+export type MintArtifactReceipt = Pick<PhotoArtifact, 'imageHash' | 'width' | 'height'>
 
 export interface BatchSummary {
   succeeded: number
@@ -126,7 +137,14 @@ async function stageAndRecord(params: {
   photoUri: string
   metadata: ReturnType<typeof buildMintMetadata>
   paymentCurrency?: 'SOL' | 'SKR'
-}): Promise<{ stagingKey: string; placeholderUri: string; terms: QuickMintTerms; note?: string }> {
+  artifact: PhotoArtifact
+}): Promise<{
+  stagingKey: string
+  placeholderUri: string
+  terms: QuickMintTerms
+  artifact: MintArtifactReceipt
+  note?: string
+}> {
   const staged = await stageQuickMint({
     wallet: params.wallet,
     photoUri: params.photoUri,
@@ -136,6 +154,15 @@ async function stageAndRecord(params: {
     treasury: staged.treasury,
     feeLamports: staged.feeLamports,
     updateAuthority: staged.updateAuthority,
+  }
+  if (
+    staged.mime !== params.artifact.mime ||
+    staged.byteLength !== params.artifact.byteLength ||
+    staged.width !== params.artifact.width ||
+    staged.height !== params.artifact.height ||
+    staged.imageHash !== params.artifact.imageHash
+  ) {
+    throw new Error('The Worker-derived quick image receipt does not match the developed capture.')
   }
 
   let note: string | undefined
@@ -153,7 +180,13 @@ async function stageAndRecord(params: {
     }
   }
 
-  return { stagingKey: staged.stagingKey, placeholderUri: staged.placeholderUri, terms, note }
+  return {
+    stagingKey: staged.stagingKey,
+    placeholderUri: staged.placeholderUri,
+    terms,
+    artifact: { imageHash: staged.imageHash, width: staged.width, height: staged.height },
+    note,
+  }
 }
 
 /**
@@ -223,12 +256,23 @@ export function useMint() {
       }
       const walletAddress = account.address.toString()
 
-      const workerItems = items.filter(isWorkerFrame)
+      const missingReceiptItems = items.filter((item) => !item.artifact)
+      for (const item of missingReceiptItems) {
+        summary.failed++
+        onItem(item.photoId, {
+          status: 'failed',
+          error: 'This capture has no verified development receipt and cannot enter the mint queue.',
+        })
+      }
+      const verifiedItems = items.filter(
+        (item): item is BatchItemInput & { artifact: PhotoArtifact } => Boolean(item.artifact),
+      )
+      const workerItems = verifiedItems.filter(isWorkerFrame)
       // A roll frame that reaches here without a usable collection address is
       // a bug (rollContext set, but isWorkerFrame() rejected it) — report it
       // failed rather than quietly minting it as an unrelated, unpaid asset.
-      const malformedRollItems = items.filter((item) => !isWorkerFrame(item) && item.rollContext)
-      const clientItems = items.filter((item) => !isWorkerFrame(item) && !item.rollContext)
+      const malformedRollItems = verifiedItems.filter((item) => !isWorkerFrame(item) && item.rollContext)
+      const clientItems = verifiedItems.filter((item) => !isWorkerFrame(item) && !item.rollContext)
 
       for (const item of malformedRollItems) {
         summary.failed++
@@ -246,13 +290,35 @@ export function useMint() {
         const { collectionAddress, frameNumber } = item.rollContext!
         onItem(item.photoId, { status: 'uploading' })
         try {
-          const res = await mintWorkerFrame({
-            collectionAddress: collectionAddress!,
-            frameIndex: frameNumber,
-            photoUri: item.photoUri,
-            description: `Shot on Seeker by ${item.artist}`,
-            attributes: workerFrameAttributes(item),
-          })
+          const mintFrame = (photoUri: string) =>
+            mintWorkerFrame({
+              collectionAddress: collectionAddress!,
+              frameIndex: frameNumber,
+              photoUri,
+              description: `Shot on Seeker by ${item.artist}`,
+              attributes: workerFrameAttributes(item),
+            })
+          const res = isRollVaultPhotoUri(item.photoUri)
+            ? await withDecryptedRollFrame(item.photoUri, async (photoUri, _artifact, reference) => {
+                if (
+                  reference.rollId !== item.rollContext!.rollId ||
+                  reference.photoId !== item.photoId ||
+                  reference.frameNumber !== frameNumber
+                ) {
+                  throw new Error('The encrypted frame does not match this roll queue entry.')
+                }
+                return mintFrame(photoUri)
+              })
+            : await mintFrame(item.photoUri)
+          if (
+            res.mime !== item.artifact.mime ||
+            res.byteLength !== item.artifact.byteLength ||
+            res.width !== item.artifact.width ||
+            res.height !== item.artifact.height ||
+            res.imageHash !== item.artifact.imageHash
+          ) {
+            throw new Error('The Worker-derived roll image receipt does not match the encrypted developed frame.')
+          }
           let imageUri: string
           try {
             imageUri = await verifyPermanentImage(res.imageUri)
@@ -269,6 +335,7 @@ export function useMint() {
               signature: res.signature ?? undefined,
               mintAddress: res.assetAddress,
               imageUri: res.imageUri,
+              artifact: { imageHash: res.imageHash, width: res.width, height: res.height },
               note: 'Minted · permanent image becoming available (usually 8–12 min)',
             })
             continue
@@ -281,6 +348,7 @@ export function useMint() {
             signature: res.signature ?? '',
             mintAddress: res.assetAddress,
             imageUri,
+            artifact: { imageHash: res.imageHash, width: res.width, height: res.height },
           })
         } catch (err) {
           summary.failed++
@@ -307,6 +375,7 @@ export function useMint() {
               signature: check.signature,
               mintAddress: check.assetAddress,
               imageUri: check.imageUri,
+              artifact: check.artifact,
             })
             await clearPendingFinalize(check.stagingKey)
           } catch (err) {
@@ -344,6 +413,7 @@ export function useMint() {
                 photoUri: item.photoUri,
                 metadata: buildMintMetadata(item),
                 paymentCurrency: item.paymentCurrency,
+                artifact: item.artifact!,
               })
               return { item, metadataUri: quick.placeholderUri, quick }
             } catch (err) {
@@ -409,6 +479,7 @@ export function useMint() {
                       capturedAt: sourceItem.capturedAt,
                       filmUsed: sourceItem.filmUsed,
                       aspect: sourceItem.aspect,
+                      artifact: quick.artifact,
                     },
                   })
                 }
@@ -465,6 +536,7 @@ export function useMint() {
                     signature: info.signature,
                     mintAddress: info.mintAddress,
                     imageUri,
+                    artifact: quick.artifact,
                   })
                   await clearPendingFinalize(quick.stagingKey)
                 } else {
@@ -472,6 +544,7 @@ export function useMint() {
                     status: 'confirming',
                     signature: info.signature,
                     mintAddress: info.mintAddress,
+                    artifact: quick.artifact,
                     note: 'Paid · finalizing on Arweave (usually 8–12 min)',
                   })
                   void startPendingFinalizePolling().catch(() => {})
@@ -483,6 +556,7 @@ export function useMint() {
                   status: 'confirming',
                   signature: info.signature,
                   mintAddress: info.mintAddress,
+                  artifact: quick.artifact,
                   note: 'Mint submitted · confirming payment and permanent storage',
                 })
                 void startPendingFinalizePolling().catch(() => {})

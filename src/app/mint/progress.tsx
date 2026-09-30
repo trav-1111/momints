@@ -6,7 +6,7 @@ import { usePhotoStore } from '../../store/photos'
 import { useMintQueue } from '../../store/mintQueue'
 import { useSessionStore } from '../../store/session'
 import { useRollRegistry } from '../../store/rollRegistry'
-import { useMint, MINT_CHUNK_SIZE, type BatchItemUpdate } from '../../hooks/useMint'
+import { useMint, MINT_CHUNK_SIZE, type BatchItemUpdate, type MintArtifactReceipt } from '../../hooks/useMint'
 import { isWorkerRollEnabled } from '../../config/rollApi'
 import { getSolscanUrl } from '../../services/mint'
 import { acknowledgeVerifiedRollCompletion, verifyAndDiscardCompletedRollVault } from '../../services/rollVault'
@@ -29,6 +29,7 @@ interface MintProgress {
   mintAddress?: string
   /** Roll image URI returned by the Worker while Arweave is still propagating. */
   permanentImageUri?: string
+  artifact?: MintArtifactReceipt
   error?: string
   /** The quoted $SKR amount ("Paying 12.50 $SKR") or a fallback notice, when this item requested $SKR payment. See useMint.ts's stageAndRecord. */
   note?: string
@@ -130,6 +131,9 @@ export default function MintProgressScreen() {
             transactionSignature: update.signature,
             mintAddress: update.mintAddress,
             mintedAt: new Date().toISOString(),
+            imageHash: update.artifact?.imageHash,
+            width: update.artifact?.width,
+            height: update.artifact?.height,
             capturedAt: queueItem?.capturedAt,
             rollContext: queueItem?.rollContext,
             filmUsed: queueItem?.filmUsed ?? 'Color',
@@ -157,6 +161,7 @@ export default function MintProgressScreen() {
           txSignature: update.signature,
           mintAddress: update.mintAddress,
           permanentImageUri: update.imageUri,
+          artifact: update.artifact,
           error: undefined,
         })
       } else {
@@ -230,6 +235,7 @@ export default function MintProgressScreen() {
               signature: item.txSignature ?? '',
               mintAddress: item.mintAddress!,
               imageUri,
+              artifact: item.artifact,
             })
           } catch (error) {
             if (cancelled || isPermanentImagePending(error)) return
@@ -276,6 +282,7 @@ export default function MintProgressScreen() {
           captureMeta: q.captureMeta,
           filmUsed: q.filmUsed,
           aspect: q.aspect,
+          artifact: q.artifact,
           paymentCurrency: q.paymentCurrency,
         },
       ]
