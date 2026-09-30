@@ -23,6 +23,11 @@ import { usePhotoStore } from '../store/photos'
 import { consumeVerifiedRollReceipt, restoreRollVault } from '../services/rollVault'
 import { useRollRegistry } from '../store/rollRegistry'
 import { filmStockHydrated, useFilmStockStore } from '../store/filmstocks'
+import {
+  reconcileActiveRollFrames,
+  ROLL_RECONCILIATION_INTERVAL_MS,
+  ROLL_RECONCILIATION_WINDOW_MS,
+} from '../services/rollReconciliation'
 
 const identity = {
   name: 'Momints',
@@ -105,6 +110,62 @@ function FilmStockWalletSync() {
   return null
 }
 
+/**
+ * A Worker frame may be fully minted before its Arweave image is visible.
+ * Reconcile checkpointed frames for forty minutes after minting begins, and
+ * always make one fresh pass on launch/foreground even after that window.
+ */
+function RollFrameReconciliationSync() {
+  const { account } = useMobileWallet()
+  const wallet = account?.address?.toString() ?? null
+  const rollKey = useSessionStore((state) => {
+    const roll = state.activeRoll
+    return roll?.developed && roll.collectionAddress
+      ? `${roll.collectionAddress}:${roll.mintStartedAt ?? 'legacy'}`
+      : null
+  })
+
+  useEffect(() => {
+    if (!isWorkerRollEnabled() || !rollKey) return
+
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const startedAt = useSessionStore.getState().activeRoll?.mintStartedAt
+    const deadline = startedAt ? startedAt + ROLL_RECONCILIATION_WINDOW_MS : Date.now() + ROLL_RECONCILIATION_WINDOW_MS
+
+    const poll = async (continueWindow: boolean) => {
+      try {
+        const result = await reconcileActiveRollFrames(wallet)
+        if (cancelled || result.state === 'idle' || result.state === 'awaiting-wallet' || result.vaultVerified) return
+      } catch {
+        // Offline/Worker unavailable: retain the roll and retry below or on
+        // the next foreground transition.
+      }
+      if (!cancelled && continueWindow && Date.now() < deadline) {
+        timer = setTimeout(() => void poll(true), ROLL_RECONCILIATION_INTERVAL_MS)
+      }
+    }
+
+    const restart = () => {
+      if (timer) clearTimeout(timer)
+      void poll(Date.now() < deadline)
+    }
+
+    restart()
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') restart()
+      else if (timer) clearTimeout(timer)
+    })
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+      subscription.remove()
+    }
+  }, [rollKey, wallet])
+
+  return null
+}
+
 export default function Layout() {
   const storageReady = usePrivacyStartupCleanup()
   useQuickFinalizeDrain()
@@ -127,6 +188,7 @@ export default function Layout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <MobileWalletProvider cluster={solanaCluster} identity={identity}>
         <FilmStockWalletSync />
+        <RollFrameReconciliationSync />
         <Slot />
       </MobileWalletProvider>
     </GestureHandlerRootView>

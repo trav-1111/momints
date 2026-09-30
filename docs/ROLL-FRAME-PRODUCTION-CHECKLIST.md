@@ -91,6 +91,7 @@ Branch: `fix/roll-frame-contract`
 - [x] Carry verified artifact metadata through queue and pending-finalize recovery.
 - [x] Populate mint-history `imageHash`, `width` and `height` from verified data.
 - [x] Keep history and contact sheets remote-only with non-persistent image caching.
+- [x] Reconcile checkpointed roll frames into history through the read-only roll-status endpoint instead of requiring a frame re-POST.
 - [x] Prefer stored dimensions for layout, but verify/fallback to permanent image headers.
 - [x] Confirm contact sheets preserve each stored frame's aspect and header aspect reporting.
 - [x] Confirm roll title/date/film metadata still comes from the intended authoritative source.
@@ -101,6 +102,7 @@ Branch: `fix/roll-frame-contract`
 - [x] Build 12- and 24-frame contact sheets from Arweave and inspect aspect/layout.
 - [x] Verify history/cache directories contain no persistent image bytes after browsing.
 - [x] Verify contact-sheet inputs/intermediates/output are deleted on success, failure and cancellation.
+- [ ] On Seeker, confirm the 40-minute post-mint poll and History pull-to-refresh recover delayed 12/24-frame results without tapping Resume Roll Mint.
 
 ## Stage 6 — production release gates
 

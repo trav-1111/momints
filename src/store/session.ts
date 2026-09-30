@@ -36,6 +36,8 @@ export interface ActiveRoll {
   // roll is shot to the end before it develops, like real film.
   developed: boolean
   collectionAddress?: string
+  /** First/most recent time the user started or resumed frame minting. */
+  mintStartedAt?: number
 }
 
 interface PersistedSession {
@@ -53,6 +55,7 @@ interface SessionStore extends PersistedSession {
   abandonRoll: () => void
   completeRoll: () => void
   setCollectionAddress: (address: string) => void
+  markRollMintStarted: () => void
   restoreRollFrames: (frameIds: string[]) => void
 }
 
@@ -91,6 +94,7 @@ function parseActiveRoll(raw: unknown): ActiveRoll | null {
     startedAt: r.startedAt,
     developed: r.developed === true,
     collectionAddress: typeof r.collectionAddress === 'string' ? r.collectionAddress : undefined,
+    mintStartedAt: typeof r.mintStartedAt === 'number' ? r.mintStartedAt : undefined,
   }
 }
 
@@ -227,6 +231,16 @@ export const useSessionStore = create<SessionStore>()((set, get) => {
       const { activeMode, activeRoll } = get()
       if (!activeRoll) return
       commit({ hasSetMode: true, activeMode, activeRoll: { ...activeRoll, collectionAddress: address } })
+    },
+
+    markRollMintStarted: () => {
+      const { hasSetMode, activeMode, activeRoll } = get()
+      if (!activeRoll) return
+      commit({
+        hasSetMode,
+        activeMode,
+        activeRoll: { ...activeRoll, mintStartedAt: Date.now() },
+      })
     },
 
     restoreRollFrames: (frameIds) => {

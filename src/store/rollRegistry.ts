@@ -35,6 +35,7 @@ interface RollRegistryStore {
   rolls: RollRecord[]
   addRoll: (record: RollRecord) => void
   incrementFramesMinted: (collectionAddress: string, by?: number) => void
+  setFramesMinted: (collectionAddress: string, count: number) => void
   closeRoll: (collectionAddress: string) => void
   getRoll: (collectionAddress: string) => RollRecord | undefined
 }
@@ -115,6 +116,18 @@ export const useRollRegistry = create<RollRegistryStore>((set, get) => ({
     })
   },
 
+  setFramesMinted: (collectionAddress, count) => {
+    set((state) => {
+      const rolls = state.rolls.map((roll) =>
+        roll.collectionAddress === collectionAddress
+          ? { ...roll, framesMinted: Math.max(roll.framesMinted, Math.min(roll.size, count)) }
+          : roll,
+      )
+      persistRolls(rolls)
+      return { rolls }
+    })
+  },
+
   closeRoll: (collectionAddress) => {
     set((state) => {
       const rolls = state.rolls.map((r) =>
@@ -131,6 +144,6 @@ export const useRollRegistry = create<RollRegistryStore>((set, get) => ({
 }))
 
 // Async hydration on startup — same pattern as session.ts and mintQueue.ts
-readPersistedRolls().then((rolls) => {
+export const rollRegistryHydrated = readPersistedRolls().then((rolls) => {
   if (rolls.length > 0) useRollRegistry.setState({ rolls })
 })

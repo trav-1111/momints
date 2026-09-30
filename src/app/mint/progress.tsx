@@ -172,11 +172,12 @@ export default function MintProgressScreen() {
   )
 
   // Background reconciliation owns paid mints while Arweave propagates. If
-  // one completes while this screen is still open, reflect the durable history
-  // record immediately and release its temporary capture.
+  // one completes while this screen is still open, recover any non-success
+  // row (including a stale timeout/failure), reflect durable history and
+  // release its temporary capture.
   useEffect(() => {
     const completed = progress.flatMap((item) => {
-      if (item.status !== 'confirming') return []
+      if (item.status === 'success') return []
       const historyItem = mintHistory.find(
         (history) => history.id === item.photoId || history.mintAddress === item.mintAddress,
       )
@@ -288,6 +289,10 @@ export default function MintProgressScreen() {
       ]
     })
     if (items.length === 0) return
+
+    if (items.some((item) => item.rollContext?.collectionAddress)) {
+      useSessionStore.getState().markRollMintStarted()
+    }
 
     // Freeze titles into the rows so they survive queue removal on success
     setProgress((prev) =>
