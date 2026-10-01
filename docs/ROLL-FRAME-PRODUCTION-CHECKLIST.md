@@ -109,7 +109,7 @@ Branch: `fix/roll-frame-contract`
 - [x] Pin or select a camera format no larger than the approved 12 MP envelope.
 - [x] Test actual Seeker rear/front captures for every supported aspect.
 - [x] Test SDR, HEIC/profile/orientation inputs supported by the capture pipeline.
-- [ ] Complete a real prepaid 12-frame and 24-frame roll through permanent verification.
+- [x] Complete a real prepaid 12-frame and 24-frame roll through permanent verification. The latest completed 12- and 24-frame rolls passed finalized Core ownership/collection checks and direct Arweave byte-hash verification for all 36 frames on 1 October 2026.
 - [x] Test active-roll restart, offline reuse, film pinning and catalogue rotation.
 - [x] Confirm Arweave propagation remains `confirming`, never a false failure.
 - [x] Confirm Worker frame/completion authorization and operational endpoints are production-safe.
@@ -118,12 +118,12 @@ Branch: `fix/roll-frame-contract`
 - [x] Promote the tested Worker to `api.momints.xyz` in maintenance with no background execution.
 - [x] Replace the staging signer/operator token with the existing production secrets and complete Phase 3 activation checks.
 - [ ] Resolve the repository-wide Prettier baseline: `npm run fmt:check` currently reports 131 pre-existing/unrelated files, including generated and private draft paths.
-- [ ] Review privacy storage on device after capture, restart, history, contact sheet and completed-roll cleanup.
+- [x] Review privacy storage on device after capture, restart, history, contact sheet and completed-roll cleanup. See the supplied Seeker audit recorded on 1 October 2026 below.
 
 ### Checkpoint F — release decision
 
 - [x] No sustained memory growth over a complete 24-frame lifecycle.
-- [ ] Peak memory stays inside the approved Seeker release envelope.
+- [x] Peak memory stays inside the approved Seeker release envelope: no more than 1 GiB total PSS, no more than 256 MiB Graphics, and settled Graphics within 10 MiB of baseline five seconds after the final reveal.
 - [x] No unprocessed, wrong-film, wrong-aspect or oversized image can enter a mint queue.
 - [x] No plaintext active-roll frame persists outside a bounded just-in-time operation.
 - [x] No unauthenticated caller can spend a prepaid roll or complete it.
@@ -138,7 +138,7 @@ Branch: `fix/roll-frame-contract`
 - `/funding/status` and `/treasury/status` were found publicly readable despite being operator routes; both now use the existing `OPS_AUTH_TOKEN` gate and passed missing/wrong/valid-token checks.
 - Initial and final synthetic state matched at zero rolls, frames, Quick mints, frame locks and treasury rows. The exact Quick R2 object was hash-verified then confirmed absent after release. No finalize was accepted.
 - The unfunded staging signer and treasury each had zero mainnet signatures after testing. No Turbo/Arweave upload, payment, mint or Discord notification occurred during that test. Production was unchanged by the staging test itself; the later controlled promotion is recorded below.
-- Reproducible details: [staging runbook](STAGING-WORKER-RUNBOOK.md) and [test report](STAGING-WORKER-TEST-REPORT-2026-09-30.md). Paid 12/24-roll testing and the Seeker peak-memory decision remain open.
+- Reproducible details: [staging runbook](STAGING-WORKER-RUNBOOK.md) and [test report](STAGING-WORKER-TEST-REPORT-2026-09-30.md). Paid 12/24-roll testing and the Seeker peak-memory decision were still open at this historical staging checkpoint; both were closed on 1 October as recorded below.
 
 ## Production backend activation — 2026-09-30
 
@@ -215,7 +215,7 @@ Branch: `fix/roll-frame-contract`
 - Front results: 1:1 2448×2448 / 2,365,235 bytes / 1,798 ms; 4:3 3264×2448 / 2,221,650 bytes / 1,775 ms; 16:9 3264×1836 / 2,311,001 bytes / 1,735 ms; Full 3264×2448 / 2,218,962 bytes / 1,432 ms.
 - Every capture was a verified `image/jpeg` produced by `native-egl-v2`, below the 2,900,000-byte target, with the requested aspect and a complete artifact hash/recipe receipt.
 - Rear sampled peaks: Graphics 196.4 MiB, Native Heap 368.3 MiB, total PSS 839.2 MiB. Front sampled peaks: Graphics 170.4 MiB, Native Heap 333.3 MiB, total PSS 758.1 MiB.
-- Settled Graphics returned to 38–39 MiB after each of the eight runs. This is a passing capture-only trend; the later complete 24-frame lifecycle test closed the accumulation gate, while the peak-memory envelope remains open for approval.
+- Settled Graphics returned to 38–39 MiB after each of the eight runs. This is a passing capture-only trend; the later complete 24-frame lifecycle test closed the accumulation gate, and the owner accepted the resulting peak-memory envelope on 1 October.
 - Each capture was removed from the photo store and dedicated capture directory immediately after measurement. QA fixtures, the device screenshot and QA directories were also removed and the capture directory was verified empty.
 
 ## Checkpoint E contact-sheet results — 2026-09-29
@@ -276,7 +276,7 @@ Branch: `fix/roll-frame-contract`
 - The sampled peak was 505.2 MiB Native Heap, 227.9 MiB Graphics and 870.8 MiB total PSS. This peak remains within the proposed debug-build envelope below, but that envelope still requires explicit release approval.
 - Graphics was 34.4 MiB at baseline, rose transiently during the reveal sequence, measured 83.7 MiB immediately after the final preview, and returned to the exact 34.4 MiB baseline after a five-second settle. Native Heap fell from 375.3 MiB at baseline to 277.0 MiB after settle; total PSS fell from 686.1 MiB to 501.3 MiB. There was no sustained accumulation across the complete lifecycle.
 - Every source capture was deleted after its encrypted commit. The fake roll and vault were removed after the test, followed by the exact app-cache and `/data/local/tmp` fixtures. Final verification found no active roll, photo records, pending Quick finalizes, fixture directory or QA capture directory.
-- Proposed Seeker debug-build release envelope, pending approval: sampled total PSS no more than 1 GiB; sampled Graphics no more than 256 MiB; settled Graphics within 10 MiB of baseline five seconds after the final reveal. This run passes all three proposed limits.
+- Approved Seeker debug-build release envelope: sampled total PSS no more than 1 GiB; sampled Graphics no more than 256 MiB; settled Graphics within 10 MiB of baseline five seconds after the final reveal. The owner accepted this envelope on 1 October 2026. The measured lifecycle passed all three limits: 870.8 MiB total PSS, 227.9 MiB Graphics, and Graphics returning from 83.7 MiB to its exact 34.4 MiB baseline after five seconds.
 
 ## ImageManipulator cache privacy follow-up — 2026-09-29
 
@@ -294,7 +294,7 @@ Branch: `fix/roll-frame-contract`
 
 ## Decision review — 2026-09-30
 
-Latest backend handoff: [new-backend cutover brief](NEW-BACKEND-CUTOVER-BRIEF.md), [cutover report](NEW-BACKEND-CUTOVER-REPORT.md) and [owner secrets guide](NEW-BACKEND-SECRETS-GUIDE.md). Phase 3 is complete: production history is preserved, the existing identity is verified and the single production execution topology is active. D1 contains one dormant legacy open roll; it remains unchanged. No end-to-end paid path has yet been verified.
+Latest backend handoff: [new-backend cutover brief](NEW-BACKEND-CUTOVER-BRIEF.md), [cutover report](NEW-BACKEND-CUTOVER-REPORT.md) and [owner secrets guide](NEW-BACKEND-SECRETS-GUIDE.md). Phase 3 is complete: production history is preserved, the existing identity is verified and the single production execution topology is active. D1 contains one dormant legacy open roll; it remains unchanged. Owner-led Quick, 12-frame and 24-frame paid paths have since completed, with direct permanent-byte and handoff verification recorded below.
 
 ### Quality decision completed
 
@@ -306,18 +306,42 @@ Latest backend handoff: [new-backend cutover brief](NEW-BACKEND-CUTOVER-BRIEF.md
 - The existing canonical manifest contains 27 photographs and two generated controls. The earlier comparison used eight selected inputs; the new comparison should cover the full manifest.
 - Status: the full 58-pair / 116-output Seeker comparison is complete with zero failures and private review materials prepared. The owner approved quality 60 as the emergency floor on 30 September 2026. Isolated Worker staging was subsequently built and verified without changing the quality policy.
 
-### Worker rollout status — production active, paid tests pending
+### Owner test update — 2026-10-01
+
+- The owner reports one Quick Shot and one 12-frame roll completed successfully after backend activation. Record these as successful owner tests, not merely planned tests.
+- Subsequent owner-supplied audit confirms a completed 24-frame roll with exactly 24 unique history frames and 24 minted assets, plus successful Seeker cleanup described below. Another paid roll is not required merely to repeat this completion evidence.
+- Direct verification on 1 October subsequently closed the permanent-byte, ownership/handoff and device bookkeeping checks for the latest completed 12- and 24-frame rolls; details and private evidence are recorded below.
+- The dormant legacy roll remains deliberately preserved. It is separate from these completed-roll checks.
+
+### Worker rollout status — production active, paid verification in progress
 
 - The isolated staging deployment first passed 65/65 no-funds checks. Its service has now been promoted in place to `api.momints.xyz`; disposable staging records/resources were not promoted.
 - Production D1/storage/payment history are preserved and migrations 0009/0010 are applied. The old service is inaccessible and detached; there is only one future activation target.
 - Maintenance behavior remains the rollback/pause control. The active service has exactly one production Queue execution path and the two intended schedules; the retired Worker has none.
 - The production signer, mainnet RPC, treasury, balances and operator protection were verified without paying or minting. Discord secrets remain absent.
 - The ignored local `.env` and installed Seeker debug build now use `api.momints.xyz`; the refreshed catalogue and asset origins were verified on device.
-- Real Quick and prepaid 12/24-frame tests, permanent Arweave verification, handoff recovery and encrypted-vault deletion remain owner-led release gates.
+- Owner-reported Quick, 12-frame and 24-frame completion is now backed by direct permanent-byte and on-chain verification for the latest completed 12- and 24-frame rolls, plus the Seeker cleanup/restart evidence below.
+
+### Completed 24-frame Seeker cleanup and registry correction — 2026-10-01
+
+- Evidence source: direct ADB inspection of Seeker `SM02G406193022`. No active roll, vault directories/files, encrypted `.frame` files, verification receipt, JIT decrypted files or pending Quick finalizations remained. Capture, ImageManipulator, display-preview, contact-sheet input/output and legacy-photo directories were empty.
+- Mint history contained no `photoUri`, `file://` or `content://` image references. No relevant vault-cleanup errors appeared in logs. A full image-signature scan found only eight static Expo assets, the adaptive icon and a 28×28 alpha icon; no retained user photographs were found.
+- The audit identified a local registry count of 25/24 despite exactly 24 unique history frames and 24 minted assets. Source inspection confirmed foreground success increments could add to a count already set by background Worker reconciliation.
+- Local fix: foreground success now derives an absolute count from unique recorded frame numbers, preserves existing history metadata on repeated callbacks, and retains higher Worker totals rather than adding to them. Registry reads/writes enforce finite integer counts within roll capacity; hydration persists the repair for historical 25/24 records.
+- Validation: 32 focused registry/reconciliation/privacy/vault tests passed, including both reconciliation orders, duplicate callbacks, metadata preservation, partial-roll counts and persisted overcount repair. The updated bundle was then loaded on the Seeker: the saved `25/24` repaired to `24/24`, remained `24/24` after another cold restart, and all 24 unique frame numbers plus all 63 existing history records remained intact. The history file SHA-256 was unchanged across restarts and the fresh second-start log had no runtime errors.
+
+### Completed-roll permanent verification and recovery evidence — 2026-10-01
+
+- The latest completed 12-frame and 24-frame rolls were checked using finalized Metaplex Core account reads and direct no-store Arweave retrieval. All 36 permanent image byte streams matched the SHA-256 receipts persisted in mint history.
+- All 36 frame assets are owned by the expected shooter wallet and use the expected roll collection as their Core collection update authority. Both collection update authorities are the shooter wallet, both scoped Worker `UpdateDelegate` plugins are absent, and both collections contain the verified Momints developed marker. This closes collection ownership and handoff evidence for these rolls.
+- Each frame's on-chain metadata URI resolved to JSON whose `image` field matched the history URI. Both collection metadata records retained the expected creator and exposure count. One frame metadata request returned 404 during the initial short retry pass, then resolved during the extended no-cache retry pass; it is recorded as a transient gateway response, not discarded from the result.
+- Private per-frame evidence, including asset/collection addresses, permanent URIs, hashes, byte lengths and every comparison result, is stored only at `.expo/completed-roll-verification-20261001/report.json` (SHA-256 `37249d3114bb4c8807ca5dc1a2ec6329641f1ff796cf49a14b4c31dce36978fe`) and remains ignored and undeployed.
+- Restart/retry recovery already demonstrated: the owner recovered the earlier 12-frame roll's missing history entries by using **Resume roll mint** after frames 2–12 had already landed; the app reconciled them without a duplicate paid roll. Separately, force-stop/relaunch tests restored encrypted 1-, 12- and 24-frame synthetic vaults, recovered the last valid generation after a torn manifest, and rehydrated a pending Quick finalization while offline. The current two-cold-restart counter check preserved the completed 24-frame history exactly.
+- The strict purge path independently requires Worker completion, finalized ownership/collection membership, metadata linkage and permanent-byte hash equality before deleting a completed vault. Those same external facts now pass independently, and the post-completion Seeker audit found no encrypted vault or plaintext derivative remaining.
 
 ### Formatting explanation and proposed handling
 
 - Prettier checks source layout (spacing, wrapping and similar style rules); its failures do not by themselves indicate functional app failures. They still fail the repository's formatting check and therefore its full CI command.
 - A fresh read-only check reported **130 files** on 30 September, compared with the earlier recorded 131. The output includes unrelated source/docs and local draft/configuration paths. This review did not establish that every current warning predates the feature.
 - Recommended handling: format/check changed deliverable files, review exclusions for generated/private/local-only material, then handle the remaining tracked formatting backlog in a separate formatting-only change. Do not exclude application source merely to make the check pass.
-- No repository-wide formatting rewrite, payment or mint was performed. Production activation is complete, while owner-led paid tests and the Seeker memory-envelope decision remain open.
+- No repository-wide formatting rewrite, additional payment or mint was performed during this verification. Production activation, owner-led paid tests, completed-roll evidence and the Seeker memory-envelope decision are now recorded; the deliberately preserved dormant legacy roll remains separate.

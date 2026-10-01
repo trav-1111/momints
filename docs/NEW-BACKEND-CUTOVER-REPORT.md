@@ -4,11 +4,13 @@ Prepared: 30 September 2026.
 
 ## Handoff status
 
-**Activated with the production identity and ready for owner-led Quick and prepaid 12/24-frame tests; end-to-end paid minting is not yet verified.**
+**Activated with the production identity. Update on 1 October 2026: Quick, 12-frame and 24-frame owner tests completed. Direct verification of the latest 12- and 24-frame rolls passed all 36 Arweave byte hashes, finalized Core ownership/collection checks, developed markers and Worker-delegate handoffs. The Seeker cleanup audit found no retained user photographs or completed-roll vault files.**
+
+The completed 24-frame roll had 24 unique history frames and 24 minted assets but displayed 25/24 in the local registry. The correction recorded in the [production checklist](ROLL-FRAME-PRODUCTION-CHECKLIST.md#completed-24-frame-seeker-cleanup-and-registry-correction--2026-10-01) repaired it to 24/24 on Seeker and remained correct after another cold restart with all history entries intact.
 
 The tested Worker service is live at `https://api.momints.xyz`, bound to the preserved production database and storage, with `MAINTENANCE_MODE=false`. Exactly one production Queue producer, one finalize consumer, one dead-letter consumer and the two intended Cron schedules are active. Both production queues reported zero backlog when delivery was resumed.
 
-No payment, mint, permanent upload, Discord notification, destructive cleanup, commit, push or merge was performed.
+The cutover work itself performed no payment, mint, permanent upload, Discord notification, destructive cleanup, commit, push or merge. The owner subsequently performed the successful Quick, 12-frame and 24-frame tests noted above. The later read-only audit added permanent-byte and on-chain ownership/handoff evidence without initiating another payment, mint or upload.
 
 ## Exact Cloudflare target
 
@@ -123,7 +125,7 @@ Private machine-readable evidence is ignored under `worker/.production-evidence/
 - The retired Worker has no workers.dev or preview endpoint, custom domain, zone route, Queue attachment or schedule. Its old URL returns 404.
 - `api.momints.xyz` is the only custom domain attached to the promoted service. The former staging hostname does not resolve.
 
-The backend is ready for the owner's real Quick and prepaid 12/24-frame tests. Those tests must supply the remaining evidence for payment acceptance, permanent Arweave retrieval/hash verification, collection completion/handoff recovery and encrypted-vault deletion.
+The owner subsequently completed real Quick and prepaid 12/24-frame tests. On 1 October, the latest 12- and 24-frame rolls passed direct verification of all 36 permanent Arweave byte hashes, finalized Core ownership/collection membership, developed markers and collection handoff; the Seeker audit also confirmed encrypted-vault and plaintext cleanup. Private per-frame evidence is referenced from the production checklist and remains ignored locally.
 
 ## Rollback
 

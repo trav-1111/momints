@@ -40,9 +40,10 @@ Each new roll photograph uses the same storage allowance as a Quick Shot. Momint
 - A 12-frame roll therefore allows at most **36 MiB of photograph data**, and a 24-frame roll **72 MiB**, excluding metadata and the collection cover.
 - Keep the existing JPEG output and geometry limits: **12 megapixels**, with a maximum **4,000-pixel long edge**. Encoding can reduce quality or dimensions to fit; these are maximum dimensions, not a guarantee of unchanged resolution.
 - If processing cannot produce a verified image within the limit, it must fail before the photograph is accepted or the roll exposure advances.
-- The focused app and Worker contract suites passed, and the isolated staging Worker subsequently passed **65/65 deployed no-funds checks** covering authorization, byte/dimension rejection, receipts, cleanup, catalogue integrity and rate limiting. Real paid-roll verification remains separate.
+- The focused app and Worker contract suites passed, and the isolated staging Worker subsequently passed **65/65 deployed no-funds checks** covering authorization, byte/dimension rejection, receipts, cleanup, catalogue integrity and rate limiting. Owner-led paid Quick, 12-frame and 24-frame tests later completed; the latest two rolls passed direct permanent-byte and on-chain handoff verification.
 - The Worker retains a separate **8 MiB compatibility allowance for pre-contract rolls**. It is not the allowance for newly created rolls.
-- No allowance, compression setting, or price was changed by this review. The owner subsequently accepted quality 60 as the emergency floor on 30 September after the full canonical comparison. Isolated Worker staging and migrations now pass; real paid-roll verification remains a separate gate.
+- No allowance, compression setting, or price was changed by this review. The owner subsequently accepted quality 60 as the emergency floor on 30 September after the full canonical comparison.
+- The owner accepted the Seeker release envelope of at most **1 GiB total PSS**, at most **256 MiB Graphics**, and Graphics settling within **10 MiB of baseline after five seconds**. The measured 24-frame lifecycle passed at 870.8 MiB peak total PSS, 227.9 MiB peak Graphics, and an exact return to the 34.4 MiB Graphics baseline.
 
 ### Backend evidence
 
@@ -52,11 +53,15 @@ References: [app limits](../src/config/imageArtifact.ts), [capture checks](../sr
 
 ## Backend release preparation
 
-Recorded: 30 September 2026. Status: production backend active; owner-led paid tests pending.
+Recorded: 30 September 2026; updated 1 October 2026. Status: production backend active; Quick, 12-frame and 24-frame owner tests completed, with permanent-byte, ownership/handoff, restart and Seeker cleanup evidence recorded in the production checklist.
 
 Presentation note: Momints first tested its backend changes in a separate environment, passing 65 no-funds operational checks. The tested service now answers on the app's own API domain with the existing production database, storage, payment history and signing identity preserved. Exactly one production Queue execution path and one intended schedule set are active.
 
-The live inventory found no pending Quick work, queue backlog or unfinished handoff, but it did find one dormant pre-contract roll from 27 July with three minted frames. That record and all payment-signature history were preserved. The old service is inaccessible and detached. The production signer, mainnet RPC, treasury, balances, protected operator routes and Seeker catalogue were verified without spending funds. This activation does not establish funded end-to-end mint success; real Quick and 12/24-frame tests remain outstanding.
+The live inventory found no pending Quick work, queue backlog or unfinished handoff, but it did find one dormant pre-contract roll from 27 July with three minted frames. That record and all payment-signature history were preserved. The old service is inaccessible and detached. The production signer, mainnet RPC, treasury, balances, protected operator routes and Seeker catalogue were verified without spending funds during activation.
+
+Owner test update, 1 October: Quick, 12-frame and 24-frame rolls completed on the new backend. A direct Seeker audit found no remaining active roll, encrypted frames, decrypted temporary files, user-image cache files or local-image history references. Finalized Metaplex Core and Arweave checks matched all 36 frames from the latest 12- and 24-frame rolls to their expected wallet, collections, metadata and stored SHA-256 receipts; both Worker delegates were revoked. The corrected 24-frame counter repaired from 25/24 to 24/24 and remained correct through another cold restart with history unchanged.
+
+Presentation blurb: "Momints completed owner-run Quick Shot, 12-frame and 24-frame tests on its production backend. Every checked roll frame matched its permanent Arweave bytes and expected on-chain owner/collection, both roll handoffs completed, and a Seeker audit found no retained user photographs or completed-roll recovery files."
 
 ## Adding future notes
 

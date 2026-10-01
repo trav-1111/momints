@@ -15,6 +15,7 @@ import { colors, fonts, tracking } from '../../theme'
 import { IconBack } from '../../components/icons'
 import { PrivatePhotoImage } from '../../components/PrivatePhotoImage'
 import { deleteCapture, isPermanentImagePending, verifyPermanentImage } from '../../services/imagePrivacy'
+import { recordMintSuccess } from '../../services/recordMintSuccess'
 
 type MintStatus = 'pending' | 'uploading' | 'signing' | 'confirming' | 'success' | 'failed'
 
@@ -76,7 +77,6 @@ export default function MintProgressScreen() {
   const mintHistory = useMintQueue((state) => state.mintHistory)
   const clearQueue = useMintQueue((state) => state.clearQueue)
   const removeFromQueue = useMintQueue((state) => state.removeFromQueue)
-  const addToHistory = useMintQueue((state) => state.addToHistory)
 
   const [progress, setProgress] = useState<MintProgress[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
@@ -121,9 +121,10 @@ export default function MintProgressScreen() {
     (photoId: string, update: BatchItemUpdate) => {
       if (update.status === 'success') {
         const queueItem = useMintQueue.getState().queue.find((q) => q.photoId === photoId)
+        let rollContext = queueItem?.rollContext
         updateProgress(photoId, { status: 'success', txSignature: update.signature, photoUri: update.imageUri })
         try {
-          addToHistory({
+          const recorded = recordMintSuccess({
             id: photoId,
             imageUri: update.imageUri,
             title: queueItem?.title ?? 'Untitled',
@@ -139,12 +140,10 @@ export default function MintProgressScreen() {
             filmUsed: queueItem?.filmUsed ?? 'Color',
             aspect: queueItem?.aspect,
           })
-          if (queueItem?.rollContext?.collectionAddress) {
-            useRollRegistry.getState().incrementFramesMinted(queueItem.rollContext.collectionAddress)
-          }
+          rollContext = recorded.rollContext
         } finally {
           deleteCapture(queueItem?.photoUri)
-          if (queueItem?.rollContext) {
+          if (rollContext) {
             updatePhotoUri(photoId, update.imageUri)
             setPhotoAction(photoId, 'minted')
           } else {
@@ -168,7 +167,7 @@ export default function MintProgressScreen() {
         updateProgress(photoId, { status: update.status, note: update.note })
       }
     },
-    [updateProgress, addToHistory, removePhoto, removeFromQueue, setPhotoAction, updatePhotoUri],
+    [updateProgress, removePhoto, removeFromQueue, setPhotoAction, updatePhotoUri],
   )
 
   // Background reconciliation owns paid mints while Arweave propagates. If
