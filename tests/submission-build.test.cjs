@@ -3,7 +3,12 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
-const { readAppEnvironment, readSigningCredentials, redactor } = require('../scripts/build-submission-apk.cjs')
+const {
+  readAppEnvironment,
+  readSigningCredentials,
+  signingPolicy,
+  redactor,
+} = require('../scripts/build-submission-apk.cjs')
 
 const appEnvironment = [
   'EXPO_PUBLIC_ROLL_API=https://api.momints.xyz',
@@ -81,5 +86,50 @@ test('native signing guard overrides release only, rejects debug certificates an
   assert.match(source, /release\.debuggable = false/)
   assert.match(source, /cn=android debug/)
   assert.match(source, /MOMINTS_ANDROID_EXPECTED_CERT_SHA256/)
+  assert.match(source, /debugIdentity && !hackathonDebugSigning/)
+  assert.match(source, /hackathonDebugSigning && !debugIdentity/)
+  assert.match(source, /certificateHash != expectedHash/)
   assert.doesNotMatch(source, /genkey|signingConfigs\.debug/)
+})
+
+test('hackathon exception is explicit and requires a valid pinned installed certificate', () => {
+  assert.equal(signingPolicy().hackathonDebugSigning, false)
+  assert.throws(() => signingPolicy(true), /requires the verified installed certificate/)
+  assert.throws(() => signingPolicy(true, 'not-a-fingerprint'), /Invalid expected/)
+  const fingerprint = 'ab'.repeat(32)
+  assert.deepEqual(signingPolicy(true, fingerprint.toUpperCase()), {
+    hackathonDebugSigning: true,
+    expectedCertificate: fingerprint,
+  })
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'momints-hackathon-signing-test-'))
+  try {
+    // Synthetic bytes exercise JS preflight only; native KeyStore validation remains mandatory.
+    fs.writeFileSync(path.join(dir, 'debug.keystore'), 'not-a-real-keystore')
+    const file = path.join(dir, 'credentials.json')
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        android: {
+          keystore: {
+            keystorePath: 'debug.keystore',
+            keystorePassword: 'fixture',
+            keyAlias: 'androiddebugkey',
+            keyPassword: 'fixture',
+          },
+        },
+      }),
+    )
+    assert.throws(() => readSigningCredentials(file), /debug signing key/)
+    assert.equal(readSigningCredentials(file, signingPolicy(true, fingerprint)).keyAlias, 'androiddebugkey')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('CLI strips inherited signing switches and names hackathon artifacts distinctly', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/build-submission-apk.cjs'), 'utf8')
+  assert.match(source, /args.includes\('--hackathon-debug-signing'\)/)
+  assert.match(source, /\^MOMINTS_ANDROID_/)
+  assert.match(source, /policy.hackathonDebugSigning \? '1' : '0'/)
+  assert.match(source, /hackathon-only-debug-signed-/)
 })

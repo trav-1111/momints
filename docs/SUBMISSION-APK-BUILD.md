@@ -10,7 +10,7 @@ Read app configuration from the owner's ignored `.env` (or `--app-env <secure-pa
 
 ## Existing release signing identity
 
-The generated Expo Android template signs release with a **debug** keystore unless overridden. Do not use that as the submission identity. Supply an ignored EAS-style `credentials.json` securely with:
+The generated Expo Android template signs release with a **debug** keystore unless overridden. The default production path requires the existing **non-debug release key**. An owner-authorized hackathon-only exception is described below; it is not the permanent dApp Store signing identity. Supply an ignored EAS-style `credentials.json` securely with:
 
 ```json
 {
@@ -27,7 +27,21 @@ The generated Expo Android template signs release with a **debug** keystore unle
 
 Relative keystore paths resolve against the credentials file, not the exported workspace. Never commit this file or keystore, paste values into chat, generate a replacement or change the Android package. If held in EAS, retrieve **existing** credentials through the owner's authenticated credentials workflow; do not create new credentials. See [Expo's local release guidance](https://docs.expo.dev/guides/local-app-production/). The Android signing identity is unrelated to the Solana Worker signer.
 
-`scripts/android-release.init.gradle` loads those private inputs directly and configures signing in Android's final DSL phase, after the generated template. It validates the key/certificate, rejects the Android debug identity, keeps `com.momints.app`, and disables release debugging. An optional `MOMINTS_ANDROID_EXPECTED_CERT_SHA256` environment value pins a known public established certificate fingerprint. Passwords are never passed as command-line arguments or written into source/Gradle properties.
+`scripts/android-release.init.gradle` loads those private inputs directly and configures signing in Android's final DSL phase, after the generated template. It validates the key/certificate, rejects the Android debug identity by default, keeps `com.momints.app`, and disables release debugging. `--expected-cert-sha256` pins a known public established certificate fingerprint. Inherited signing environment switches are stripped; only explicit CLI options are forwarded to Gradle. Passwords are never passed as command-line arguments or written into source/Gradle properties.
+
+## Hackathon-only debug-signed standalone artifact
+
+On 1 October 2026 the owner authorized using the exact existing debug key matching the installed Seeker app for the hackathon candidate. [The published hackathon requirements](https://solanamobile.com/blog/clock-in-the-solana-mobile-hackathon) request a functional Android APK and allow preparation for dApp Store publication after judging. This exception does not approve the key for that later publication.
+
+First inspect the installed APK and existing keystore with Android signing tools. Never generate a replacement. Store its existing credentials securely in an ignored EAS-style JSON file, without copying the key into the source export. Supply **both** the explicit switch and verified installed public certificate fingerprint:
+
+```sh
+node scripts/build-submission-apk.cjs --hackathon-debug-signing --expected-cert-sha256 VERIFIED_INSTALLED_CERTIFICATE_SHA256 --credentials PATH_TO_IGNORED_EXISTING_CREDENTIALS_JSON
+```
+
+No ambient environment variable can enable this CLI exception. Missing/malformed fingerprint, mismatched native certificate, a non-debug identity with this option, or a debug identity without it fail closed. Release remains `debuggable=false` and `jniDebuggable=false`; React Native bundles JS/assets, and Expo's release variants do not launch the development client. Signing with a debug key does not turn release mode into a debug build.
+
+Outputs are named `momints-hackathon-only-debug-signed-<commit>-arm64.apk`. Label them **hackathon-only, debug-signed standalone APK—not the dApp Store release artifact**. Matching package/certificate and compatible version code permit a normal in-place Seeker update, subject to subsequent owner-authorized installation testing. This task does not install or clear app data. Establish permanent release signing separately before dApp Store publication; it may require a data-preserving migration plan from the debug-signed app.
 
 ## Commands
 

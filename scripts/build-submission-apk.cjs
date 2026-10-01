@@ -40,7 +40,16 @@ function readAppEnvironment(text) {
   return values
 }
 
-function readSigningCredentials(filename) {
+function signingPolicy(hackathonDebugSigning = false, expectedCertificate = '') {
+  const certificate = expectedCertificate.replace(/:/g, '').toLowerCase()
+  if (certificate && !/^[a-f0-9]{64}$/.test(certificate))
+    throw new Error('Invalid expected signing certificate SHA-256')
+  if (hackathonDebugSigning && !certificate)
+    throw new Error('Hackathon debug signing requires the verified installed certificate SHA-256')
+  return { hackathonDebugSigning, expectedCertificate: certificate }
+}
+
+function readSigningCredentials(filename, policy = signingPolicy()) {
   let data
   try {
     data = JSON.parse(fs.readFileSync(filename, 'utf8'))
@@ -53,8 +62,9 @@ function readSigningCredentials(filename) {
       throw new Error('Missing Android release credential field: ' + key)
   }
   if (
-    signing.keyAlias.toLowerCase() === 'androiddebugkey' ||
-    path.basename(signing.keystorePath).toLowerCase() === 'debug.keystore'
+    !policy.hackathonDebugSigning &&
+    (signing.keyAlias.toLowerCase() === 'androiddebugkey' ||
+      path.basename(signing.keystorePath).toLowerCase() === 'debug.keystore')
   ) {
     throw new Error('A debug signing key cannot be substituted for the existing release identity')
   }
@@ -84,19 +94,27 @@ async function main(args) {
     throw new Error('Freeze tracked source before building')
   const prepareOnly = args.includes('--prepare-only')
   const resume = args.includes('--resume')
-  const allowedFlags = ['--prepare-only', '--resume', '--credentials', '--app-env']
+  const allowedFlags = [
+    '--prepare-only',
+    '--resume',
+    '--credentials',
+    '--app-env',
+    '--hackathon-debug-signing',
+    '--expected-cert-sha256',
+  ]
   const options = {}
   for (let i = 0; i < args.length; i++) {
     if (!allowedFlags.includes(args[i])) throw new Error('Unknown build option')
-    if (!['--prepare-only', '--resume'].includes(args[i])) {
+    if (!['--prepare-only', '--resume', '--hackathon-debug-signing'].includes(args[i])) {
       if (!args[i + 1] || args[i + 1].startsWith('--')) throw new Error('Missing build option value')
       options[args[i].slice(2)] = args[++i]
     }
   }
+  const policy = signingPolicy(args.includes('--hackathon-debug-signing'), options['expected-cert-sha256'])
   const appEnvFile = path.resolve(root, options['app-env'] || '.env')
   const app = readAppEnvironment(fs.readFileSync(appEnvFile, 'utf8'))
   const credentials = path.resolve(root, options.credentials || 'credentials.json')
-  const signing = prepareOnly ? null : readSigningCredentials(credentials)
+  const signing = prepareOnly ? null : readSigningCredentials(credentials, policy)
   const redact = redactor([app.EXPO_PUBLIC_SOLANA_RPC, signing?.keystorePassword, signing?.keyPassword])
   const commit = git('rev-parse', 'HEAD')
   const tree = git('rev-parse', 'HEAD^{tree}')
@@ -150,7 +168,9 @@ async function main(args) {
   const baseEnv = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key]) =>
-        !/^EXPO_PUBLIC_|^(?:IRYS_FUNDING_KEY|OPS_AUTH_TOKEN|DISCORD_WEBHOOK_URL|PINATA_JWT|SOLANA_RPC_URL)/.test(key),
+        !/^EXPO_PUBLIC_|^MOMINTS_ANDROID_|^(?:IRYS_FUNDING_KEY|OPS_AUTH_TOKEN|DISCORD_WEBHOOK_URL|PINATA_JWT|SOLANA_RPC_URL)/.test(
+          key,
+        ),
     ),
   )
   const env = {
@@ -173,6 +193,10 @@ async function main(args) {
     app: { api: API, treasury: TREASURY, rpc: '[client RPC redacted]' },
     abi: ['arm64-v8a'],
     credentialsCopied: false,
+    signingPolicy: policy.hackathonDebugSigning
+      ? 'hackathon-only debug-signed; not dApp Store release'
+      : 'non-debug release',
+    expectedCertificateSha256: policy.expectedCertificate || null,
     steps: previous?.steps || [],
   }
   const save = () => fs.writeFileSync(reportFile, JSON.stringify(report, null, 2) + '\n')
@@ -244,7 +268,11 @@ async function main(args) {
         '--max-workers=2',
       ],
       path.join(source, 'android'),
-      { MOMINTS_ANDROID_CREDENTIALS: credentials },
+      {
+        MOMINTS_ANDROID_CREDENTIALS: credentials,
+        MOMINTS_ANDROID_HACKATHON_DEBUG_SIGNING: policy.hackathonDebugSigning ? '1' : '0',
+        MOMINTS_ANDROID_EXPECTED_CERT_SHA256: policy.expectedCertificate,
+      },
     )
     const expectedCert = buildLog.match(/Momints release signer SHA-256: ([a-f0-9]{64})/)?.[1]
     if (!expectedCert) throw new Error('Established release signing receipt missing')
@@ -267,7 +295,13 @@ async function main(args) {
       throw new Error('APK package/debug/ABI verification failed')
     const members = await run('apk-entries', 'tar.exe', ['-tf', apk])
     if (!members.includes('assets/index.android.bundle')) throw new Error('Embedded release JavaScript missing')
-    const destination = path.join(out, 'momints-submission-' + commit.slice(0, 8) + '-arm64.apk')
+    const destination = path.join(
+      out,
+      'momints-' +
+        (policy.hackathonDebugSigning ? 'hackathon-only-debug-signed-' : 'submission-') +
+        commit.slice(0, 8) +
+        '-arm64.apk',
+    )
     fs.copyFileSync(apk, destination)
     report.apk = {
       path: destination,
@@ -286,7 +320,7 @@ async function main(args) {
   }
 }
 
-module.exports = { readAppEnvironment, readSigningCredentials, redactor }
+module.exports = { readAppEnvironment, readSigningCredentials, signingPolicy, redactor }
 if (require.main === module)
   main(process.argv.slice(2)).catch((error) => {
     console.error(error.message)
