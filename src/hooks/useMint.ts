@@ -264,8 +264,8 @@ export function useMint() {
           error: 'This capture has no verified development receipt and cannot enter the mint queue.',
         })
       }
-      const verifiedItems = items.filter(
-        (item): item is BatchItemInput & { artifact: PhotoArtifact } => Boolean(item.artifact),
+      const verifiedItems = items.filter((item): item is BatchItemInput & { artifact: PhotoArtifact } =>
+        Boolean(item.artifact),
       )
       const workerItems = verifiedItems.filter(isWorkerFrame)
       // A roll frame that reaches here without a usable collection address is

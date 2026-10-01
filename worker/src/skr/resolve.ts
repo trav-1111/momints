@@ -25,26 +25,40 @@ const addressEncoder = getAddressEncoder()
 const zero = new Uint8Array(32)
 
 const hashName = (name: string) => sha256(new Uint8Array(utf8Encoder.encode(HASH_PREFIX + name)))
-const pda = (program: Address, seeds: Uint8Array[]) => getProgramDerivedAddress({ programAddress: program, seeds }).then(([result]) => result)
-const nameAccount = (name: string, parent?: Address) => pda(ANS_PROGRAM, [hashName(name), zero, parent ? new Uint8Array(addressEncoder.encode(parent)) : zero])
-const tldHouse = () => pda(TLD_HOUSE_PROGRAM, [new Uint8Array(utf8Encoder.encode('tld_house')), new Uint8Array(utf8Encoder.encode(TLD))])
+const pda = (program: Address, seeds: Uint8Array[]) =>
+  getProgramDerivedAddress({ programAddress: program, seeds }).then(([result]) => result)
+const nameAccount = (name: string, parent?: Address) =>
+  pda(ANS_PROGRAM, [hashName(name), zero, parent ? new Uint8Array(addressEncoder.encode(parent)) : zero])
+const tldHouse = () =>
+  pda(TLD_HOUSE_PROGRAM, [new Uint8Array(utf8Encoder.encode('tld_house')), new Uint8Array(utf8Encoder.encode(TLD))])
 const decode = (data: unknown): Uint8Array | null => {
   if (!Array.isArray(data) || typeof data[0] !== 'string') return null
-  try { const binary = atob(data[0]); return Uint8Array.from(binary, (c) => c.charCodeAt(0)) } catch { return null }
+  try {
+    const binary = atob(data[0])
+    return Uint8Array.from(binary, (c) => c.charCodeAt(0))
+  } catch {
+    return null
+  }
 }
 
 export async function resolveSkrNames(rpcUrl: string, ownerString: string): Promise<string[]> {
   const owner = address(ownerString)
   const parent = await nameAccount(TLD, ROOT_ANS)
   const rpc = createSolanaRpc(rpcUrl)
-  const accounts = await withTimeout(rpc.getProgramAccounts(ANS_PROGRAM, {
-    encoding: 'base64',
-    dataSlice: { offset: EXPIRES_AT_OFFSET, length: 8 },
-    filters: [
-      { memcmp: { offset: 8n, bytes: parent as string as Base58EncodedBytes, encoding: 'base58' } },
-      { memcmp: { offset: BigInt(OWNER_OFFSET), bytes: owner as string as Base58EncodedBytes, encoding: 'base58' } },
-    ],
-  }).send())
+  const accounts = await withTimeout(
+    rpc
+      .getProgramAccounts(ANS_PROGRAM, {
+        encoding: 'base64',
+        dataSlice: { offset: EXPIRES_AT_OFFSET, length: 8 },
+        filters: [
+          { memcmp: { offset: 8n, bytes: parent as string as Base58EncodedBytes, encoding: 'base58' } },
+          {
+            memcmp: { offset: BigInt(OWNER_OFFSET), bytes: owner as string as Base58EncodedBytes, encoding: 'base58' },
+          },
+        ],
+      })
+      .send(),
+  )
   const now = Date.now()
   const live = accounts.filter(({ account }) => {
     const data = decode(account.data)
@@ -55,7 +69,11 @@ export async function resolveSkrNames(rpcUrl: string, ownerString: string): Prom
   const house = await tldHouse()
   const names: string[] = []
   for (let i = 0; i < live.length; i += 100) {
-    const pdas = await Promise.all(live.slice(i, i + 100).map(({ pubkey }) => pda(ANS_PROGRAM, [hashName(pubkey), new Uint8Array(addressEncoder.encode(house)), zero])))
+    const pdas = await Promise.all(
+      live
+        .slice(i, i + 100)
+        .map(({ pubkey }) => pda(ANS_PROGRAM, [hashName(pubkey), new Uint8Array(addressEncoder.encode(house)), zero])),
+    )
     const { value } = await withTimeout(rpc.getMultipleAccounts(pdas, { encoding: 'base64' }).send())
     for (const entry of value) {
       if (!entry) continue
@@ -69,5 +87,8 @@ export async function resolveSkrNames(rpcUrl: string, ownerString: string): Prom
 }
 
 function withTimeout<T>(promise: Promise<T>): Promise<T> {
-  return Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('resolver timeout')), timeoutMs))])
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('resolver timeout')), timeoutMs)),
+  ])
 }

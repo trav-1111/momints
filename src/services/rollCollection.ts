@@ -127,4 +127,3 @@ export async function paySkrRollFee(
   const signature = await sendAndConfirm(client, signedTx)
   return { signature, skrAmount: quote.skrAmount }
 }
-

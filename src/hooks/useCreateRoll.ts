@@ -11,11 +11,7 @@ import { localDateLabel } from '../config/rollApi'
 import type { PrepaidRollSize } from '../config/roll'
 import { ensureFilmStockRecipe } from '../services/filmstocks'
 import { rollEligible, useFilmStockStore } from '../store/filmstocks'
-import {
-  bindStagedRollCapability,
-  createRollCapability,
-  stageRollCapability,
-} from '../services/rollCapability'
+import { bindStagedRollCapability, createRollCapability, stageRollCapability } from '../services/rollCapability'
 
 export type CreateRollPhase = 'cover' | 'uploading' | 'signing' | 'confirming' | 'creating'
 

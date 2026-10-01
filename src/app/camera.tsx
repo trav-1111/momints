@@ -627,7 +627,9 @@ export default function CameraScreen() {
 
   if (!captureFormat) {
     return (
-      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', padding: 28 }}>
+      <View
+        style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', padding: 28 }}
+      >
         <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 18, color: colors.text, textAlign: 'center' }}>
           This camera has no photo format inside the supported 12 MP processing envelope.
         </Text>

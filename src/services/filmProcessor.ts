@@ -170,12 +170,14 @@ function encodeSurface(destination: File, image: ReturnType<typeof Skia.Surface.
         if (!resizedSurface) throw new Error('Film resize surface could not be created')
         const resizePaint = Skia.Paint()
         try {
-          resizedSurface.getCanvas().drawImageRect(
-            snapshot,
-            Skia.XYWHRect(0, 0, snapshot.width(), snapshot.height()),
-            Skia.XYWHRect(0, 0, width, height),
-            resizePaint,
-          )
+          resizedSurface
+            .getCanvas()
+            .drawImageRect(
+              snapshot,
+              Skia.XYWHRect(0, 0, snapshot.width(), snapshot.height()),
+              Skia.XYWHRect(0, 0, width, height),
+              resizePaint,
+            )
           resizedSurface.flush()
           const resized = resizedSurface.makeImageSnapshot()
           try {

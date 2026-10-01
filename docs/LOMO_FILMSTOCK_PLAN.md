@@ -27,15 +27,15 @@ The launch stock names, artwork, prices, release schedule and live-preview fallb
 
 The working tree was inspected, including ongoing camera changes. Recheck these integration points when implementation starts.
 
-| Area | Current implementation | Required extension |
-| --- | --- | --- |
-| Image effects | [filmProcessor.ts](D:/Claude/momints/src/services/filmProcessor.ts) passes colour through and applies a grayscale matrix to B&W. | A shared, versioned renderer for stock recipes. |
-| Capture | [camera.tsx](D:/Claude/momints/src/app/camera.tsx) captures a photo, moves it into app storage, crops it and applies B&W. | Process all selected stocks, retain recoverable inputs and distinguish pending renders from finished frames. |
-| Roll selection | [mode-select.tsx](D:/Claude/momints/src/app/mode-select.tsx) has Colour/B&W pills. | Browse, preview, buy and load filmstocks. |
-| Session | [session.ts](D:/Claude/momints/src/store/session.ts) saves film mode and aspect in an active roll. | Persist stock ID, recipe version/hash, renderer version and owning wallet/cluster. |
-| Photos | [photos.ts](D:/Claude/momints/src/store/photos.ts) saves local photo records and roll membership. | Add render state, seed, recipe reference, final-file hash and recovery information. |
-| Payments | [skrApi.ts](D:/Claude/momints/src/services/skrApi.ts), [rollCollection.ts](D:/Claude/momints/src/services/rollCollection.ts) and [worker SKR verification](D:/Claude/momints/worker/src/skr/verify.ts) support SKR roll/mint fees. | A distinct filmstock order and permanent entitlement, with purchase recovery. |
-| Backend | [roll creation](D:/Claude/momints/worker/src/rolls/create.ts), [frame minting](D:/Claude/momints/worker/src/rolls/frames.ts) and [D1 access](D:/Claude/momints/worker/src/db/index.ts) manage prepaid rolls. | Store the chosen stock on the server and derive film metadata from that record. |
+| Area           | Current implementation                                                                                                                                                                                                             | Required extension                                                                                           |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Image effects  | [filmProcessor.ts](D:/Claude/momints/src/services/filmProcessor.ts) passes colour through and applies a grayscale matrix to B&W.                                                                                                   | A shared, versioned renderer for stock recipes.                                                              |
+| Capture        | [camera.tsx](D:/Claude/momints/src/app/camera.tsx) captures a photo, moves it into app storage, crops it and applies B&W.                                                                                                          | Process all selected stocks, retain recoverable inputs and distinguish pending renders from finished frames. |
+| Roll selection | [mode-select.tsx](D:/Claude/momints/src/app/mode-select.tsx) has Colour/B&W pills.                                                                                                                                                 | Browse, preview, buy and load filmstocks.                                                                    |
+| Session        | [session.ts](D:/Claude/momints/src/store/session.ts) saves film mode and aspect in an active roll.                                                                                                                                 | Persist stock ID, recipe version/hash, renderer version and owning wallet/cluster.                           |
+| Photos         | [photos.ts](D:/Claude/momints/src/store/photos.ts) saves local photo records and roll membership.                                                                                                                                  | Add render state, seed, recipe reference, final-file hash and recovery information.                          |
+| Payments       | [skrApi.ts](D:/Claude/momints/src/services/skrApi.ts), [rollCollection.ts](D:/Claude/momints/src/services/rollCollection.ts) and [worker SKR verification](D:/Claude/momints/worker/src/skr/verify.ts) support SKR roll/mint fees. | A distinct filmstock order and permanent entitlement, with purchase recovery.                                |
+| Backend        | [roll creation](D:/Claude/momints/worker/src/rolls/create.ts), [frame minting](D:/Claude/momints/worker/src/rolls/frames.ts) and [D1 access](D:/Claude/momints/worker/src/db/index.ts) manage prepaid rolls.                       | Store the chosen stock on the server and derive film metadata from that record.                              |
 
 Important findings:
 
@@ -52,14 +52,14 @@ Installed stack: Expo 54, React Native 0.81.5, VisionCamera declared as ^4.7.3, 
 
 Use a combination of a colour response and spatial effects. A lookup table, or LUT, maps input colours to output colours; it is useful for a stock's colour character. Grain and light spreading need separate image operations.
 
-| Ingredient | What the user notices | Proposed implementation |
-| --- | --- | --- |
-| Tone response | Softer bright areas, characteristic contrast and shadow depth. | Smooth master and channel curves with controlled shadow and highlight behaviour. |
-| Colour response | Warm skin, muted greens, cooler shadows or selective saturation. | Curves/channel mixing initially; optional 3D LUT for more complex colour relationships. |
-| Grain | Fine organic texture that changes with image brightness. | Seeded, multiscale noise with a stock-specific luminance response; mostly shared across colour channels. |
-| Halation | A restrained warm fringe around intense lights and bright edges. | A highlight mask, blurred spatially and tinted, with bounded strength. |
-| Bloom | A softer, broader glow around bright areas. | A separate low-strength highlight blur. Keep it distinguishable from halation. |
-| Vignette and softness | Gentle edge falloff and less clinical sharpness. | Small spatial adjustments, specified separately from the colour recipe. |
+| Ingredient            | What the user notices                                            | Proposed implementation                                                                                  |
+| --------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Tone response         | Softer bright areas, characteristic contrast and shadow depth.   | Smooth master and channel curves with controlled shadow and highlight behaviour.                         |
+| Colour response       | Warm skin, muted greens, cooler shadows or selective saturation. | Curves/channel mixing initially; optional 3D LUT for more complex colour relationships.                  |
+| Grain                 | Fine organic texture that changes with image brightness.         | Seeded, multiscale noise with a stock-specific luminance response; mostly shared across colour channels. |
+| Halation              | A restrained warm fringe around intense lights and bright edges. | A highlight mask, blurred spatially and tinted, with bounded strength.                                   |
+| Bloom                 | A softer, broader glow around bright areas.                      | A separate low-strength highlight blur. Keep it distinguishable from halation.                           |
+| Vignette and softness | Gentle edge falloff and less clinical sharpness.                 | Small spatial adjustments, specified separately from the colour recipe.                                  |
 
 Vignetting, leaks and optical softness are camera/lens or handling characteristics as well as aesthetic choices. They need not be added to every stock. Keep dust, scratches and random light leaks out of the starter stock.
 
@@ -74,11 +74,11 @@ These recommendations are an artistic approximation for processed phone photogra
 
 ### Suggested first collection
 
-| Working name | Access | Creative brief | Best demonstration |
-| --- | --- | --- | --- |
-| Momints Everyday | Free to everyone | Warm-neutral colour, gentle highlights, fine grain, restrained saturation and very little glow. | People, daylight, travel and everyday scenes. |
-| Momints After Hours | Permanent SKR unlock | Cooler shadow colour, controlled warm halation around practical lights, stronger grain and richer contrast. | Neon, shop windows, evening portraits and street lights. |
-| Momints Sunfade | Permanent SKR unlock | Warm highlights, softer contrast, faded greens/blues and a gentle edge falloff. | Beach, late afternoon, summer street scenes and flash snapshots. |
+| Working name        | Access               | Creative brief                                                                                              | Best demonstration                                               |
+| ------------------- | -------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Momints Everyday    | Free to everyone     | Warm-neutral colour, gentle highlights, fine grain, restrained saturation and very little glow.             | People, daylight, travel and everyday scenes.                    |
+| Momints After Hours | Permanent SKR unlock | Cooler shadow colour, controlled warm halation around practical lights, stronger grain and richer contrast. | Neon, shop windows, evening portraits and street lights.         |
+| Momints Sunfade     | Permanent SKR unlock | Warm highlights, softer contrast, faded greens/blues and a gentle edge falloff.                             | Beach, late afternoon, summer street scenes and flash snapshots. |
 
 Use original Momints names and recipes. Avoid promising an exact Kodak, Fujifilm or CineStill match without a calibrated comparison process.
 
@@ -178,11 +178,11 @@ Repeat renders should match within a defined visual tolerance on supported hardw
 
 Three things need separate homes:
 
-| Data | Authoritative home | Device copy | Purpose |
-| --- | --- | --- | --- |
-| Stock definition and recipe | Version-controlled release catalog plus immutable hosted bundles | App-private files; starter bundled with the APK | Defines the look. |
-| Permanent purchase entitlement | Worker D1, backed by a verified Solana payment record | Wallet/cluster-scoped verified cache | Records who can use a paid stock. |
-| Roll/frame result | Local capture records and final image; existing upload/mint pipeline after minting | Persistent app photo storage | Preserves the actual photograph and the recipe used. |
+| Data                           | Authoritative home                                                                 | Device copy                                     | Purpose                                              |
+| ------------------------------ | ---------------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------- |
+| Stock definition and recipe    | Version-controlled release catalog plus immutable hosted bundles                   | App-private files; starter bundled with the APK | Defines the look.                                    |
+| Permanent purchase entitlement | Worker D1, backed by a verified Solana payment record                              | Wallet/cluster-scoped verified cache            | Records who can use a paid stock.                    |
+| Roll/frame result              | Local capture records and final image; existing upload/mint pipeline after minting | Persistent app photo storage                    | Preserves the actual photograph and the recipe used. |
 
 Proposed device organization:
 
@@ -276,14 +276,14 @@ Connecting a wallet in the app is not sufficient proof to an HTTP backend that a
 
 ### Proposed endpoints
 
-| Endpoint | Responsibility |
-| --- | --- |
-| GET /filmstocks | Catalog, free stock, supported recipes, samples and current prices. |
-| POST /auth/challenge and /auth/verify | Prove wallet control and establish a limited session. |
-| GET /me/filmstocks | Restore that wallet's permanent purchases. |
-| POST /filmstock-orders | Idempotently create an order or return already-owned status. |
-| GET /filmstock-orders/:id | Resume pending payment/fulfilment. |
-| POST /filmstock-orders/:id/confirm | Verify the same payment and grant access once. |
+| Endpoint                                     | Responsibility                                                      |
+| -------------------------------------------- | ------------------------------------------------------------------- |
+| GET /filmstocks                              | Catalog, free stock, supported recipes, samples and current prices. |
+| POST /auth/challenge and /auth/verify        | Prove wallet control and establish a limited session.               |
+| GET /me/filmstocks                           | Restore that wallet's permanent purchases.                          |
+| POST /filmstock-orders                       | Idempotently create an order or return already-owned status.        |
+| GET /filmstock-orders/:id                    | Resume pending payment/fulfilment.                                  |
+| POST /filmstock-orders/:id/confirm           | Verify the same payment and grant access once.                      |
 | GET /filmstocks/:id/versions/:version/bundle | Deliver a compatible recipe, checking paid access where applicable. |
 
 Use HTTPS and rate limits. Keep payment credentials and authentication proofs out of analytics logs.
@@ -378,4 +378,3 @@ Measure free-stock adoption, first-to-second-roll return, reuse of paid stocks, 
 Use aggregate or opt-in telemetry consistent with the app's privacy policy. Photos, precise location and signed wallet messages are not needed for these measurements.
 
 Next development action: complete Stage A with Momints Everyday and approve its real-device results before committing to a larger paid collection.
-

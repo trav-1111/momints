@@ -20,9 +20,7 @@ function withRemoveFineLocationPermission(config) {
     if (!Array.isArray(manifest['uses-permission'])) {
       manifest['uses-permission'] = []
     }
-    manifest['uses-permission'] = manifest['uses-permission'].filter(
-      (perm) => perm.$['android:name'] !== FINE_LOCATION,
-    )
+    manifest['uses-permission'] = manifest['uses-permission'].filter((perm) => perm.$['android:name'] !== FINE_LOCATION)
     manifest['uses-permission'].push({
       $: { 'android:name': FINE_LOCATION, 'tools:node': 'remove' },
     })

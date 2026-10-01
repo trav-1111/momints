@@ -51,7 +51,10 @@ function skrDelta(tx: ParsedTransaction, ata: string): { delta: bigint; mint: st
 export function checkSkrTransfer(tx: ParsedTransaction, check: SkrTransferCheck): SkrTransferVerdict {
   const result = skrDelta(tx, check.treasurySkrAta)
   if (!result) {
-    return { ok: false, reason: `Transaction does not deliver any SPL token balance to the treasury's $SKR account ${check.treasurySkrAta}` }
+    return {
+      ok: false,
+      reason: `Transaction does not deliver any SPL token balance to the treasury's $SKR account ${check.treasurySkrAta}`,
+    }
   }
   if (result.mint !== SKR_MINT_ADDRESS) {
     return {

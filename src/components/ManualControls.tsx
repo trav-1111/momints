@@ -30,7 +30,12 @@
 // This component is purely presentational.
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { View, Text, Pressable, StyleSheet } from 'react-native'
-import { Gesture, GestureDetector, GestureUpdateEvent, PanGestureHandlerEventPayload } from 'react-native-gesture-handler'
+import {
+  Gesture,
+  GestureDetector,
+  GestureUpdateEvent,
+  PanGestureHandlerEventPayload,
+} from 'react-native-gesture-handler'
 import * as Haptics from 'expo-haptics'
 import {
   filterIsoNotches,
@@ -498,7 +503,11 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('EV')} disabled={fullyManual}>
           <Text
-            style={[styles.stripLabel, activeParam === 'EV' && styles.stripLabelActive, fullyManual && styles.stripDisabled]}
+            style={[
+              styles.stripLabel,
+              activeParam === 'EV' && styles.stripLabelActive,
+              fullyManual && styles.stripDisabled,
+            ]}
           >
             EV
           </Text>

@@ -224,7 +224,7 @@ export function mintWorkerFrame(params: MintFrameParams): Promise<MintFrameRespo
       ),
     )
     .finally(() => {
-    inFlightFrameMints.delete(key)
+      inFlightFrameMints.delete(key)
     })
   inFlightFrameMints.set(key, promise)
   return promise

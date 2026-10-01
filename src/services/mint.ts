@@ -364,7 +364,7 @@ async function buildCoreFrameTransaction(
         name: item.name,
         uri: item.metadataUri,
         owner: walletPk,
-      })
+      }),
     )
     .setBlockhash(blockhash)
     .build(umi)
@@ -430,8 +430,11 @@ async function buildQuickCoreTransaction(
         uri: item.placeholderUri,
         owner: walletPk,
         updateAuthority: publicKey(item.terms.updateAuthority),
-        plugins: [royaltiesPlugin(walletPk), { type: 'VerifiedCreators', signatures: [{ address: walletPk, verified: true }] }],
-      })
+        plugins: [
+          royaltiesPlugin(walletPk),
+          { type: 'VerifiedCreators', signatures: [{ address: walletPk, verified: true }] },
+        ],
+      }),
     )
     .setBlockhash(blockhash)
     .build(umi)

@@ -2,15 +2,7 @@ import * as Location from 'expo-location'
 import type { CaptureMeta } from '../store/photos'
 import type { LocationGranularity } from '../store/locationSettings'
 
-const WEEKDAYS = [
-  'Sunday',
-  'Monday',
-  'Tuesday',
-  'Wednesday',
-  'Thursday',
-  'Friday',
-  'Saturday',
-]
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
 /** "6:42 AM · Friday" — manual formatting to avoid Hermes Intl locale variance */
 export function formatCapturedAt(ts: number): string {
@@ -32,10 +24,7 @@ export function resolveLocation(meta?: CaptureMeta): string {
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms)),
-  ])
+  return Promise.race([promise, new Promise<T>((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))])
 }
 
 // Cache the permission outcome so subsequent captures never re-prompt
@@ -67,10 +56,7 @@ async function getPosition(): Promise<{ latitude: number; longitude: number } | 
     // fall through to a fresh fix
   }
   try {
-    const fresh = await withTimeout(
-      Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low }),
-      5000
-    )
+    const fresh = await withTimeout(Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Low }), 5000)
     return fresh.coords
   } catch {
     return null
@@ -82,10 +68,7 @@ async function reverseGeocode(
   longitude: number,
   granularity: 'country' | 'state' | 'city',
 ): Promise<string | null> {
-  const results = await withTimeout(
-    Location.reverseGeocodeAsync({ latitude, longitude }),
-    4000
-  )
+  const results = await withTimeout(Location.reverseGeocodeAsync({ latitude, longitude }), 4000)
   const place = results?.[0]
   if (!place) return null
 

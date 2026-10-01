@@ -23,8 +23,7 @@
         --yellow: #facc15;
         --yellow-tint: rgba(250, 204, 21, 0.14);
         --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Consolas', monospace;
-        --sans:
-          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       }
 
       * {
@@ -356,18 +355,12 @@
       <div id="gate">
         <h2>Enter your ops token</h2>
         <p>
-          Cloudflare Access already confirmed it's you. This token authenticates the dashboard's
-          data requests to the Worker — the same <code>OPS_AUTH_TOKEN</code> used for
-          <code>/ops/status</code> etc. It's stored only in this browser.
+          Cloudflare Access already confirmed it's you. This token authenticates the dashboard's data requests to the
+          Worker — the same <code>OPS_AUTH_TOKEN</code> used for <code>/ops/status</code> etc. It's stored only in this
+          browser.
         </p>
         <form id="gate-form">
-          <input
-            id="token-input"
-            type="password"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="OPS_AUTH_TOKEN"
-          />
+          <input id="token-input" type="password" autocomplete="off" spellcheck="false" placeholder="OPS_AUTH_TOKEN" />
           <button type="submit">Unlock</button>
         </form>
         <div id="gate-error"></div>

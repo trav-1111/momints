@@ -251,4 +251,6 @@ const tx = await update(umi, {
 console.log('Sending…')
 const signature = await sendAndConfirm(umi, rpcUrl, tx)
 console.log(`\nDone. Signature: ${signature}`)
-console.log(`Asset ${opts.asset} now points at ${metadataUri} and update authority is the owner (${asset.owner.toString()}).`)
+console.log(
+  `Asset ${opts.asset} now points at ${metadataUri} and update authority is the owner (${asset.owner.toString()}).`,
+)

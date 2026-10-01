@@ -5,7 +5,12 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const { mayPurgeVerifiedRoll } = require('../src/services/rollVaultPolicy.cjs')
-const { createRollVaultUri, parseRollVaultUri, isRollVaultUri, jpegDimensions } = require('../src/services/rollVaultFormat.cjs')
+const {
+  createRollVaultUri,
+  parseRollVaultUri,
+  isRollVaultUri,
+  jpegDimensions,
+} = require('../src/services/rollVaultFormat.cjs')
 
 const completeEvidence = {
   expectedFrames: 12,

@@ -114,18 +114,9 @@ export default function CameraCapsSpike() {
   return (
     <View style={styles.root}>
       <Pressable style={styles.previewWrap} onPress={handleTapFocus}>
-        <Camera
-          ref={cameraRef}
-          style={StyleSheet.absoluteFill}
-          device={device}
-          isActive={true}
-          exposure={exposure}
-        />
+        <Camera ref={cameraRef} style={StyleSheet.absoluteFill} device={device} isActive={true} exposure={exposure} />
         {focusPoint && (
-          <View
-            pointerEvents="none"
-            style={[styles.focusRing, { left: focusPoint.x - 35, top: focusPoint.y - 35 }]}
-          />
+          <View pointerEvents="none" style={[styles.focusRing, { left: focusPoint.x - 35, top: focusPoint.y - 35 }]} />
         )}
         <View style={styles.exposureHud}>
           <Text style={styles.exposureText}>
@@ -158,10 +149,7 @@ export default function CameraCapsSpike() {
             <Row label="MANUAL_SENSOR" value={String(backCap.hasManualSensor)} />
             <Row label="MANUAL_POST_PROCESSING" value={String(backCap.hasManualPostProcessing)} />
             <Row label="RAW capability flag" value={String(backCap.hasRaw)} />
-            <Row
-              label="ISO range"
-              value={backCap.isoMin != null ? `${backCap.isoMin} – ${backCap.isoMax}` : 'n/a'}
-            />
+            <Row label="ISO range" value={backCap.isoMin != null ? `${backCap.isoMin} – ${backCap.isoMax}` : 'n/a'} />
             <Row
               label="Exposure time range"
               value={
@@ -174,7 +162,10 @@ export default function CameraCapsSpike() {
               label="Min focus distance"
               value={backCap.minFocusDistanceDiopters != null ? `${backCap.minFocusDistanceDiopters} diopters` : 'n/a'}
             />
-            <Row label="Manual focus possible (AF_MODE_OFF + non-fixed lens)" value={String(backCap.manualFocusPossible)} />
+            <Row
+              label="Manual focus possible (AF_MODE_OFF + non-fixed lens)"
+              value={String(backCap.manualFocusPossible)}
+            />
             <Row label="AWB_MODE_OFF available" value={String(backCap.hasAwbModeOff)} />
           </View>
         )}

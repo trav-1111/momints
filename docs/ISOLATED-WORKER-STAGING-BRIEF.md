@@ -52,15 +52,15 @@ Inventory the account, `momints.xyz` zone, existing Worker names, DNS/custom-dom
 
 Use a named staging environment or dedicated staging configuration with explicit resource bindings. Suggested names:
 
-| Resource | Staging name |
-| --- | --- |
-| Worker | `momints-roll-worker-staging` |
-| Hostname | `staging-api.momints.xyz` |
-| D1 database | `momints-rolls-staging` |
-| Quick image bucket | `momints-quick-staging-test` |
-| Filmstock bucket | `momints-filmstocks-staging` |
-| Finalize queue | `momints-quick-finalize-staging` |
-| Dead-letter queue | `momints-quick-finalize-staging-dlq` |
+| Resource           | Staging name                         |
+| ------------------ | ------------------------------------ |
+| Worker             | `momints-roll-worker-staging`        |
+| Hostname           | `staging-api.momints.xyz`            |
+| D1 database        | `momints-rolls-staging`              |
+| Quick image bucket | `momints-quick-staging-test`         |
+| Filmstock bucket   | `momints-filmstocks-staging`         |
+| Finalize queue     | `momints-quick-finalize-staging`     |
+| Dead-letter queue  | `momints-quick-finalize-staging-dlq` |
 
 Confirm availability before creation. The current consumer recognizes dead-letter queues by the `-dlq` suffix; preserve that convention. Assign separate rate-limit namespaces and ensure every required binding is present. Disable automatic scheduled jobs in staging initially and document how manual checks exercise the relevant logic.
 

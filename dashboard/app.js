@@ -115,9 +115,7 @@ function donutChart(segments, size = 120) {
   const cy = size / 2
   const circumference = 2 * Math.PI * r
   let offset = 0
-  const svgParts = [
-    `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#24252f" stroke-width="14" />`,
-  ]
+  const svgParts = [`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#24252f" stroke-width="14" />`]
   if (total > 0) {
     for (const seg of segments) {
       if (seg.value <= 0) continue
@@ -208,7 +206,10 @@ function renderWallets(data) {
 // ---- Section: Health ------------------------------------------------------
 
 function cronBadge(ok, label) {
-  return el('span', { class: `badge ${ok ? 'ok' : 'bad'}` }, [el('span', { class: 'dot' }), document.createTextNode(label)])
+  return el('span', { class: `badge ${ok ? 'ok' : 'bad'}` }, [
+    el('span', { class: 'dot' }),
+    document.createTextNode(label),
+  ])
 }
 
 function renderHealth(data) {
@@ -232,7 +233,11 @@ function renderHealth(data) {
 
   const stuckCard = el('div', { class: 'card' }, [
     el('h3', { text: 'Needs attention' }),
-    statRow('Deferred quick mints', String(data.quickMints.deferredPendingRecovery), data.quickMints.deferredPendingRecovery > 0 ? 'warn' : undefined),
+    statRow(
+      'Deferred quick mints',
+      String(data.quickMints.deferredPendingRecovery),
+      data.quickMints.deferredPendingRecovery > 0 ? 'warn' : undefined,
+    ),
     statRow('DEAD quick mints', String(data.quickMints.dead), data.quickMints.dead > 0 ? 'bad' : undefined),
     statRow('Stuck roll handoffs', String(data.rolls.stuckHandoffs), data.rolls.stuckHandoffs > 0 ? 'warn' : undefined),
   ])
@@ -295,8 +300,14 @@ function renderMetrics(data) {
   )
   quickRollCard.appendChild(
     el('div', { class: 'legend' }, [
-      el('span', { class: 'item' }, [el('span', { class: 'swatch', style: `background:${CHART_COLORS.quick}` }), document.createTextNode(`Quick (${data.mints.quick})`)]),
-      el('span', { class: 'item' }, [el('span', { class: 'swatch', style: `background:${CHART_COLORS.roll}` }), document.createTextNode(`Roll (${data.mints.roll})`)]),
+      el('span', { class: 'item' }, [
+        el('span', { class: 'swatch', style: `background:${CHART_COLORS.quick}` }),
+        document.createTextNode(`Quick (${data.mints.quick})`),
+      ]),
+      el('span', { class: 'item' }, [
+        el('span', { class: 'swatch', style: `background:${CHART_COLORS.roll}` }),
+        document.createTextNode(`Roll (${data.mints.roll})`),
+      ]),
     ]),
   )
   charts.appendChild(quickRollCard)
@@ -313,8 +324,14 @@ function renderMetrics(data) {
   )
   paymentCard.appendChild(
     el('div', { class: 'legend' }, [
-      el('span', { class: 'item' }, [el('span', { class: 'swatch', style: `background:${CHART_COLORS.sol}` }), document.createTextNode(`SOL (${data.paymentSplit.solPct}%)`)]),
-      el('span', { class: 'item' }, [el('span', { class: 'swatch', style: `background:${CHART_COLORS.skr}` }), document.createTextNode(`$SKR (${data.paymentSplit.skrPct}%)`)]),
+      el('span', { class: 'item' }, [
+        el('span', { class: 'swatch', style: `background:${CHART_COLORS.sol}` }),
+        document.createTextNode(`SOL (${data.paymentSplit.solPct}%)`),
+      ]),
+      el('span', { class: 'item' }, [
+        el('span', { class: 'swatch', style: `background:${CHART_COLORS.skr}` }),
+        document.createTextNode(`$SKR (${data.paymentSplit.skrPct}%)`),
+      ]),
     ]),
   )
   charts.appendChild(paymentCard)
@@ -324,8 +341,14 @@ function renderMetrics(data) {
   overTimeCard.appendChild(el('div', { html: barChart(data.mintsOverTime) }))
   overTimeCard.appendChild(
     el('div', { class: 'legend' }, [
-      el('span', { class: 'item' }, [el('span', { class: 'swatch', style: `background:${CHART_COLORS.quick}` }), document.createTextNode('Quick')]),
-      el('span', { class: 'item' }, [el('span', { class: 'swatch', style: `background:${CHART_COLORS.roll}` }), document.createTextNode('Roll')]),
+      el('span', { class: 'item' }, [
+        el('span', { class: 'swatch', style: `background:${CHART_COLORS.quick}` }),
+        document.createTextNode('Quick'),
+      ]),
+      el('span', { class: 'item' }, [
+        el('span', { class: 'swatch', style: `background:${CHART_COLORS.roll}` }),
+        document.createTextNode('Roll'),
+      ]),
     ]),
   )
   charts.appendChild(overTimeCard)
@@ -377,8 +400,18 @@ function startDashboard() {
   document.getElementById('dashboard').hidden = false
   document.getElementById('token-row').hidden = false
 
-  const wallets = makeSection({ updatedElId: 'wallets-updated', bodyElId: 'wallets-body', path: '/ops/dashboard/wallets', render: renderWallets })
-  const health = makeSection({ updatedElId: 'health-updated', bodyElId: 'health-body', path: '/ops/dashboard/health', render: renderHealth })
+  const wallets = makeSection({
+    updatedElId: 'wallets-updated',
+    bodyElId: 'wallets-body',
+    path: '/ops/dashboard/wallets',
+    render: renderWallets,
+  })
+  const health = makeSection({
+    updatedElId: 'health-updated',
+    bodyElId: 'health-body',
+    path: '/ops/dashboard/health',
+    render: renderHealth,
+  })
   const metrics = makeSection({
     updatedElId: 'metrics-updated',
     bodyElId: 'metrics-body',

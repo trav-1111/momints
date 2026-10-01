@@ -119,9 +119,9 @@ function parseArtifact(raw: unknown): PhotoArtifact | null {
     typeof artifact.imageHash !== 'string' ||
     !/^[a-f0-9]{64}$/.test(artifact.imageHash) ||
     (renderer !== 'native-egl-v2' && renderer !== 'skia-v2' && renderer !== 'legacy-v1') ||
-    (recipeSha256 !== undefined &&
-      (typeof recipeSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(recipeSha256))) ||
-    (lutSha256 !== null && lutSha256 !== undefined &&
+    (recipeSha256 !== undefined && (typeof recipeSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(recipeSha256))) ||
+    (lutSha256 !== null &&
+      lutSha256 !== undefined &&
       (typeof lutSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(lutSha256)))
   ) {
     return null
@@ -305,7 +305,8 @@ export async function persistRollFrame(photo: Photo, frameNumber: number): Promi
 
   try {
     const persisted = open(await encryptedFrame.bytes(), key)
-    if (hashBytes(persisted) !== artifact.imageHash) throw new Error('The encrypted roll frame failed commit verification.')
+    if (hashBytes(persisted) !== artifact.imageHash)
+      throw new Error('The encrypted roll frame failed commit verification.')
     const existing = await readManifest(photo.rollId, key)
     const current = existing ? await upgradeLegacyManifest(existing, key, photo.filmStockId) : null
     const frame: StoredRollFrame = {
@@ -377,7 +378,8 @@ export async function restoreRollVault(rollId: string, fallbackFilmStockId?: str
   for (const frame of manifest.frames) {
     const encrypted = new File(directory, frame.fileName)
     if (!encrypted.exists) throw new Error(`Encrypted roll frame ${frame.frameNumber} is missing.`)
-    if (!frame.artifact || !frame.filmStockId) throw new Error(`Encrypted roll frame ${frame.frameNumber} is incomplete.`)
+    if (!frame.artifact || !frame.filmStockId)
+      throw new Error(`Encrypted roll frame ${frame.frameNumber} is incomplete.`)
     if (fallbackFilmStockId && frame.filmStockId !== fallbackFilmStockId) {
       throw new Error(`Encrypted roll frame ${frame.frameNumber} has the wrong film identity.`)
     }

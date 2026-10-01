@@ -47,9 +47,7 @@ export interface RollVerifyRequest {
  * transfer. "I couldn't check yet" must never collapse into "this is invalid"
  * — the first should be retried with the same signature, the second refused.
  */
-export type RollVerifyResult =
-  | { ok: true; feeLamports: number }
-  | { ok: false; retryable: boolean; reason: string }
+export type RollVerifyResult = { ok: true; feeLamports: number } | { ok: false; retryable: boolean; reason: string }
 
 function retry(reason: string): RollVerifyResult {
   return { ok: false, retryable: true, reason }
@@ -76,7 +74,9 @@ export async function verifyRollFeePayment(rpcUrl: string, req: RollVerifyReques
   try {
     tx = await getTransaction(rpcUrl, req.signature)
   } catch (err) {
-    return retry(`RPC could not be reached to verify ${req.signature}: ${err instanceof Error ? err.message : String(err)}`)
+    return retry(
+      `RPC could not be reached to verify ${req.signature}: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
 
   // Absent is not invalid — a signature confirmed seconds ago may not be
@@ -95,12 +95,17 @@ export async function verifyRollFeePayment(rpcUrl: string, req: RollVerifyReques
 
   if (req.skr) {
     if (!req.skr.quoteExpiresAt) {
-      return reject(`No $SKR quote was ever issued for wallet ${req.wallet} — call POST /skr/quote before creating the roll`)
+      return reject(
+        `No $SKR quote was ever issued for wallet ${req.wallet} — call POST /skr/quote before creating the roll`,
+      )
     }
     if (Date.parse(req.skr.quoteExpiresAt) < Date.now()) {
       return reject(`The $SKR quote for wallet ${req.wallet} expired at ${req.skr.quoteExpiresAt} — re-quote and retry`)
     }
-    const skrVerdict = checkSkrTransfer(tx, { treasurySkrAta: req.skr.treasurySkrAta, requiredAtomic: req.skr.requiredAtomic })
+    const skrVerdict = checkSkrTransfer(tx, {
+      treasurySkrAta: req.skr.treasurySkrAta,
+      requiredAtomic: req.skr.requiredAtomic,
+    })
     if (!skrVerdict.ok) {
       return reject(`Transaction ${req.signature}: ${skrVerdict.reason}`)
     }
