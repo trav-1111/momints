@@ -14,7 +14,7 @@ The cutover work itself performed no payment, mint, permanent upload, Discord no
 
 ## Exact Cloudflare target
 
-- Account: `Traviskeir@gmail.com's Account`
+- Account: owner's Cloudflare account (account ID below; personal login omitted).
 - Account ID: `722d3248891665c30e47acd64086e876`
 - Dashboard: `https://dash.cloudflare.com/722d3248891665c30e47acd64086e876/workers/services/view/momints-roll-worker-staging/production/settings`
 - Target Worker: `momints-roll-worker-staging`

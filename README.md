@@ -1,134 +1,109 @@
 # Momints
 
-**Capture. Mint. Own.**
+Shoot. Mint. Yours.
 
-Momints is a mobile NFT camera app built for the Solana Seeker. Take photos, add metadata, and mint them as Metaplex Core NFTs — either one at a time ("quick shots") or as a prepaid 12/24-exposure roll, both backed by the [roll Worker](worker/README.md).
+Momints is a native Android NFT camera app built and tested on Solana Seeker. Quick Shots and prepaid 12/24-frame rolls become Metaplex Core assets, with photographs stored permanently on Arweave through Turbo. Film development happens on-device; filmstock availability and unlocks come from the Worker and authentic developed rolls.
 
-Runs on Solana **mainnet** — minted assets and fees are real. See [worker/README.md](worker/README.md) for the backend and its fee-verification model.
+This repository retains its hackathon development history. The verified origin is `https://github.com/trav-1111/momints`. The owner plans to keep the repository private for submission and grant judges access as needed; public viewing after submission remains an option. Actual reviewer access has not been independently verified.
 
 ## Features
 
-- Full-screen camera with flash, tap-to-focus, pinch-to-zoom, and front/back toggle
-- Photo sandbox — images stay in-app, never saved to your device gallery unless you choose to
-- Rotation editor with fine-grained slider and 90-degree steps
-- **Quick shots** — mint a single photo immediately; the storage fee rides in the same wallet signature as the mint
-- **Rolls** — pay once up front for a 12 or 24-exposure roll; frames mint server-side (Worker-signed, no per-frame wallet approval) into a collection the shooter owns from creation
-- Permanent storage on genuine Arweave via Turbo — not IPFS pinning
-- On-chain royalties (5% to the shooter, no platform cut) and verified-creator signatures
-- Wallet connection through Mobile Wallet Adapter (Phantom, Solflare, Seeker built-in, etc.)
-- `.skr` domain resolution — wallet header shows your Solana domain if you have one
+- Camera framing and manual controls, capture → develop → reveal, and native on-device LUT/effect processing.
+- House films and rotating Film Shelf stocks; developing an eligible roll unlocks that exact stock for future rolls and Quick Shoot.
+- Quick Shots and prepaid 12/24-frame rolls, with retry/reconciliation and shooter-owned collections.
+- Wallet dropdown access to mint history, mint progress and shareable, non-minted contact sheets.
+- Mobile Wallet Adapter and `.skr` wallet-name resolution.
+- Temporary Quick Shot captures; unfinished roll photographs retained in an encrypted app sandbox until independently verified completion. History uses permanent image URIs without persistent image caching. Explicit user exports are the user's own local copies.
 
-## Getting Started
+Solana **mainnet only**. Minting, roll prepayment and permanent uploads use real funds/credits. There is no free/devnet mint mode. A reviewer can inspect code, run local checks and build the camera without minting.
 
-### Prerequisites
+## Reviewer setup
 
-- **Node.js 18+** (tested on 22.x)
-- **Android Studio** with Android SDK installed — needed for `expo run:android`
-- **A Solana Seeker** (or any Android device with a Solana wallet installed)
-- **USB debugging enabled** on the device
-- **The roll Worker deployed and reachable** — see [worker/README.md](worker/README.md). The app has no on-device fallback: minting requires `EXPO_PUBLIC_ROLL_API`.
+Use Node **22.17.1 / npm 10.9.2** (the verified cleanup environment), or a compatible Node 22 release. The locked React Native 0.81.5 requires Node at least 20.19.4; Worker tests additionally use Node's experimental TypeScript stripping. Install with the lockfiles, not `npm install`.
 
-### Clone and install
+For Android development, install JDK 17, Android Studio, SDK Platform 36, Build Tools 36.0.0, platform-tools/ADB and NDK 27.1.12297006 (the locked React Native Gradle version catalogue). These match the current Expo 54/native dependency configuration, with Android min SDK 24. Configure `JAVA_HOME` and `ANDROID_HOME`, and add platform-tools to `PATH`. See [React Native environment setup](https://reactnative.dev/docs/0.81/set-up-your-environment) and [Expo development-build setup](https://docs.expo.dev/get-started/set-up-your-environment/).
 
-```bash
-git clone https://github.com/YOUR_USERNAME/momints.git
+A physical Android device with camera, USB debugging and a mainnet Mobile Wallet Adapter-compatible wallet is needed for the complete flow; Seeker is the tested device. There are custom native modules under `modules/`, so **Expo Go and a web browser cannot exercise the production renderer/camera**. iOS parity is not certified.
+
+```sh
+git clone https://github.com/trav-1111/momints.git
 cd momints
-npm install
+npm ci
 ```
 
-### Environment variables
+### Option A: existing public API
 
-The app needs a `.env` file with the roll Worker URL, treasury address, and a Solana RPC endpoint. **Ask the project owner for the `.env` file** and place it in the project root. A template is provided for reference:
+Copy `.env.example` to the ignored `.env` and supply **your own** mainnet RPC URL. The example API URL is `https://api.momints.xyz` and the public treasury matches that service. Do not request or copy the owner's private environment, signing key or operator token. API availability is an external prerequisite, not a guarantee of repository access or funded mint readiness.
 
-```bash
-cp .env.example .env
-# Then paste the real values you received
-```
+All `EXPO_PUBLIC_*` values are bundled into the app in plaintext. Use a client-appropriate RPC plan with provider restrictions/quotas; never put backend credentials in those fields. See the sanitized environment examples for the three required app fields.
 
-### Build and run on your Seeker
+Connecting to this API does not make paid actions safe/free: minting or prepaying a roll uses **your wallet** and production infrastructure. Do not run automated paid tests against it.
 
-Connect your device via USB, make sure it shows up in `adb devices`, then:
+### Option B: your own isolated backend
 
-```bash
+See [independent reviewer backend setup](docs/REVIEWER-SETUP.md). It uses this same Worker source, a separately configured D1/R2/Queue deployment, and your own signer, treasury, RPC and Turbo funding. Merely separating Cloudflare resources does not isolate mainnet or make uploads free.
+
+**Do not run the checked-in production deploy/activation/retirement commands, remote migrations, secret helpers or deployed synthetic test suites against Momints resources.** The default `worker/wrangler.toml` binds Momints production data, even though it deploys in maintenance mode. It is not a reviewer sandbox template.
+
+### Build a development client
+
+```sh
+adb devices
 npm run android
 ```
 
-This runs `expo run:android`, which prebuilds the native project and installs the app directly onto your device via ADB. The first build takes several minutes; subsequent runs are faster.
+`expo run:android` generates the ignored native Android project, compiles the custom modules and installs a development build. This needs Android build tooling and can download Gradle/Maven dependencies. Changes to native modules require rebuilding; JS-only changes can use `npm run dev`. If USB networking needs it, run `adb reverse tcp:8081 tcp:8081`.
 
-> **Note:** The EAS cloud build (`eas build --profile preview`) is configured but untested. For now, use `npm run android` with a local Android SDK.
+This build depends on Metro. **It is not a standalone submission APK.** `eas.json` retains internal APK and production app-bundle profiles with local signing credentials; their standalone build/signing verification is a separate release task. `npm run android:build` is named historically: it performs **prebuild only**, not APK compilation.
 
-### Development server
+## Non-spending checks
 
-If you already have the app installed and just want to iterate on JS changes:
-
-```bash
-npm run dev
+```sh
+npx --no-install tsc --noEmit
+npm run lint:check
+node --test tests/*.test.cjs
+npm run fmt:check
+cd worker
+npm ci --legacy-peer-deps
+npm run typecheck
+npm run test:filmstocks
+npm run test:roll-contract
+npm run test:maintenance
+npm run test:production-tooling
+npm run test:staging
+npm run validate:filmstocks
+npm run test:migration-upgrade
+npm run bundle-size
 ```
 
-This starts the Expo dev server with cache clearing. The app on your device will connect and hot-reload.
+The wildcard runs all nine maintained app suites, including wallet domains, privacy, vault, processing, artifact validation, readiness, reconciliation and registry counting. Worker migration-upgrade checks use an isolated **local** D1 instance. `bundle-size` uses Wrangler `--dry-run` and does not deploy. No credentials, funded wallet or private photographic corpus are needed for these checks. Tooling can still require platform/native dependency installation and network access during `npm ci`.
 
-## Using the App
+The Worker's existing TypeScript 7.0.2 pin conflicts with Solana Kit's optional TypeScript 5 peer declaration. Plain Worker `npm ci` currently fails with `ERESOLVE`; the explicit `--legacy-peer-deps` install preserves its existing lockfile and is the tested setup path, not a dependency upgrade or claim of upstream peer compatibility. Resolve that dependency compatibility separately. Root installation succeeds without the flag but reports existing peer/deprecation warnings.
 
-1. **Connect wallet** — tap the wallet icon on the camera screen
-2. **Take photos** — use the shutter button; swipe through the review flow to keep, delete, or mark photos for minting
-3. **Mint** — tap a queued photo to fill in its metadata (title, artist), or start a prepaid roll before shooting
-4. **Confirm** — quick shots ask for one wallet signature (mint + fee together); roll frames mint server-side with no per-frame approval
-5. **Verify** — the app shows a Solscan link after minting; your NFT also appears in your wallet's collectibles
+| Script                    | What it actually does                                                                               |
+| ------------------------- | --------------------------------------------------------------------------------------------------- |
+| `android` / `dev`         | Compile/install a native development build / run Metro                                              |
+| `lint:check` / `lint`     | Check lint / lint with auto-fix                                                                     |
+| `fmt:check` / `fmt`       | Repository-wide Prettier check / formatting                                                         |
+| `test:*`                  | Individual maintained app suites; see `package.json`                                                |
+| `ci`                      | Typecheck, lint, eight app suites, format check, Android prebuild (wallet-domain suite is separate) |
+| `build` / `android:build` | Typecheck + prebuild / prebuild only; neither produces a standalone APK                             |
+| `doctor`                  | Downloads the latest Expo doctor; not part of the frozen setup validation                           |
 
-Quick-mint and roll fees are cost-plus: computed from live rent + storage cost and recomputed every 3 hours, so pricing tracks real cost (including Solana's SIMD-0437 rent reduction as it rolls out) without a manual redeploy — see [worker/README.md "Cost-plus fee pricing"](worker/README.md#cost-plus-fee-pricing).
+## Source map and documentation
 
-## Project Structure
+- `src/app/`: camera, review, Quick gallery, mint progress/history and contact-sheet routes.
+- `src/services/`, `src/store/`, `src/hooks/`: image lifecycle, encrypted rolls, minting and reconciliation. `services/ipfs.ts` is the still-used metadata builder, not an active IPFS upload path.
+- `modules/`: local Android camera-capability, manual-control and EGL film-renderer modules.
+- `worker/`: production backend, additive migrations, tests and filmstock publishing contracts. [Worker README](worker/README.md), [filmstock contracts](docs/FILMSTOCKS.md).
+- `worker/filmstock-sources/`: approved source LUTs/attribution; `worker/filmstock-assets/`: immutable production recipes/runtime assets/previews. Do not regenerate or reformat immutable packages.
+- `tests/`: local app regression suites, including the idempotent roll-registry correction.
+- `dashboard/`: separate operator UI; requires an operator token and is not needed for ordinary reviewers.
+- `worker-turbo-spike/`, `docs/spikes/irys/`, `ARWEAVE_PATH_OPTIONS.md`: retained historical architecture evidence, not setup/deployment instructions. The camera spike routes are maintained device diagnostics.
+- [Production checklist](docs/ROLL-FRAME-PRODUCTION-CHECKLIST.md), [cutover record](docs/NEW-BACKEND-CUTOVER-REPORT.md), [submission cleanup report](docs/SUBMISSION-REPOSITORY-CLEANUP-REPORT.md).
 
-```
-src/
-├── app/                    # Expo Router screens
-│   ├── _layout.tsx         # Root layout with wallet provider
-│   ├── index.tsx           # Splash / connect screen
-│   ├── camera.tsx          # Camera capture
-│   ├── gallery.tsx         # Photo grid
-│   ├── review.tsx          # Post-capture review flow
-│   └── mint/
-│       ├── form/[id].tsx   # Metadata form
-│       └── progress.tsx    # Mint queue + minting progress
-├── components/             # Reusable UI components
-├── hooks/                  # useMint, useCreateRoll, useWalletDomain, ...
-├── services/                 # On-chain minting, roll/quick-mint API clients
-└── store/                  # Zustand state (photos, mint queue, roll registry)
+Private corpus/comparison evidence, local secrets, agent settings/worktrees and `worker/filmstock-drafts/` are intentionally excluded. They are not required for builds or ordinary local tests. Private-corpus visual validation remains owner-operated and is not reproducible from a public snapshot alone.
 
-worker/                     # Cloudflare Worker backend — see worker/README.md
-```
+## License and attribution
 
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Framework | Expo 54 + React Native |
-| Camera | react-native-vision-camera |
-| Styling | Tailwind CSS (Uniwind) |
-| State | Zustand |
-| Blockchain | Solana (mainnet) |
-| NFT | Metaplex Core |
-| Storage | Genuine Arweave via Turbo (Worker-side) |
-| Backend | Cloudflare Workers + D1 + R2 + Queues — see [worker/README.md](worker/README.md) |
-| Wallet | Mobile Wallet Adapter (`@wallet-ui/react-native-kit`) |
-| RPC | Configurable via `.env`; the Worker uses its own dedicated mainnet endpoint |
-
-## Scripts
-
-| Command | Description |
-|---------|-------------|
-| `npm run android` | Build and install on connected Android device |
-| `npm run dev` | Start Expo dev server (hot reload) |
-| `npm run lint` | Lint and auto-fix |
-| `npm run fmt` | Format with Prettier |
-| `npm run ci` | TypeScript + lint + format check + Android prebuild |
-
-## Known Limitations
-
-- **Mainnet — real value.** Balances, fees, and minted assets are real; there is no devnet mode.
-- **Client-side RPC key** — `EXPO_PUBLIC_SOLANA_RPC` is bundled into the app via `EXPO_PUBLIC_*`, which Expo inlines as plaintext at build time. This is now a real mainnet RPC key with real blast radius (rate-limit abuse, quota exhaustion) — pick a provider plan sized for that, and rotate it if it ever leaks.
-- **No on-device fallback** — if `EXPO_PUBLIC_ROLL_API` is unset or the Worker is unreachable, minting fails with a clear error rather than degrading to a different code path.
-
-## License
-
-MIT
+The owner has chosen to retain rights to the original Momints software and documentation. See [the rights-reserved notice](LICENSE.md), which permits authorized hackathon judges and organizers to clone, build, run and test the submission for evaluation. General reuse, modification or redistribution requires written permission. The former README's bare “MIT” claim was removed during cleanup. Preserve the separate package attribution/license documents under `worker/filmstock-sources/`, `worker/filmstock-assets/` and the package template. Third-party dependencies and separately licensed components remain subject to their own terms.

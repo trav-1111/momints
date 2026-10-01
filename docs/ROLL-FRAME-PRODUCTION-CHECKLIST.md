@@ -117,7 +117,7 @@ Branch: `fix/roll-frame-contract`
 - [x] Back up and migrate the preserved production D1 through 0010.
 - [x] Promote the tested Worker to `api.momints.xyz` in maintenance with no background execution.
 - [x] Replace the staging signer/operator token with the existing production secrets and complete Phase 3 activation checks.
-- [ ] Resolve the repository-wide Prettier baseline: `npm run fmt:check` currently reports 131 pre-existing/unrelated files, including generated and private draft paths.
+- [x] Resolve the repository-wide Prettier baseline: 141 warnings measured on 1 October; zero after scoped exclusions and mechanical formatting. See [cleanup report](SUBMISSION-REPOSITORY-CLEANUP-REPORT.md).
 - [x] Review privacy storage on device after capture, restart, history, contact sheet and completed-roll cleanup. See the supplied Seeker audit recorded on 1 October 2026 below.
 
 ### Checkpoint F — release decision
@@ -273,7 +273,7 @@ Branch: `fix/roll-frame-contract`
 
 - An isolated synthetic 24-frame Bali 400 roll exercised the production native renderer, verified-artifact path, encrypted roll vault and bounded vault-preview path without contacting the Worker or spending a prepaid roll.
 - All 24 high-detail 4000×3000 inputs processed and committed successfully. Capture/develop processing measured p50 1,039 ms, p95 1,112 ms and maximum 1,143 ms. Bounded reveal previews measured p50 216 ms, p95 252 ms and maximum 264 ms.
-- The sampled peak was 505.2 MiB Native Heap, 227.9 MiB Graphics and 870.8 MiB total PSS. This peak remains within the proposed debug-build envelope below, but that envelope still requires explicit release approval.
+- The sampled peak was 505.2 MiB Native Heap, 227.9 MiB Graphics and 870.8 MiB total PSS. Approval was pending at this 29 September checkpoint; the owner accepted the debug-build envelope on 1 October as recorded below.
 - Graphics was 34.4 MiB at baseline, rose transiently during the reveal sequence, measured 83.7 MiB immediately after the final preview, and returned to the exact 34.4 MiB baseline after a five-second settle. Native Heap fell from 375.3 MiB at baseline to 277.0 MiB after settle; total PSS fell from 686.1 MiB to 501.3 MiB. There was no sustained accumulation across the complete lifecycle.
 - Every source capture was deleted after its encrypted commit. The fake roll and vault were removed after the test, followed by the exact app-cache and `/data/local/tmp` fixtures. Final verification found no active roll, photo records, pending Quick finalizes, fixture directory or QA capture directory.
 - Approved Seeker debug-build release envelope: sampled total PSS no more than 1 GiB; sampled Graphics no more than 256 MiB; settled Graphics within 10 MiB of baseline five seconds after the final reveal. The owner accepted this envelope on 1 October 2026. The measured lifecycle passed all three limits: 870.8 MiB total PSS, 227.9 MiB Graphics, and Graphics returning from 83.7 MiB to its exact 34.4 MiB baseline after five seconds.
@@ -286,6 +286,8 @@ Branch: `fix/roll-frame-contract`
 - This closes the newly discovered manipulator-cache retention path. The broader privacy release gate remains open only because a real paid completed roll still must prove permanent-byte hash verification, developed-marker verification and subsequent encrypted-vault deletion.
 
 ## Decisions
+
+Submission update, 1 October: repository formatting and exact clean-source checks completed locally. The [cleanup report](SUBMISSION-REPOSITORY-CLEANUP-REPORT.md) records exclusions, audit scope, frozen installs and the existing Worker peer-compatibility exception. Standalone APK, repository license/visibility and publication remain separate. This does not close additional device/recovery scenarios or repeat paid tests.
 
 - Permanent upload limit: 3 MiB hard, 2.9 MB app target.
 - Legacy open-roll allowance: 8 MiB, scoped by roll protocol version; never granted to new rolls.

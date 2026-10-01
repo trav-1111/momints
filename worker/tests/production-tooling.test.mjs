@@ -6,6 +6,40 @@ import { resolveDeployTarget } from '../scripts/lib/deploy-target.mjs'
 
 const workerRoot = resolve(import.meta.dirname, '..')
 
+test('reviewer configuration is independent, paused and contains no production resource identity', async () => {
+  const config = await readFile(resolve(workerRoot, 'wrangler.review.example.toml'), 'utf8')
+  assert.match(config, /MAINTENANCE_MODE = "true"/)
+  assert.match(config, /DEPLOYMENT_ENV = "reviewer"/)
+  assert.match(config, /^name = "REPLACE_UNIQUE_WORKER_NAME"/m)
+  for (const field of ['account_id', 'database_name', 'database_id', 'bucket_name', 'namespace_id']) {
+    const assignments = [...config.matchAll(new RegExp(`^${field} = "([^"]+)"`, 'gm'))]
+    assert.ok(assignments.length > 0, `${field} is explicit`)
+    for (const assignment of assignments) assert.ok(assignment[1].startsWith('REPLACE_'))
+  }
+  assert.doesNotMatch(config, /momints-roll-worker|c4897487|momints-filmstocks|api\.momints\.xyz|o4w1THGT/)
+  assert.doesNotMatch(config, /^\[triggers\]|^\[\[queues\./m)
+  assert.doesNotMatch(config, /^\s*(IRYS_FUNDING_KEY|SOLANA_RPC_URL|OPS_AUTH_TOKEN|DISCORD_WEBHOOK_URL)\s*=/m)
+})
+
+test('reviewer secret example is sanitized and local configuration is narrowly excluded', async () => {
+  const [example, gitignore, prettierignore] = await Promise.all([
+    readFile(resolve(workerRoot, '.dev.vars.example'), 'utf8'),
+    readFile(resolve(workerRoot, '../.gitignore'), 'utf8'),
+    readFile(resolve(workerRoot, '../.prettierignore'), 'utf8'),
+  ])
+  assert.match(example, /^IRYS_FUNDING_KEY=replace_/m)
+  assert.match(example, /^OPS_AUTH_TOKEN=replace_/m)
+  assert.doesNotMatch(example, /^DISCORD_WEBHOOK_URL=/m)
+  for (const exclusions of [gitignore, prettierignore]) {
+    assert.ok(exclusions.split(/\r?\n/).includes('/worker/wrangler.review.local.toml'))
+    assert.ok(exclusions.split(/\r?\n/).includes('/worker/filmstock-drafts/'))
+  }
+  // Source archives are deliberately formatter-only exclusions, not Git exclusions.
+  assert.ok(!gitignore.split(/\r?\n/).includes('/worker/filmstock-sources/'))
+  assert.ok(prettierignore.split(/\r?\n/).includes('/worker/filmstock-sources/'))
+  assert.ok(!gitignore.split(/\r?\n/).includes('/worker/filmstock-assets/'))
+})
+
 test('filmstock deployer targets only the promoted production service and exact origin', () => {
   const production = resolveDeployTarget([], { FILMSTOCK_SMOKE_BASE_URL: 'https://api.momints.xyz' }, workerRoot)
   assert.equal(production.name, 'production')
