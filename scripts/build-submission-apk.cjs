@@ -231,7 +231,9 @@ async function main(args) {
     report.steps.push({ label, exitCode: code, elapsedMs: Date.now() - started })
     save()
     if (code !== 0) throw new Error('Local step failed: ' + label + '; inspect the private redacted log')
-    return sanitized
+    // Parse original tool receipts internally; credential redaction can change entry names.
+    // Only the sanitized copy is persisted, and callers never print the raw receipt.
+    return output
   }
   try {
     const npm = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')

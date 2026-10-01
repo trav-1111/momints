@@ -133,3 +133,13 @@ test('CLI strips inherited signing switches and names hackathon artifacts distin
   assert.match(source, /policy.hackathonDebugSigning \? '1' : '0'/)
   assert.match(source, /hackathon-only-debug-signed-/)
 })
+
+test('native receipts stay original for parsing while persisted logs are redacted', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/build-submission-apk.cjs'), 'utf8')
+  assert.match(source, /const sanitized = redact\(output\)/)
+  assert.match(source, /fs\.writeFileSync\(path\.join\(out,.*label.*\), sanitized\)/)
+  assert.match(source, /return output/)
+  const receipt = 'assets/index.android.bundle'
+  assert.notEqual(redactor(['android'])(receipt), receipt)
+  assert.equal(receipt.includes('assets/index.android.bundle'), true)
+})
