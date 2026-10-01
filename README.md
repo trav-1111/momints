@@ -56,6 +56,8 @@ npm run android
 
 This build depends on Metro. **It is not a standalone submission APK.** `eas.json` retains internal APK and production app-bundle profiles with local signing credentials; their standalone build/signing verification is a separate release task. `npm run android:build` is named historically: it performs **prebuild only**, not APK compilation.
 
+The owner-operated [isolated standalone APK workflow](docs/SUBMISSION-APK-BUILD.md) exports an exact candidate commit and uses the existing private release signing identity without cloud uploading or installing. Build provenance and actual success remain separate from these instructions.
+
 ## Non-spending checks
 
 ```sh
@@ -76,19 +78,19 @@ npm run test:migration-upgrade
 npm run bundle-size
 ```
 
-The wildcard runs all nine maintained app suites, including wallet domains, privacy, vault, processing, artifact validation, readiness, reconciliation and registry counting. Worker migration-upgrade checks use an isolated **local** D1 instance. `bundle-size` uses Wrangler `--dry-run` and does not deploy. No credentials, funded wallet or private photographic corpus are needed for these checks. Tooling can still require platform/native dependency installation and network access during `npm ci`.
+The wildcard runs all maintained app suites, including wallet domains, privacy, vault, processing, artifact validation, readiness, reconciliation, registry counting and local submission-build guards. Worker migration-upgrade checks use an isolated **local** D1 instance. `bundle-size` uses Wrangler `--dry-run` and does not deploy. No credentials, funded wallet or private photographic corpus are needed for these checks. Tooling can still require platform/native dependency installation and network access during `npm ci`.
 
 The Worker's existing TypeScript 7.0.2 pin conflicts with Solana Kit's optional TypeScript 5 peer declaration. Plain Worker `npm ci` currently fails with `ERESOLVE`; the explicit `--legacy-peer-deps` install preserves its existing lockfile and is the tested setup path, not a dependency upgrade or claim of upstream peer compatibility. Resolve that dependency compatibility separately. Root installation succeeds without the flag but reports existing peer/deprecation warnings.
 
-| Script                    | What it actually does                                                                               |
-| ------------------------- | --------------------------------------------------------------------------------------------------- |
-| `android` / `dev`         | Compile/install a native development build / run Metro                                              |
-| `lint:check` / `lint`     | Check lint / lint with auto-fix                                                                     |
-| `fmt:check` / `fmt`       | Repository-wide Prettier check / formatting                                                         |
-| `test:*`                  | Individual maintained app suites; see `package.json`                                                |
-| `ci`                      | Typecheck, lint, eight app suites, format check, Android prebuild (wallet-domain suite is separate) |
-| `build` / `android:build` | Typecheck + prebuild / prebuild only; neither produces a standalone APK                             |
-| `doctor`                  | Downloads the latest Expo doctor; not part of the frozen setup validation                           |
+| Script                    | What it actually does                                                                                                      |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `android` / `dev`         | Compile/install a native development build / run Metro                                                                     |
+| `lint:check` / `lint`     | Check lint / lint with auto-fix                                                                                            |
+| `fmt:check` / `fmt`       | Repository-wide Prettier check / formatting                                                                                |
+| `test:*`                  | Individual maintained app suites; see `package.json`                                                                       |
+| `ci`                      | Typecheck, lint, eight app suites, format check, Android prebuild (wallet-domain and submission-build suites are separate) |
+| `build` / `android:build` | Typecheck + prebuild / prebuild only; neither produces a standalone APK                                                    |
+| `doctor`                  | Downloads the latest Expo doctor; not part of the frozen setup validation                                                  |
 
 ## Source map and documentation
 
