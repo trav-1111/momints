@@ -58,7 +58,7 @@ async function query(items, offchain = metadata()) {
     }
     assert.equal(url, uri)
     metadataRequests++
-    return Response.json(offchain)
+    return offchain instanceof Response ? offchain : Response.json(offchain)
   }
   try {
     return { ids: await deriveUnlockedFilmStocks(rpc, wallet, authority), metadataRequests }
@@ -95,4 +95,30 @@ test('marker still requires the original shooter and a known film in permanent m
   assert.deepEqual((await query([collection()], metadata(otherWallet))).ids, [])
   assert.deepEqual((await query([collection()], metadata(wallet, 'unknown-film'))).ids, [])
   assert.deepEqual((await query([collection({ content: { json_uri: 'https://untrusted.invalid/roll' } })])).ids, [])
+})
+
+test('metadata HTTP failure is retryable rather than a successful empty cabinet', async () => {
+  await assert.rejects(
+    query([collection()], new Response('Unavailable', { status: 403 })),
+    (error) => error.status === 502 && /temporarily unavailable/.test(error.message),
+  )
+})
+
+test('immutable indexed metadata recovers a developed film when the public gateway is blocked', async () => {
+  const asset = collection({
+    content: { json_uri: uri, metadata: metadata() },
+    plugins: {
+      verified_creators: { data: { signatures: [{ address: authority, verified: true }] } },
+      immutable_metadata: { data: {} },
+    },
+  })
+  const result = await query([asset], new Response('Blocked', { status: 403 }))
+  assert.deepEqual(result.ids, ['bali-400-v1'])
+  assert.equal(result.metadataRequests, 0)
+  assert.deepEqual((await query([{ ...asset, content: { json_uri: uri, metadata: metadata(otherWallet) } }])).ids, [])
+})
+
+test('mutable indexed metadata cannot bypass the permanent gateway lookup', async () => {
+  const asset = collection({ content: { json_uri: uri, metadata: metadata() } })
+  await assert.rejects(query([asset], new Response('Blocked', { status: 403 })), (error) => error.status === 502)
 })

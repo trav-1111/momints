@@ -10,6 +10,7 @@ interface DasAsset {
     metadata?: Record<string, unknown>
   }
   plugins?: {
+    immutable_metadata?: object
     verified_creators?: {
       data?: { signatures?: { address?: string; verified?: boolean }[] }
     }
@@ -54,10 +55,15 @@ async function fetchRollMetadata(uri: string): Promise<RollMetadata | null> {
   if (!uri.startsWith('https://arweave.net/')) return null
   try {
     const response = await fetch(uri, { headers: { accept: 'application/json' } })
-    if (!response.ok) return null
+    if (!response.ok) {
+      console.warn('[filmstock-unlocks] Roll metadata HTTP failure', response.status)
+      throw new HttpError(502, 'Permanent roll metadata is temporarily unavailable')
+    }
     return (await response.json()) as RollMetadata
-  } catch {
-    return null
+  } catch (error) {
+    if (error instanceof HttpError) throw error
+    console.warn('[filmstock-unlocks] Roll metadata fetch failed')
+    throw new HttpError(502, 'Permanent roll metadata is temporarily unavailable')
   }
 }
 
@@ -109,7 +115,16 @@ export async function deriveUnlockedFilmStocks(
         continue
       const uri = asset.content?.json_uri
       if (!uri) continue
-      const metadata = await fetchRollMetadata(uri)
+      if (!uri.startsWith('https://arweave.net/')) continue
+      // DAS indexes the immutable Arweave JSON alongside the Core plugins.
+      // Use those attributes when present: the public gateway can reject
+      // Worker requests even while the indexed permanent metadata is healthy.
+      // Mutable or incomplete indexed metadata still requires a gateway read.
+      const indexed = asset.content?.metadata
+      const metadata =
+        asset.plugins?.immutable_metadata && Array.isArray(indexed?.attributes)
+          ? (indexed as RollMetadata)
+          : await fetchRollMetadata(uri)
       if (!metadata) continue
       if (attribute(metadata, 'creatorAddress') !== creatorAddress) continue
       const filmStockId = attribute(metadata, 'filmStockId')

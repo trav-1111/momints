@@ -28,6 +28,8 @@ On an existing installation, earned unlocks are persisted per wallet. Refreshes 
 
 For Core collections, the DAS developed marker is `plugins.verified_creators.data.signatures`. The top-level `creators` array describes royalty creators and must not substitute for the Worker's verified developed signature. Read-only production checks on 2 October 2026 found both completed test rolls correctly indexed with the marker in the plugin; the earlier scan checked the wrong field and returned no unlocks.
 
+The deployed Worker can receive HTTP 403 from the public Arweave gateway even when the same JSON is available elsewhere. When the collection has both the verified Momints marker and `ImmutableMetadata`, the scan uses the permanent JSON attributes already indexed by DAS. It still checks the Arweave URI, original shooter and known film. Without immutable indexed attributes it reads the gateway; transport/HTTP/JSON failures return a retryable 502 rather than a successful empty cabinet.
+
 ## Colour and processing contract
 
 Version 2 accepts only 33-point 3D `.cube` LUTs with `DOMAIN_MIN 0 0 0`, `DOMAIN_MAX 1 1 1`, and SDR sRGB input/output. Out-of-range, malformed, incomplete, 1D, and differently sized LUTs are rejected during publishing.
