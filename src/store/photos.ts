@@ -40,6 +40,8 @@ export interface Photo {
   rollName?: string
   /** Stable 1-based position within a prepaid roll, retained across retries. */
   rollFrameNumber?: number
+  kinoId?: string
+  kinoIndex?: number
 }
 
 /** Roll a frame belongs to, passed at capture so membership is stamped atomically. */
@@ -57,6 +59,7 @@ interface PhotoStore {
     aspect?: AspectRatio,
     filmStockId?: string,
     artifact?: PhotoArtifact,
+    kino?: { id: string; index: number },
   ) => string
   setAction: (id: string, action: Photo['action']) => void
   setBulkAction: (ids: string[], action: Photo['action']) => void
@@ -74,7 +77,7 @@ interface PhotoStore {
 export const usePhotoStore = create<PhotoStore>((set, get) => ({
   photos: [],
 
-  addPhoto: (uri, roll, aspect, filmStockId, artifact): string => {
+  addPhoto: (uri, roll, aspect, filmStockId, artifact, kino): string => {
     const newPhoto: Photo = {
       id: uuidv4(),
       uri,
@@ -86,6 +89,8 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
       rollId: roll?.id,
       rollName: roll?.name,
       rollFrameNumber: roll?.frameNumber,
+      kinoId: kino?.id,
+      kinoIndex: kino?.index,
     }
     set((state) => {
       const photos = [...state.photos, newPhoto]

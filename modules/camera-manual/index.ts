@@ -62,6 +62,8 @@ export type CameraControlState = {
   metering: MeteringMode
   meteringNormX?: number // 0..1, only used for 'spot'
   meteringNormY?: number
+  aeLock?: boolean
+  afLock?: boolean
 }
 
 function clamp(value: number, range: { min: number; max: number }): number {
@@ -80,11 +82,18 @@ function clamp(value: number, range: { min: number; max: number }): number {
 // ISO/shutter are clamped to this camera's real hardware range; focus is
 // NOT clamped here since its range is camera-specific (main vs macro vs
 // front) — the caller must clamp against its own maxFocusDiopters.
-export async function applyCameraState(viewTag: number, cameraId: string, state: CameraControlState): Promise<void> {
+export async function applyCameraState(
+  viewTag: number,
+  cameraIdOrState: string | CameraControlState,
+  maybeState?: CameraControlState,
+): Promise<void> {
+  const cameraId = typeof cameraIdOrState === 'string' ? cameraIdOrState : ''
+  const state = typeof cameraIdOrState === 'string' ? maybeState! : cameraIdOrState
+
   const iso = state.iso == null ? null : Math.round(clamp(state.iso, ISO_RANGE))
   const shutterNs = state.shutterNs == null ? null : Math.round(clamp(state.shutterNs, SHUTTER_NS_RANGE))
 
-  await CameraManualNative.applyCameraState(viewTag, cameraId, {
+  const payload = {
     exposureMode: state.exposureMode,
     iso,
     shutterNs,
@@ -94,13 +103,41 @@ export async function applyCameraState(viewTag: number, cameraId: string, state:
     meteringMode: state.metering,
     meteringNormX: state.meteringNormX ?? 0.5,
     meteringNormY: state.meteringNormY ?? 0.5,
-  })
+    aeLock: Boolean(state.aeLock),
+    afLock: Boolean(state.afLock),
+  }
+
+  try {
+    if (CameraManualNative.applyCameraState.length >= 3 || typeof cameraIdOrState === 'string') {
+      await CameraManualNative.applyCameraState(viewTag, cameraId, payload)
+    } else {
+      await CameraManualNative.applyCameraState(viewTag, payload)
+    }
+  } catch {
+    try {
+      await CameraManualNative.applyCameraState(viewTag, payload)
+    } catch {
+      // Defensive fallback
+    }
+  }
 }
 
 // Clears every override (exposure, white balance, focus, metering regions —
 // everything) in one call — hands the whole session back to CameraX's
 // normal auto-everything behavior without needing to compute a valid full
 // state first. Useful on screen unmount/cleanup.
-export async function resetToAuto(viewTag: number, cameraId: string): Promise<void> {
-  await CameraManualNative.resetToAuto(viewTag, cameraId)
+export async function resetToAuto(viewTag: number, cameraId?: string): Promise<void> {
+  try {
+    if (typeof cameraId === 'string') {
+      await CameraManualNative.resetToAuto(viewTag, cameraId)
+    } else {
+      await CameraManualNative.resetToAuto(viewTag)
+    }
+  } catch {
+    try {
+      await CameraManualNative.resetToAuto(viewTag)
+    } catch {
+      // Defensive fallback
+    }
+  }
 }

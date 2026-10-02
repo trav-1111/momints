@@ -8,10 +8,12 @@ import {
   Alert,
   StatusBar,
   ViewStyle,
+  StyleSheet,
   InteractionManager,
 } from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { LinearGradient } from 'expo-linear-gradient'
+import { Image } from 'expo-image'
 import * as MediaLibrary from 'expo-media-library'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore, Photo } from '../store/photos'
@@ -20,6 +22,14 @@ import { IconArrowRight, IconBack, IconMint, IconSave, IconTrash } from '../comp
 import { clearReleasedPrivatePhotoMemory, PrivatePhotoImage } from '../components/PrivatePhotoImage'
 import { deleteCapture } from '../services/imagePrivacy'
 import { ensureDisplayPreview } from '../services/displayPreview'
+import {
+  useKinoSettingsStore,
+  KINO_PLAYBACK_SPEEDS,
+  KINO_SHUTTER_GAP_LABELS,
+  getShutterBlackoutMs,
+  type KinoPlaybackSpeed,
+  type KinoShutterGap,
+} from '../store/kinoSettings'
 
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window')
 
@@ -27,6 +37,140 @@ const chip: ViewStyle = {
   backgroundColor: colors.chipBg,
   borderWidth: 1,
   borderColor: colors.chipBorder,
+}
+
+interface KinoReelPlayerProps {
+  frames: (Photo & { originalIdx: number })[]
+  initialIndex: number
+  isPlaying: boolean
+  playbackFps: KinoPlaybackSpeed
+  shutterGap: KinoShutterGap
+  onTogglePlay: () => void
+  onFrameChange: (frameIdx: number, originalIdx: number) => void
+}
+
+function KinoReelPlayer({
+  frames,
+  initialIndex,
+  isPlaying,
+  playbackFps,
+  shutterGap,
+  onTogglePlay,
+  onFrameChange,
+}: KinoReelPlayerProps) {
+  const [activePointer, setActivePointer] = useState(() => {
+    const idx = frames.findIndex((f) => f.originalIdx === initialIndex)
+    return idx >= 0 ? idx : 0
+  })
+  const [isBlackout, setIsBlackout] = useState(false)
+  const activePointerRef = useRef(activePointer)
+  activePointerRef.current = activePointer
+
+  useEffect(() => {
+    if (!isPlaying) {
+      const idx = frames.findIndex((f) => f.originalIdx === initialIndex)
+      if (idx >= 0) {
+        setActivePointer(idx)
+      }
+    }
+  }, [initialIndex, isPlaying, frames])
+
+  useEffect(() => {
+    if (!isPlaying || frames.length <= 1) {
+      setIsBlackout(false)
+      return
+    }
+
+    const framePeriodMs = Math.round(1000 / playbackFps)
+    const blackoutMs = getShutterBlackoutMs(shutterGap, playbackFps)
+    let blackoutTimer: ReturnType<typeof setTimeout> | null = null
+
+    const ticker = setInterval(() => {
+      const nextPointer = (activePointerRef.current + 1) % frames.length
+      const targetFrame = frames[nextPointer]
+
+      if (blackoutMs > 0) {
+        setIsBlackout(true)
+        setActivePointer(nextPointer)
+        if (targetFrame) {
+          onFrameChange(nextPointer, targetFrame.originalIdx)
+        }
+        blackoutTimer = setTimeout(() => {
+          setIsBlackout(false)
+        }, blackoutMs)
+      } else {
+        setActivePointer(nextPointer)
+        if (targetFrame) {
+          onFrameChange(nextPointer, targetFrame.originalIdx)
+        }
+      }
+    }, framePeriodMs)
+
+    return () => {
+      clearInterval(ticker)
+      if (blackoutTimer) clearTimeout(blackoutTimer)
+      setIsBlackout(false)
+    }
+  }, [isPlaying, playbackFps, shutterGap, frames, onFrameChange])
+
+  if (!isPlaying) return null
+
+  return (
+    <Pressable onPress={onTogglePlay} style={[StyleSheet.absoluteFill, { zIndex: 5 }]}>
+      {frames.map((frame, index) => (
+        <View
+          key={frame.id}
+          style={[StyleSheet.absoluteFill, { opacity: activePointer === index ? 1 : 0 }]}
+          pointerEvents="none"
+        >
+          <Image
+            source={{ uri: frame.uri }}
+            style={StyleSheet.absoluteFill}
+            contentFit="cover"
+            cachePolicy="memory"
+            priority="high"
+          />
+        </View>
+      ))}
+
+      {/* Rotary Shutter Blackout Blade Overlay */}
+      <View
+        pointerEvents="none"
+        style={[
+          StyleSheet.absoluteFill,
+          {
+            backgroundColor: '#000',
+            opacity: isBlackout ? 1 : 0,
+            zIndex: 6,
+          },
+        ]}
+      />
+
+      {/* Live Playback Indicator Badge */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: 80,
+          left: 18,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingVertical: 6,
+          paddingHorizontal: 12,
+          borderRadius: 999,
+          backgroundColor: 'rgba(211, 84, 0, 0.92)',
+          zIndex: 7,
+        }}
+      >
+        <Text
+          style={{ fontFamily: fonts.monoBold, fontSize: 10, letterSpacing: tracking(0.06, 10), color: colors.white }}
+        >
+          ▶ PLAYING {playbackFps} FPS
+        </Text>
+      </View>
+    </Pressable>
+  )
 }
 
 export default function ReviewScreen() {
@@ -64,6 +208,63 @@ export default function ReviewScreen() {
   const allMarked = pendingCount === 0 && photos.length > 0
 
   const currentPhoto = photos[currentIndex]
+
+  const playbackFps = useKinoSettingsStore((s) => s.playbackFps)
+  const setPlaybackFps = useKinoSettingsStore((s) => s.setPlaybackFps)
+  const shutterGap = useKinoSettingsStore((s) => s.shutterGap)
+  const cycleShutterGap = useKinoSettingsStore((s) => s.cycleShutterGap)
+
+  const [isPlayingKino, setIsPlayingKino] = useState(false)
+  const lastKinoOriginalIdxRef = useRef(currentIndex)
+
+  const kinoFrames = useMemo(() => {
+    if (!currentPhoto?.kinoId) return []
+    return photos
+      .map((p, idx) => ({ ...p, originalIdx: idx }))
+      .filter((p) => p.kinoId === currentPhoto.kinoId)
+      .sort((a, b) => (a.kinoIndex ?? 0) - (b.kinoIndex ?? 0))
+  }, [photos, currentPhoto?.kinoId])
+
+  useEffect(() => {
+    if (!isPlayingKino) {
+      lastKinoOriginalIdxRef.current = currentIndex
+    }
+  }, [currentIndex, isPlayingKino])
+
+  const handleKinoFrameChange = useCallback((_frameIdx: number, originalIdx: number) => {
+    lastKinoOriginalIdxRef.current = originalIdx
+  }, [])
+
+  const handleStopKino = useCallback(() => {
+    setIsPlayingKino(false)
+    const targetIdx = lastKinoOriginalIdxRef.current
+    if (targetIdx >= 0 && targetIdx < photos.length) {
+      setCurrentIndex(targetIdx)
+      flatListRef.current?.scrollToIndex({ index: targetIdx, animated: false })
+    }
+  }, [photos.length])
+
+  const toggleKinoPlayback = useCallback(() => {
+    if (isPlayingKino) {
+      handleStopKino()
+    } else {
+      if (kinoFrames.length <= 1) return
+      lastKinoOriginalIdxRef.current = currentIndex
+      setIsPlayingKino(true)
+    }
+  }, [isPlayingKino, handleStopKino, kinoFrames.length, currentIndex])
+
+  useEffect(() => {
+    return () => {
+      setIsPlayingKino(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (isPlayingKino && kinoFrames.length <= 1) {
+      setIsPlayingKino(false)
+    }
+  }, [isPlayingKino, kinoFrames.length])
 
   useEffect(() => {
     const task = InteractionManager.runAfterInteractions(() => {
@@ -218,6 +419,35 @@ export default function ReviewScreen() {
           style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 230 }}
         />
 
+        {/* Kino sequence badge */}
+        {item.kinoId && (
+          <View
+            style={{
+              position: 'absolute',
+              top: 80,
+              left: 18,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 6,
+              paddingVertical: 6,
+              paddingHorizontal: 12,
+              borderRadius: 999,
+              backgroundColor: 'rgba(243, 156, 18, 0.9)',
+            }}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.monoBold,
+                fontSize: 10,
+                letterSpacing: tracking(0.06, 10),
+                color: colors.white,
+              }}
+            >
+              🎞️ KINO #{item.kinoIndex !== undefined ? item.kinoIndex + 1 : ''}
+            </Text>
+          </View>
+        )}
+
         {/* Marked-action badge */}
         {item.action !== 'pending' && (
           <View
@@ -318,6 +548,17 @@ export default function ReviewScreen() {
         })}
       />
 
+      {/* Active Kino frame high-speed projection player */}
+      <KinoReelPlayer
+        frames={kinoFrames}
+        initialIndex={currentIndex}
+        isPlaying={isPlayingKino}
+        playbackFps={playbackFps}
+        shutterGap={shutterGap}
+        onTogglePlay={handleStopKino}
+        onFrameChange={handleKinoFrameChange}
+      />
+
       {/* Top bar */}
       <View
         style={{
@@ -353,6 +594,108 @@ export default function ReviewScreen() {
 
       {/* Bottom actions */}
       <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, paddingBottom: 26, paddingHorizontal: 18 }}>
+        {/* Kino Playback & Settings Controls */}
+        {kinoFrames.length > 1 && (
+          <View
+            style={{
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 14,
+            }}
+          >
+            {/* Speed & Shutter Gap Bar */}
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 6,
+                backgroundColor: 'rgba(15, 12, 8, 0.88)',
+                paddingVertical: 4,
+                paddingHorizontal: 8,
+                borderRadius: 999,
+                borderWidth: 1,
+                borderColor: 'rgba(243, 156, 18, 0.35)',
+              }}
+            >
+              {/* Speed pills */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                {KINO_PLAYBACK_SPEEDS.map((fps) => {
+                  const selected = playbackFps === fps
+                  return (
+                    <Pressable
+                      key={fps}
+                      onPress={() => setPlaybackFps(fps)}
+                      style={{
+                        paddingHorizontal: 7,
+                        paddingVertical: 4,
+                        borderRadius: 999,
+                        backgroundColor: selected ? '#f39c12' : 'transparent',
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontFamily: fonts.monoBold,
+                          fontSize: 9,
+                          color: selected ? '#fff' : colors.textSoft,
+                        }}
+                      >
+                        {fps} FPS
+                      </Text>
+                    </Pressable>
+                  )
+                })}
+              </View>
+
+              <View style={{ width: 1, height: 14, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+
+              {/* Shutter blackout gap pill */}
+              <Pressable
+                onPress={() => cycleShutterGap()}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 4,
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 999,
+                  backgroundColor: shutterGap === 'off' ? 'rgba(255,255,255,0.06)' : 'rgba(243,156,18,0.25)',
+                }}
+              >
+                <Text
+                  style={{
+                    fontFamily: fonts.mono,
+                    fontSize: 8.5,
+                    letterSpacing: tracking(0.08, 8.5),
+                    color: shutterGap === 'off' ? colors.textMuted : colors.accentSoft,
+                  }}
+                >
+                  BLADE: {KINO_SHUTTER_GAP_LABELS[shutterGap]}
+                </Text>
+              </Pressable>
+            </View>
+
+            {/* Main Play / Pause Button */}
+            <Pressable
+              onPress={toggleKinoPlayback}
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 8,
+                backgroundColor: isPlayingKino ? '#d35400' : 'rgba(25, 20, 10, 0.92)',
+                borderWidth: 1,
+                borderColor: '#f39c12',
+                paddingHorizontal: 20,
+                paddingVertical: 9,
+                borderRadius: 999,
+              }}
+            >
+              <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: '#fff' }}>
+                {isPlayingKino ? '⏸ PAUSE KINO REEL' : `▶ PLAY KINO REEL (${playbackFps} FPS)`}
+              </Text>
+            </Pressable>
+          </View>
+        )}
+
         {allMarked ? (
           <Pressable
             onPress={handleProceedToMint}

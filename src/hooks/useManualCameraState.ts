@@ -19,6 +19,8 @@ import type { ReadyCameraSession } from './useCameraReadiness'
 const DEFAULT_ISO = 400
 const DEFAULT_SHUTTER_NS = 1_000_000 // 1/1000s
 
+export type CameraLockMode = 'none' | 'AF/AE' | 'AE' | 'AF'
+
 export function useManualCameraState(
   session: ReadyCameraSession | null,
   cameraId: string | null,
@@ -46,6 +48,46 @@ export function useManualCameraState(
   const [meteringMode, setMeteringMode] = useState<MeteringMode>('matrix')
   const [meteringPoint, setMeteringPoint] = useState({ x: 0.5, y: 0.5 })
 
+  // AF/AE Lock system — hold-to-lock on the viewfinder.
+  //   'none': standard continuous auto
+  //   'AF/AE': both focus and exposure locked to the target point
+  //   'AE': exposure locked to that area's brightness; focus remains continuous
+  //   'AF': focus locked to target distance; exposure adapts continuously
+  const [lockMode, setLockMode] = useState<CameraLockMode>('none')
+  const [lockPoint, setLockPoint] = useState<{ x: number; y: number } | null>(null)
+  const [exposurePoint, setExposurePoint] = useState<{ x: number; y: number } | null>(null)
+
+  const isAeLocked = lockMode === 'AF/AE' || lockMode === 'AE'
+  const isAfLocked = lockMode === 'AF/AE' || lockMode === 'AF'
+
+  const lock = useCallback(
+    (mode: CameraLockMode, normPoint?: { x: number; y: number }, normExpPoint?: { x: number; y: number }) => {
+      setLockMode(mode)
+      if (normPoint) {
+        setLockPoint(normPoint)
+      }
+      if (normExpPoint) {
+        setExposurePoint(normExpPoint)
+      }
+    },
+    [],
+  )
+
+  const unlock = useCallback(() => {
+    setLockMode('none')
+    setLockPoint(null)
+    setExposurePoint(null)
+  }, [])
+
+  const cycleLockMode = useCallback(() => {
+    setLockMode((prev) => {
+      if (prev === 'AF/AE') return 'AE'
+      if (prev === 'AE') return 'AF'
+      if (prev === 'AF') return 'AF/AE'
+      return 'AF/AE'
+    })
+  }, [])
+
   // CONTROL_AE_AVAILABLE_PRIORITY_MODES (API 36+) — read once per camera.
   // Not used to drive any control anymore (see CameraControlState's doc
   // comment: confirmed false on the real Seeker, so there's no independent-
@@ -68,29 +110,35 @@ export function useManualCameraState(
   const canIndependentExposure = hasIsoPriority && hasShutterPriority
   const fullyManual = exposureMode === 'manual'
 
-  const desiredState = useMemo(
-    () => ({
+  const desiredState = useMemo(() => {
+    const activeExp = exposurePoint ?? lockPoint ?? meteringPoint
+    return {
       exposureMode,
       iso: exposureMode === 'manual' ? manualIso : null,
       shutterNs: exposureMode === 'manual' ? manualShutterNs : null,
       focusMode,
       focusDistance: focusMode === 'manual' ? manualFocusDiopters : null,
       whiteBalance,
-      metering: meteringMode,
-      meteringNormX: meteringPoint.x,
-      meteringNormY: meteringPoint.y,
-    }),
-    [
-      exposureMode,
-      manualIso,
-      manualShutterNs,
-      focusMode,
-      manualFocusDiopters,
-      whiteBalance,
-      meteringMode,
-      meteringPoint,
-    ],
-  )
+      metering: isAeLocked ? ('spot' as MeteringMode) : meteringMode,
+      meteringNormX: isAeLocked ? activeExp.x : meteringPoint.x,
+      meteringNormY: isAeLocked ? activeExp.y : meteringPoint.y,
+      aeLock: isAeLocked,
+      afLock: isAfLocked,
+    }
+  }, [
+    exposureMode,
+    manualIso,
+    manualShutterNs,
+    focusMode,
+    manualFocusDiopters,
+    whiteBalance,
+    meteringMode,
+    meteringPoint,
+    isAeLocked,
+    isAfLocked,
+    lockPoint,
+    exposurePoint,
+  ])
 
   const [retryGeneration, setRetryGeneration] = useState(0)
   type Applied = { session: ReadyCameraSession; state: typeof desiredState; retryGeneration: number }
@@ -171,6 +219,9 @@ export function useManualCameraState(
     setFocusMode('auto')
     setWhiteBalance('AUTO')
     setMeteringMode('matrix')
+    setLockMode('none')
+    setLockPoint(null)
+    setExposurePoint(null)
     retry()
   }, [retry])
 
@@ -192,6 +243,17 @@ export function useManualCameraState(
     setMeteringMode,
     meteringPoint,
     setMeteringPoint,
+    lockMode,
+    setLockMode,
+    lockPoint,
+    setLockPoint,
+    exposurePoint,
+    setExposurePoint,
+    lock,
+    unlock,
+    cycleLockMode,
+    isAeLocked,
+    isAfLocked,
     canIndependentExposure,
     fullyManual,
     reset,
