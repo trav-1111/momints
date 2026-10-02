@@ -183,7 +183,9 @@ async function renderPreparedContactSheet(
       titleFont,
     )
     try {
-      const logoData = Skia.Data.fromBytes(await readImageBytes(metadata.logoUri))
+      // Standalone Android builds resolve bundled images to drawable resource
+      // names, which Expo File cannot read. Skia handles those and file/HTTP URIs.
+      const logoData = await Skia.Data.fromURI(metadata.logoUri)
       let logo: ReturnType<typeof Skia.Image.MakeImageFromEncoded> = null
       try {
         logo = Skia.Image.MakeImageFromEncoded(logoData)
