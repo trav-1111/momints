@@ -141,7 +141,16 @@ export const useFilmStockStore = create<FilmStockState>((set, get) => ({
         connectedWallet: wallet,
         loading: false,
         error: errors.length ? errors.join(' · ') : null,
-        unlocksByWallet: wallet && unlocked ? { ...state.unlocksByWallet, [wallet]: unlocked } : state.unlocksByWallet,
+        // Earned unlocks are permanent for their original wallet. DAS indexing
+        // and Arweave metadata can lag, so a refresh adds proof without erasing
+        // cached unlocks, including ones earned while this request was pending.
+        unlocksByWallet:
+          wallet && unlocked
+            ? {
+                ...state.unlocksByWallet,
+                [wallet]: [...new Set([...(state.unlocksByWallet[wallet] ?? []), ...unlocked])],
+              }
+            : state.unlocksByWallet,
       }
       const merged = { ...state, ...next }
       const selectedQuick = merged.catalogue.find((stock) => stock.filmStockId === state.quickFilmStockId)

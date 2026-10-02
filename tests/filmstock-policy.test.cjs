@@ -2,6 +2,7 @@
 
 const test = require('node:test')
 const assert = require('node:assert/strict')
+const { sourceLoader } = require('./helpers/load-source.cjs')
 const {
   MAX_CATALOGUE_AGE_MS,
   isCurrentlyStocked,
@@ -75,4 +76,98 @@ test('Quick Shoot accepts house and unlocked films, never stocked-only films', (
   assert.equal(canUseQuick({ ...rotating, evergreen: true }, []), true)
   assert.equal(canUseQuick(rotating, ['amber-200-v1']), true)
   assert.equal(canUseQuick(rotating, []), false)
+})
+
+async function accessHarness(files = new Map(), fetchUnlocks = async () => []) {
+  class File {
+    constructor(...parts) {
+      this.path = parts.join('/')
+    }
+    get exists() {
+      return files.has(this.path)
+    }
+    async text() {
+      return files.get(this.path)
+    }
+    write(value) {
+      files.set(this.path, value)
+    }
+  }
+  const catalogue = {
+    filmstocks: [{ filmStockId: 'house', evergreen: true }, rotating],
+    serverTime: new Date().toISOString(),
+    receivedAtDeviceMs: Date.now(),
+  }
+  const load = sourceLoader({
+    'expo-file-system': { Paths: { document: 'documents' }, File },
+    'src/services/filmstocks.ts': {
+      DEFAULT_COLOR_FILM_ID: 'house',
+      FALLBACK_HOUSE_CATALOGUE: catalogue,
+      fetchFilmStockCatalogue: async () => catalogue,
+      readCachedFilmStockCatalogue: async () => catalogue,
+      fetchUnlockedFilmStockIds: fetchUnlocks,
+    },
+  })
+  const module = load('src/store/filmstocks.ts')
+  await module.filmStockHydrated
+  return {
+    store: module.useFilmStockStore,
+    eligible: () => module.quickEligible(rotating, module.useFilmStockStore.getState()),
+    files,
+  }
+}
+
+test('earned film survives foreground refresh and cold restart without leaking to another wallet', async () => {
+  const first = await accessHarness()
+  await first.store.getState().refresh('wallet-a')
+  first.store.getState().unlockLocally('wallet-a', rotating.filmStockId)
+  first.store.getState().selectQuickFilm(rotating.filmStockId)
+  await first.store.getState().refresh('wallet-a')
+  assert.equal(first.eligible(), true)
+  assert.equal(first.store.getState().quickFilmStockId, rotating.filmStockId)
+
+  const restarted = await accessHarness(first.files)
+  await restarted.store.getState().refresh('wallet-a')
+  assert.equal(restarted.eligible(), true)
+  assert.equal(restarted.store.getState().quickFilmStockId, rotating.filmStockId)
+  await restarted.store.getState().refresh('wallet-b')
+  assert.equal(restarted.eligible(), false)
+  await restarted.store.getState().refresh(null)
+  assert.equal(restarted.eligible(), false)
+  await restarted.store.getState().refresh('wallet-a')
+  assert.equal(restarted.eligible(), true)
+})
+
+test('an unlock earned while a refresh is pending survives its empty response', async () => {
+  let finish
+  const h = await accessHarness(
+    new Map(),
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      }),
+  )
+  const pending = h.store.getState().refresh('wallet-a')
+  h.store.getState().unlockLocally('wallet-a', rotating.filmStockId)
+  finish([])
+  await pending
+  assert.equal(h.eligible(), true)
+})
+
+test('backend reconstruction adds films without removing earned films or duplicating them', async () => {
+  const h = await accessHarness(new Map(), async () => [rotating.filmStockId, 'other-earned-film'])
+  h.store.getState().unlockLocally('wallet-a', rotating.filmStockId)
+  await h.store.getState().refresh('wallet-a')
+  await h.store.getState().refresh('wallet-a')
+  assert.deepEqual(h.store.getState().unlocksByWallet['wallet-a'], [rotating.filmStockId, 'other-earned-film'])
+})
+
+test('failed backend lookup preserves earned film access', async () => {
+  const h = await accessHarness(new Map(), async () => {
+    throw new Error('Metadata unavailable')
+  })
+  h.store.getState().unlockLocally('wallet-a', rotating.filmStockId)
+  await h.store.getState().refresh('wallet-a')
+  assert.equal(h.eligible(), true)
+  assert.equal(h.store.getState().error, 'Metadata unavailable')
 })

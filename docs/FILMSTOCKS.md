@@ -24,6 +24,10 @@ Roll collection metadata contains immutable `creatorAddress`, `filmStockId`, and
 
 Legacy completed rolls created before this marker cannot prove a non-house film unlock automatically. Do not weaken the scan to accept arbitrary metadata; migrate legacy collections with an explicit owner-authorized flow if that becomes necessary.
 
+On an existing installation, earned unlocks are persisted per wallet. Refreshes merge reconstructed unlocks into that wallet's saved set rather than replacing it: temporary DAS indexing or Arweave metadata gaps must not remove an earned film. This also preserves unlocks earned while a refresh is pending. Changing wallets or disconnecting does not grant access to another wallet's saved films. A fresh installation still depends on backend reconstruction.
+
+For Core collections, the DAS developed marker is `plugins.verified_creators.data.signatures`. The top-level `creators` array describes royalty creators and must not substitute for the Worker's verified developed signature. Read-only production checks on 2 October 2026 found both completed test rolls correctly indexed with the marker in the plugin; the earlier scan checked the wrong field and returned no unlocks.
+
 ## Colour and processing contract
 
 Version 2 accepts only 33-point 3D `.cube` LUTs with `DOMAIN_MIN 0 0 0`, `DOMAIN_MAX 1 1 1`, and SDR sRGB input/output. Out-of-range, malformed, incomplete, 1D, and differently sized LUTs are rejected during publishing.

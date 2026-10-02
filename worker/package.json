@@ -12,7 +12,7 @@
     "deploy:production:activate": "node scripts/deploy-production-active.mjs",
     "publish:filmstock": "node scripts/publish-filmstock.mjs",
     "schedule:filmstock": "node scripts/schedule-filmstock.mjs",
-    "test:filmstocks": "node --test tests/filmstock-package.test.mjs",
+    "test:filmstocks": "node --test tests/filmstock-package.test.mjs tests/filmstock-unlocks.test.mjs",
     "test:roll-contract": "node --test tests/roll-frame-contract.test.mjs",
     "test:staging": "node --test tests/staging-tooling.test.mjs",
     "test:maintenance": "node --experimental-strip-types --test tests/maintenance.test.mjs",

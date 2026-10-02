@@ -9,7 +9,11 @@ interface DasAsset {
     json_uri?: string
     metadata?: Record<string, unknown>
   }
-  creators?: Array<{ address?: string; verified?: boolean }>
+  plugins?: {
+    verified_creators?: {
+      data?: { signatures?: { address?: string; verified?: boolean }[] }
+    }
+  }
 }
 
 interface DasPage {
@@ -23,7 +27,7 @@ interface RpcEnvelope<T> {
 }
 
 interface RollMetadata {
-  attributes?: Array<{ trait_type?: unknown; value?: unknown }>
+  attributes?: { trait_type?: unknown; value?: unknown }[]
 }
 
 const MAX_DAS_PAGES = 20
@@ -95,7 +99,13 @@ export async function deriveUnlockedFilmStocks(
       // every prepaid frame has minted. Child assets may inherit creators in
       // DAS, so collections are explicitly required here.
       if (asset.interface !== 'MplCoreCollection') continue
-      if (!asset.creators?.some((creator) => creator.address === momintsAuthority && creator.verified === true))
+      // DAS's top-level creators describe royalties; Core's developed marker
+      // lives in the VerifiedCreators plugin and is independent of that list.
+      if (
+        !asset.plugins?.verified_creators?.data?.signatures?.some(
+          (creator) => creator.address === momintsAuthority && creator.verified === true,
+        )
+      )
         continue
       const uri = asset.content?.json_uri
       if (!uri) continue
