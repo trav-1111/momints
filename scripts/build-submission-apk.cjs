@@ -150,7 +150,8 @@ async function main(args) {
       throw new Error('Isolated export provenance/prebuild mismatch')
   } else {
     git('archive', '--format=zip', '--output=' + archive, commit)
-    cp.execFileSync('tar.exe', ['-xf', archive, '-C', source])
+    const tarCmd = process.platform === 'win32' ? 'tar.exe' : 'tar'
+    cp.execFileSync(tarCmd, ['-xf', archive, '-C', source])
   }
   const inputHashes =
     previous?.inputHashes || Object.fromEntries(files.map((f) => [f, sha256(fs.readFileSync(path.join(source, f)))]))
@@ -164,7 +165,9 @@ async function main(args) {
   const sdk =
     process.env.ANDROID_HOME ||
     process.env.ANDROID_SDK_ROOT ||
-    path.join(os.homedir(), 'AppData', 'Local', 'Android', 'Sdk')
+    (process.platform === 'win32'
+      ? path.join(os.homedir(), 'AppData', 'Local', 'Android', 'Sdk')
+      : path.join(os.homedir(), 'Library', 'Android', 'sdk'))
   const baseEnv = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key]) =>
@@ -236,7 +239,12 @@ async function main(args) {
     return output
   }
   try {
-    const npm = path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+    const npmCandidates = [
+      path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      path.resolve(path.dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    ]
+    const npm = npmCandidates.find((c) => fs.existsSync(c))
+    if (!npm) throw new Error('npm-cli.js not found in node installation')
     if (!resume) {
       await run('npm-ci', process.execPath, [npm, 'ci', '--include=dev', '--no-audit', '--no-fund'])
       await run('prebuild', process.execPath, [
@@ -257,7 +265,12 @@ async function main(args) {
       console.log(JSON.stringify({ status: report.status, commit, source, reportFile }))
       return
     }
-    const gradle = path.join(source, 'android', 'gradlew.bat')
+    const gradle = path.join(source, 'android', process.platform === 'win32' ? 'gradlew.bat' : 'gradlew')
+    if (process.platform !== 'win32') {
+      try {
+        fs.chmodSync(gradle, 0o755)
+      } catch {}
+    }
     const buildLog = await run(
       'assemble-release',
       gradle,
@@ -280,7 +293,8 @@ async function main(args) {
     if (!expectedCert) throw new Error('Established release signing receipt missing')
     const apk = path.join(source, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk')
     const tools = path.join(sdk, 'build-tools', '36.0.0')
-    const signature = await run('apk-signature', path.join(tools, 'apksigner.bat'), [
+    const apksigner = path.join(tools, process.platform === 'win32' ? 'apksigner.bat' : 'apksigner')
+    const signature = await run('apk-signature', apksigner, [
       'verify',
       '--verbose',
       '--print-certs',
@@ -288,14 +302,16 @@ async function main(args) {
     ])
     const certificate = signature.match(/Signer #1 certificate SHA-256 digest: ([a-f0-9]{64})/i)?.[1]?.toLowerCase()
     if (certificate !== expectedCert) throw new Error('APK certificate does not match verified release key')
-    const badging = await run('apk-badging', path.join(tools, 'aapt2.exe'), ['dump', 'badging', apk])
+    const aapt2 = path.join(tools, process.platform === 'win32' ? 'aapt2.exe' : 'aapt2')
+    const badging = await run('apk-badging', aapt2, ['dump', 'badging', apk])
     if (
       !badging.includes("name='com.momints.app'") ||
       badging.includes('application-debuggable') ||
       !badging.includes("'arm64-v8a'")
     )
       throw new Error('APK package/debug/ABI verification failed')
-    const members = await run('apk-entries', 'tar.exe', ['-tf', apk])
+    const tarCmd = process.platform === 'win32' ? 'tar.exe' : 'tar'
+    const members = await run('apk-entries', tarCmd, ['-tf', apk])
     if (!members.includes('assets/index.android.bundle')) throw new Error('Embedded release JavaScript missing')
     const destination = path.join(
       out,
