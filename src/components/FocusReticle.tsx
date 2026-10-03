@@ -153,9 +153,9 @@ export function FocusReticle({
         Haptics.selectionAsync()
       },
       onPanResponderMove: (_, gestureState) => {
-        // Comfortable calibration: 60 pixels of vertical drag equals 1.0 EV stop.
-        // Full +2.0 EV to -2.0 EV travel spans 240 pixels (smoothly and precisely controllable with thumb).
-        const PIXELS_PER_EV = 60
+        // Comfortable calibration: 20 pixels of vertical drag equals 1.0 EV stop.
+        // Full +2.0 EV to -2.0 EV travel spans 80 pixels (~0.5 inches of natural thumb flick).
+        const PIXELS_PER_EV = 20
         const deltaEv = -gestureState.dy / PIXELS_PER_EV
         let targetEv = evStartRef.current + deltaEv
         targetEv = Math.max(minExposureRef.current, Math.min(maxExposureRef.current, targetEv))

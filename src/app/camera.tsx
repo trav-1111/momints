@@ -750,10 +750,13 @@ export default function CameraScreen() {
       // If already locked or separate AE mode is active, do not start hold-to-lock timer
       if (manualCamera.lockMode !== 'none' || isSeparated) return
 
-      const { locationX, locationY } = event.nativeEvent
+      const touchX =
+        typeof event.nativeEvent.pageX === 'number' ? event.nativeEvent.pageX : event.nativeEvent.locationX
+      const touchY =
+        typeof event.nativeEvent.pageY === 'number' ? event.nativeEvent.pageY : event.nativeEvent.locationY
       clearFadeTimer()
-      setFocusPoint({ x: locationX, y: locationY })
-      setExposurePoint({ x: locationX, y: locationY })
+      setFocusPoint({ x: touchX, y: touchY })
+      setExposurePoint({ x: touchX, y: touchY })
       focusOpacity.setValue(1)
       holdProgress.setValue(0)
       setIsHoldingFocus(true)
@@ -773,12 +776,12 @@ export default function CameraScreen() {
         setIsHoldingFocus(false)
         manualCamera.lock(
           'AF/AE',
-          { x: locationX / screenW, y: locationY / screenH },
-          { x: locationX / screenW, y: locationY / screenH },
+          { x: touchX / screenW, y: touchY / screenH },
+          { x: touchX / screenW, y: touchY / screenH },
         )
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
         if (cameraRef.current && activeDevice?.supportsFocus) {
-          cameraRef.current.focus({ x: locationX, y: locationY }).catch(() => {})
+          cameraRef.current.focus({ x: touchX, y: touchY }).catch(() => {})
         }
       }, 1200)
     },
@@ -804,12 +807,15 @@ export default function CameraScreen() {
         return
       }
 
-      const { locationX, locationY } = event.nativeEvent
+      const touchX =
+        typeof event.nativeEvent.pageX === 'number' ? event.nativeEvent.pageX : event.nativeEvent.locationX
+      const touchY =
+        typeof event.nativeEvent.pageY === 'number' ? event.nativeEvent.pageY : event.nativeEvent.locationY
 
       if (isSeparated) {
-        const normX = Math.max(0, Math.min(1, locationX / screenW))
-        const normY = Math.max(0, Math.min(1, locationY / screenH))
-        setExposurePoint({ x: locationX, y: locationY })
+        const normX = Math.max(0, Math.min(1, touchX / screenW))
+        const normY = Math.max(0, Math.min(1, touchY / screenH))
+        setExposurePoint({ x: touchX, y: touchY })
         manualCamera.setExposurePoint({ x: normX, y: normY })
         setHasPlacedAe(true)
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
@@ -836,11 +842,11 @@ export default function CameraScreen() {
       }
 
       // Quick tap: focus & meter at target point with 1.5s auto fade
-      setFocusPoint({ x: locationX, y: locationY })
-      setExposurePoint({ x: locationX, y: locationY })
+      setFocusPoint({ x: touchX, y: touchY })
+      setExposurePoint({ x: touchX, y: touchY })
       setIsSeparated(false)
       setHasPlacedAe(false)
-      manualCamera.setMeteringPoint({ x: locationX / screenW, y: locationY / screenH })
+      manualCamera.setMeteringPoint({ x: touchX / screenW, y: touchY / screenH })
 
       clearFadeTimer()
       focusOpacity.setValue(1)
@@ -858,7 +864,7 @@ export default function CameraScreen() {
 
       if (cameraRef.current && activeDevice?.supportsFocus) {
         try {
-          await cameraRef.current.focus({ x: locationX, y: locationY })
+          await cameraRef.current.focus({ x: touchX, y: touchY })
         } catch {
           // Ignore focus canceled
         }
@@ -1196,6 +1202,7 @@ export default function CameraScreen() {
 
       {/* Top row — flash · wallet */}
       <View
+        pointerEvents="box-none"
         style={{
           position: 'absolute',
           top: 20,
@@ -1206,7 +1213,7 @@ export default function CameraScreen() {
           alignItems: 'center',
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <Pressable
             onPress={toggleFlash}
             disabled={!supportsFlash}
@@ -1349,7 +1356,7 @@ export default function CameraScreen() {
           zIndex: 20,
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+        <View pointerEvents="box-none" style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
           {/* Mode & Film selection chip */}
           <Pressable
             onPress={() => router.push('/mode-select')}
