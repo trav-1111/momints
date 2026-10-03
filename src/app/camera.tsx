@@ -32,8 +32,10 @@ import { persistRollFrame, updateStoredRollFrameMeta } from '../services/rollVau
 import { processFilm } from '../services/filmProcessor'
 import { verifyCompressedFilmOutput } from '../services/filmOutput'
 import { cropToAspect } from '../services/cropImage'
+import * as Haptics from 'expo-haptics'
 import { ensureUnderCeiling } from '../services/compressImage'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
+import { CompositionGridOverlay, type GridMode } from '../components/CompositionGridOverlay'
 import ManualControls from '../components/ManualControls'
 import { useManualCameraState } from '../hooks/useManualCameraState'
 import { useCameraReadiness } from '../hooks/useCameraReadiness'
@@ -56,6 +58,7 @@ import {
   IconFilm,
   IconFlip,
   IconGallery,
+  IconGrid,
   IconMint,
   IconPin,
 } from '../components/icons'
@@ -120,6 +123,18 @@ export default function CameraScreen() {
   // (manual ISO/shutter/focus/WB) mounts underneath, gated by TIER2_ENABLED.
   const [proOpen, setProOpen] = useState(false)
   const [ev, setEv] = useState(0)
+
+  // Composition Grid mode: 'off' | '3x3' | 'cross'
+  const [gridMode, setGridMode] = useState<GridMode>('off')
+
+  const toggleGrid = useCallback(() => {
+    Haptics.selectionAsync()
+    setGridMode((prev) => {
+      if (prev === 'off') return '3x3'
+      if (prev === '3x3') return 'cross'
+      return 'off'
+    })
+  }, [])
 
   // Release the camera when the screen loses focus or the app is backgrounded
   // (e.g. wallet handoff) — Android throws camera-is-restricted otherwise
@@ -661,6 +676,9 @@ export default function CameraScreen() {
           {/* Aspect-ratio framing guide */}
           <AspectFramingOverlay aspect={effectiveAspect} width={screenW} height={screenH} />
 
+          {/* Composition grid overlay */}
+          <CompositionGridOverlay mode={gridMode} aspect={effectiveAspect} width={screenW} height={screenH} />
+
           {/* Legibility scrims — controls float above these */}
           <LinearGradient
             pointerEvents="none"
@@ -747,6 +765,21 @@ export default function CameraScreen() {
             style={[roundChip(42), { opacity: locationGranularity === 'off' ? 0.4 : 1 }]}
           >
             <IconPin size={19} color={locationGranularity === 'off' ? colors.text : colors.accent} />
+          </Pressable>
+
+          <Pressable
+            onPress={toggleGrid}
+            accessibilityRole="button"
+            accessibilityLabel={`Composition Grid: ${gridMode}`}
+            style={[
+              roundChip(42),
+              {
+                borderColor: gridMode !== 'off' ? colors.accent : colors.chipBorder,
+                backgroundColor: gridMode !== 'off' ? colors.accentTint : colors.chipBg,
+              },
+            ]}
+          >
+            <IconGrid size={18} color={gridMode !== 'off' ? colors.accentSoft : colors.text} />
           </Pressable>
 
           <Pressable
