@@ -134,6 +134,7 @@ export function FocusReticle({
   // Stable refs for EV Adjustment PanResponder
   const lastEvRef = useRef(ev)
   lastEvRef.current = ev
+  const evStartRef = useRef(ev)
   const onEvChangeRef = useRef(onEvChange)
   onEvChangeRef.current = onEvChange
   const minExposureRef = useRef(minExposure)
@@ -145,19 +146,24 @@ export function FocusReticle({
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
       onMoveShouldSetPanResponder: (_, gestureState) => {
-        return Math.abs(gestureState.dy) > 1
+        return Math.abs(gestureState.dy) > 3
       },
       onPanResponderGrant: () => {
+        evStartRef.current = lastEvRef.current
         Haptics.selectionAsync()
       },
       onPanResponderMove: (_, gestureState) => {
-        const range = maxExposureRef.current - minExposureRef.current
-        const deltaEv = (-gestureState.dy / MAX_TRAVEL) * (range / 2)
-        let targetEv = lastEvRef.current + deltaEv
+        // Comfortable calibration: 60 pixels of vertical drag equals 1.0 EV stop.
+        // Full +2.0 EV to -2.0 EV travel spans 240 pixels (smoothly and precisely controllable with thumb).
+        const PIXELS_PER_EV = 60
+        const deltaEv = -gestureState.dy / PIXELS_PER_EV
+        let targetEv = evStartRef.current + deltaEv
         targetEv = Math.max(minExposureRef.current, Math.min(maxExposureRef.current, targetEv))
         const roundedEv = Math.round(targetEv * 10) / 10
         if (roundedEv !== lastEvRef.current) {
+          lastEvRef.current = roundedEv
           onEvChangeRef.current(roundedEv)
+          Haptics.selectionAsync()
         }
       },
       onPanResponderRelease: () => {

@@ -148,6 +148,7 @@ export default function CameraScreen() {
   const crankAnim = useRef(new Animated.Value(0)).current
 
   const captureFps = useKinoSettingsStore((s) => s.captureFps)
+  const cycleCaptureFps = useKinoSettingsStore((s) => s.cycleCaptureFps)
 
   useEffect(() => {
     if (isCranking) {
@@ -1334,140 +1335,211 @@ export default function CameraScreen() {
         )}
       </View>
 
-      {/* Second row — mode chip · EXP dial */}
-      <Pressable
-        onPress={() => router.push('/mode-select')}
-        style={[
-          chip,
-          {
-            position: 'absolute',
-            top: 74,
-            left: 18,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            paddingVertical: 7,
-            paddingHorizontal: 11,
-            borderRadius: 10,
-          },
-        ]}
+      {/* Second row — mode chip · Kino cadence selector · aspect selector / EXP dial */}
+      <View
+        pointerEvents="box-none"
+        style={{
+          position: 'absolute',
+          top: 74,
+          left: 18,
+          right: 18,
+          flexDirection: 'row',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          zIndex: 20,
+        }}
       >
-        {activeMode === 'roll' ? (
-          <IconFilm size={15} color={colors.text} />
-        ) : (
-          <IconCamera size={15} color={colors.text} />
-        )}
-        <Text
-          style={{
-            fontFamily: fonts.sansBold,
-            fontSize: 11,
-            letterSpacing: tracking(0.1, 11),
-            color: colors.text,
-          }}
-        >
-          {activeMode === 'roll' ? 'FILM' : 'QUICK'}
-        </Text>
-        {activeMode === 'roll' && activeRoll !== null && (
-          <>
-            <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-            <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
-              {effectiveFilmName.toUpperCase()}
-            </Text>
-            {activeRoll.aspect !== 'full' && (
-              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>{activeRoll.aspect}</Text>
-            )}
-          </>
-        )}
-        {activeMode === 'quick' && (
-          <>
-            <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-            <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
-              {effectiveFilmName.toUpperCase()}
-            </Text>
-          </>
-        )}
-      </Pressable>
-
-      {/* EXP dial — frames remaining, counts down like a film counter */}
-      {activeMode === 'roll' && activeRoll !== null && (
-        <View
-          style={[roundChip(52), { position: 'absolute', top: 74, right: 18, borderColor: 'rgba(255,255,255,0.16)' }]}
-        >
-          <Text style={{ fontFamily: fonts.monoBold, fontSize: 18, lineHeight: 20, color: colors.text }}>
-            {remainingExp}
-          </Text>
-          <Text
-            style={{
-              fontFamily: fonts.mono,
-              fontSize: 7,
-              letterSpacing: tracking(0.18, 7),
-              color: colors.accentSoft,
-              marginTop: 1,
-            }}
-          >
-            EXP
-          </Text>
-        </View>
-      )}
-
-      {/* Quick-mode aspect dropdown — collapsed shows the current ratio */}
-      {activeMode === 'quick' && (
-        <View pointerEvents="box-none" style={{ position: 'absolute', top: 74, right: 18, alignItems: 'flex-end' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+          {/* Mode & Film selection chip */}
           <Pressable
-            onPress={() => setAspectMenuOpen((o) => !o)}
+            onPress={() => router.push('/mode-select')}
             style={[
               chip,
               {
                 flexDirection: 'row',
                 alignItems: 'center',
-                gap: 7,
-                paddingVertical: 8,
-                paddingHorizontal: 14,
-                borderRadius: 999,
+                gap: 8,
+                paddingVertical: 7,
+                paddingHorizontal: 11,
+                borderRadius: 10,
               },
             ]}
           >
-            <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.text }}>{quickAspectLabel}</Text>
-            <Text style={{ fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft }}>
-              {aspectMenuOpen ? '▲' : '▼'}
-            </Text>
-          </Pressable>
-          {aspectMenuOpen && (
-            <View
-              style={{
-                marginTop: 6,
-                borderRadius: 14,
-                overflow: 'hidden',
-                backgroundColor: 'rgba(0,0,0,0.8)',
-                borderWidth: 1,
-                borderColor: colors.chipBorder,
-              }}
+            <Animated.View style={hudRotateStyle}>
+              {activeMode === 'roll' ? (
+                <IconFilm size={15} color={colors.text} />
+              ) : (
+                <IconCamera size={15} color={colors.text} />
+              )}
+            </Animated.View>
+            <Animated.Text
+              style={[
+                {
+                  fontFamily: fonts.sansBold,
+                  fontSize: 11,
+                  letterSpacing: tracking(0.1, 11),
+                  color: colors.text,
+                },
+                hudRotateStyle,
+              ]}
             >
-              {QUICK_ASPECTS.filter((a) => a.value !== quickAspect).map(({ value, label }) => (
-                <Pressable
-                  key={value}
-                  onPress={() => {
-                    setQuickAspect(value)
-                    setAspectMenuOpen(false)
-                  }}
-                  style={{ paddingHorizontal: 30, paddingVertical: 10 }}
+              {activeMode === 'roll' ? 'FILM' : 'QUICK'}
+            </Animated.Text>
+            {activeMode === 'roll' && activeRoll !== null && (
+              <>
+                <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+                <Animated.Text
+                  style={[{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }, hudRotateStyle]}
+                  numberOfLines={1}
                 >
-                  <Text
-                    style={{
-                      fontFamily: fonts.mono,
-                      fontSize: 11,
-                      color: colors.textSoft,
-                      textAlign: 'center',
-                    }}
+                  {effectiveFilmName.toUpperCase()}
+                </Animated.Text>
+                {activeRoll.aspect !== 'full' && (
+                  <Animated.Text
+                    style={[{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }, hudRotateStyle]}
                   >
-                    {label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
+                    {activeRoll.aspect}
+                  </Animated.Text>
+                )}
+              </>
+            )}
+            {activeMode === 'quick' && (
+              <>
+                <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+                <Animated.Text
+                  style={[{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }, hudRotateStyle]}
+                  numberOfLines={1}
+                >
+                  {effectiveFilmName.toUpperCase()}
+                </Animated.Text>
+              </>
+            )}
+          </Pressable>
+
+          {/* Kino Cadence Selector Chip */}
+          <Pressable
+            onPress={() => {
+              cycleCaptureFps()
+              Vibration.vibrate(25)
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
+            style={[
+              chip,
+              {
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 5,
+                paddingVertical: 7,
+                paddingHorizontal: 10,
+                borderRadius: 10,
+              },
+            ]}
+          >
+            <Animated.Text
+              style={[
+                {
+                  fontFamily: fonts.monoBold,
+                  fontSize: 10,
+                  color: colors.accentSoft,
+                  letterSpacing: 0.5,
+                },
+                hudRotateStyle,
+              ]}
+            >
+              🎞️ {captureFps === 8 ? '8 FPS · F5' : `${captureFps} FPS`}
+            </Animated.Text>
+          </Pressable>
         </View>
-      )}
+
+        {/* Right side: EXP dial (in Roll mode) or Aspect dropdown (in Quick mode) */}
+        {activeMode === 'roll' && activeRoll !== null && (
+          <View style={[roundChip(52), { borderColor: 'rgba(255,255,255,0.16)' }]}>
+            <Animated.Text
+              style={[{ fontFamily: fonts.monoBold, fontSize: 18, lineHeight: 20, color: colors.text }, hudRotateStyle]}
+            >
+              {remainingExp}
+            </Animated.Text>
+            <Animated.Text
+              style={[
+                {
+                  fontFamily: fonts.mono,
+                  fontSize: 7,
+                  letterSpacing: tracking(0.18, 7),
+                  color: colors.accentSoft,
+                  marginTop: 1,
+                },
+                hudRotateStyle,
+              ]}
+            >
+              EXP
+            </Animated.Text>
+          </View>
+        )}
+
+        {activeMode === 'quick' && (
+          <View pointerEvents="box-none" style={{ alignItems: 'flex-end' }}>
+            <Pressable
+              onPress={() => setAspectMenuOpen((o) => !o)}
+              style={[
+                chip,
+                {
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 7,
+                  paddingVertical: 8,
+                  paddingHorizontal: 14,
+                  borderRadius: 999,
+                },
+              ]}
+            >
+              <Animated.Text style={[{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.text }, hudRotateStyle]}>
+                {quickAspectLabel}
+              </Animated.Text>
+              <Animated.Text style={[{ fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft }, hudRotateStyle]}>
+                {aspectMenuOpen ? '▲' : '▼'}
+              </Animated.Text>
+            </Pressable>
+            {aspectMenuOpen && (
+              <View
+                style={{
+                  marginTop: 6,
+                  borderRadius: 14,
+                  overflow: 'hidden',
+                  backgroundColor: 'rgba(0,0,0,0.8)',
+                  borderWidth: 1,
+                  borderColor: colors.chipBorder,
+                }}
+              >
+                {QUICK_ASPECTS.filter((a) => a.value !== quickAspect).map(({ value, label }) => (
+                  <Pressable
+                    key={value}
+                    onPress={() => {
+                      setQuickAspect(value)
+                      setAspectMenuOpen(false)
+                    }}
+                    style={{ paddingHorizontal: 30, paddingVertical: 10 }}
+                  >
+                    <Animated.Text
+                      style={[
+                        {
+                          fontFamily: fonts.mono,
+                          fontSize: 11,
+                          color: colors.textSoft,
+                          textAlign: 'center',
+                        },
+                        hudRotateStyle,
+                      ]}
+                    >
+                      {label}
+                    </Animated.Text>
+                  </Pressable>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
+      </View>
 
       {/* Pro mode strip — persistent M · ISO · S · EV · WB · AF value strip
           pinned above the shutter row, one parameter expanded at a time.
@@ -1631,29 +1703,48 @@ export default function CameraScreen() {
               ) : null}
             </View>
           </Pressable>
-          {/* Shutter sub-label: only visible in portrait so landscape has 100% clean clearance */}
-          <Animated.View
-            style={[
-              {
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginTop: 6,
-                opacity: uiRotation === 0 ? 1 : 0,
-              },
-              hudRotateStyle,
-            ]}
+          {/* Shutter sub-label: shows current mode and speed, tapping cycles capture FPS */}
+          <Pressable
+            onPress={() => {
+              if (!isCranking) {
+                cycleCaptureFps()
+                Vibration.vibrate(25)
+              }
+            }}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
           >
-            <Text
-              style={{
-                fontFamily: fonts.mono,
-                fontSize: 8,
-                letterSpacing: tracking(0.12, 8),
-                color: isCranking ? '#f39c12' : colors.textMuted,
-              }}
+            <Animated.View
+              style={[
+                {
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 5,
+                  marginTop: 6,
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 6,
+                  backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                  borderWidth: 1,
+                  borderColor: isCranking ? '#f39c12' : 'rgba(255, 255, 255, 0.16)',
+                  opacity: uiRotation === 0 ? 1 : 0,
+                },
+                hudRotateStyle,
+              ]}
             >
-              {isCranking ? 'CRANKING' : 'HOLD FOR KINO'}
-            </Text>
-          </Animated.View>
+              <Text
+                style={{
+                  fontFamily: fonts.mono,
+                  fontSize: 8,
+                  letterSpacing: tracking(0.12, 8),
+                  color: isCranking ? '#f39c12' : colors.textSoft,
+                }}
+              >
+                {isCranking ? 'CRANKING' : `HOLD FOR KINO · ${captureFps === 8 ? '8 FPS (F5)' : `${captureFps} FPS`}`}
+              </Text>
+            </Animated.View>
+          </Pressable>
         </View>
 
         {/* Quick mode only — a roll's frames mint as a whole roll, not here */}

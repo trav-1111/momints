@@ -526,3 +526,40 @@ test('Landscape Shutter Clearance: shutter sub-label is hidden in landscape to a
   assert.equal(getShutterSubLabelOpacity(-90), 0, 'Landscape left must hide hint to prevent collision with shutter')
   assert.equal(getShutterSubLabelOpacity(180), 0, 'Inverted portrait must hide hint')
 })
+
+test('FocusReticle: EV slider drag calibration is stable, non-runaway, and comfortable', () => {
+  const PIXELS_PER_EV = 60
+  const minExposure = -2.0
+  const maxExposure = 2.0
+
+  function computeEvFromDrag(evStart, dy) {
+    const deltaEv = -dy / PIXELS_PER_EV
+    const targetEv = Math.max(minExposure, Math.min(maxExposure, evStart + deltaEv))
+    return Math.round(targetEv * 10) / 10
+  }
+
+  // 1. From 0.0, dragging up 60px yields +1.0 EV
+  assert.equal(computeEvFromDrag(0, -60), 1.0)
+
+  // 2. From 0.0, dragging up 120px yields +2.0 EV (max limit)
+  assert.equal(computeEvFromDrag(0, -120), 2.0)
+
+  // 3. From 0.0, excessive upward drag of 300px caps at +2.0 EV
+  assert.equal(computeEvFromDrag(0, -300), 2.0)
+
+  // 4. From 0.0, dragging down 60px yields -1.0 EV
+  assert.equal(computeEvFromDrag(0, 60), -1.0)
+
+  // 5. From 0.0, fine drag of 18px down yields -0.3 EV (1/3 stop)
+  assert.equal(computeEvFromDrag(0, 18), -0.3)
+
+  // 6. Returning finger to grant origin (dy = 0) returns to starting EV
+  assert.equal(computeEvFromDrag(0, 0), 0.0)
+  assert.equal(computeEvFromDrag(0.5, 0), 0.5)
+
+  // 7. Successive movement samples do not accumulate runaway offsets
+  const evStart = 0
+  const samples = [-10, -20, -30, -40, -50, -60]
+  const results = samples.map((dy) => computeEvFromDrag(evStart, dy))
+  assert.deepEqual(results, [0.2, 0.3, 0.5, 0.7, 0.8, 1.0])
+})
