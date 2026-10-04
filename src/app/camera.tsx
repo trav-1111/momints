@@ -798,6 +798,7 @@ export default function CameraScreen() {
             <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.text }}>
               {formatWalletDisplay(walletAddress, domain)}
             </Text>
+            <Text style={{ fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft, marginLeft: 2 }}>▼</Text>
             {showContactSheetNudge && (
               <View
                 pointerEvents="none"
