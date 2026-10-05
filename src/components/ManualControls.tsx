@@ -249,15 +249,15 @@ function MeteringPanel({ controls }: { controls: ManualCameraState }) {
 }
 
 function IsoPanel({ controls }: { controls: ManualCameraState }) {
-  const { isoMode, setIsoMode, manualIso, setManualIso } = controls
-  const auto = isoMode === 'auto'
+  const { exposureMode, setExposureMode, manualIso, setManualIso } = controls
+  const auto = exposureMode === 'auto'
   const isoIndex = Math.max(0, ISO_NOTCHES.indexOf(manualIso))
   return (
     <View style={styles.panelRow}>
       <AutoBadge
         active={auto}
         onPress={() => {
-          setIsoMode(auto ? 'manual' : 'auto')
+          setExposureMode(auto ? 'manual' : 'auto')
         }}
       />
       <Ruler
@@ -266,7 +266,7 @@ function IsoPanel({ controls }: { controls: ManualCameraState }) {
         max={ISO_NOTCHES.length - 1}
         pxRange={ISO_NOTCHES.length * ISO_PX_PER_NOTCH}
         onDrag={(v) => {
-          if (auto) setIsoMode('manual')
+          if (auto) setExposureMode('manual')
           setManualIso(ISO_NOTCHES[Math.round(v)])
         }}
         dim={auto}
@@ -284,14 +284,14 @@ function IsoPanel({ controls }: { controls: ManualCameraState }) {
 }
 
 function ShutterPanel({ controls }: { controls: ManualCameraState }) {
-  const { shutterMode, setShutterMode, manualShutterNs, setManualShutterNs } = controls
-  const auto = shutterMode === 'auto'
+  const { exposureMode, setExposureMode, manualShutterNs, setManualShutterNs } = controls
+  const auto = exposureMode === 'auto'
   return (
     <View style={styles.panelRow}>
       <AutoBadge
         active={auto}
         onPress={() => {
-          setShutterMode(auto ? 'manual' : 'auto')
+          setExposureMode(auto ? 'manual' : 'auto')
         }}
       />
       <Ruler
@@ -300,7 +300,7 @@ function ShutterPanel({ controls }: { controls: ManualCameraState }) {
         max={SHUTTER_STOPS}
         pxRange={SHUTTER_STOPS * PX_PER_STOP}
         onDrag={(s) => {
-          if (auto) setShutterMode('manual')
+          if (auto) setExposureMode('manual')
           setManualShutterNs(Math.round(stopsToShutter(s)))
         }}
         dim={auto}
@@ -452,8 +452,6 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
   const [activeParam, setActiveParam] = useState<ParamKey | null>(null)
   const {
     exposureMode,
-    isoMode,
-    shutterMode,
     focusMode,
     whiteBalance,
     meteringMode,
@@ -490,6 +488,9 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
           )}
           {activeParam === 'WB' && <WhiteBalancePanel controls={controls} />}
           {activeParam === 'AF' && <FocusPanel controls={controls} onAutoSelected={() => setActiveParam(null)} />}
+          {(activeParam === 'ISO' || activeParam === 'S') && !canIndependentExposure && (
+            <Text style={styles.capabilityNote}>ISO and shutter share one exposure mode on this camera.</Text>
+          )}
         </View>
       )}
 
@@ -503,14 +504,14 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
         <Pressable style={styles.stripCol} onPress={() => toggle('ISO')}>
           <Text style={[styles.stripLabel, activeParam === 'ISO' && styles.stripLabelActive]}>ISO</Text>
           <View style={styles.stripValueRow}>
-            <Text style={styles.stripValueText}>{isoMode === 'auto' ? 'AUTO' : manualIso}</Text>
+            <Text style={styles.stripValueText}>{exposureMode === 'auto' ? 'AUTO' : manualIso}</Text>
           </View>
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('S')}>
           <Text style={[styles.stripLabel, activeParam === 'S' && styles.stripLabelActive]}>S</Text>
           <View style={styles.stripValueRow}>
             <Text style={styles.stripValueText}>
-              {shutterMode === 'auto' ? 'AUTO' : formatShutter(manualShutterNs)}
+              {exposureMode === 'auto' ? 'AUTO' : formatShutter(manualShutterNs)}
             </Text>
           </View>
         </Pressable>

@@ -108,7 +108,7 @@ export function useManualCameraState(
     }
   }, [cameraId])
 
-  const canIndependentExposure = true
+  const canIndependentExposure = hasIsoPriority && hasShutterPriority
   const fullyManual = isoMode === 'manual' && shutterMode === 'manual'
 
   const desiredState = useMemo(() => {
@@ -220,8 +220,7 @@ export function useManualCameraState(
   const reset = useCallback(() => {
     // Reset desired JS state even when unbound. The same acknowledged full-state
     // application handles the native reset once this session is ready again.
-    setIsoMode('auto')
-    setShutterMode('auto')
+    setExposureMode('auto')
     setFocusMode('auto')
     setWhiteBalance('AUTO')
     setMeteringMode('matrix')
@@ -229,7 +228,7 @@ export function useManualCameraState(
     setLockPoint(null)
     setExposurePoint(null)
     retry()
-  }, [retry])
+  }, [retry, setExposureMode])
 
   return {
     exposureMode,
