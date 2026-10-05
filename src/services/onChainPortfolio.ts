@@ -90,10 +90,7 @@ export function normalizeArweaveUrl(uri?: string | null): string {
 /**
  * Extracts a recognizable film stock display name from metadata attributes or item name.
  */
-function extractFilmStock(
-  attributes?: { trait_type?: string; value?: unknown }[],
-  name?: string,
-): string | undefined {
+function extractFilmStock(attributes?: { trait_type?: string; value?: unknown }[], name?: string): string | undefined {
   if (attributes) {
     for (const attr of attributes) {
       const type = attr.trait_type?.toLowerCase()
@@ -157,11 +154,7 @@ function parseDasItemToUserAsset(item: DasItem): UserMintAsset {
     value: String(a.value ?? ''),
   }))
 
-  const rawImage =
-    item.content?.links?.image ||
-    item.content?.files?.[0]?.uri ||
-    item.content?.json_uri ||
-    ''
+  const rawImage = item.content?.links?.image || item.content?.files?.[0]?.uri || item.content?.json_uri || ''
   const imageUri = normalizeArweaveUrl(rawImage)
 
   let rollName: string | undefined
@@ -186,7 +179,8 @@ function parseDasItemToUserAsset(item: DasItem): UserMintAsset {
     id: item.id,
     name,
     imageUri,
-    arweaveUri: rawImage.includes('arweave.net') || rawImage.startsWith('ar://') ? normalizeArweaveUrl(rawImage) : undefined,
+    arweaveUri:
+      rawImage.includes('arweave.net') || rawImage.startsWith('ar://') ? normalizeArweaveUrl(rawImage) : undefined,
     metadataUri: item.content?.json_uri,
     filmStock: extractFilmStock(metadata?.attributes, name),
     rollName,
@@ -309,10 +303,7 @@ export async function fetchUserOnChainMints(
  * Merges on-chain DAS assets with local device mint history items,
  * deduplicating by mintAddress / asset id or signature and sorting by newest first.
  */
-export function mergeMintPortfolio(
-  onChainMints: UserMintAsset[],
-  localHistory: MintHistoryItem[],
-): UserMintAsset[] {
+export function mergeMintPortfolio(onChainMints: UserMintAsset[], localHistory: MintHistoryItem[]): UserMintAsset[] {
   const resultMap = new Map<string, UserMintAsset>()
 
   // 1. Add on-chain items first (authoritative permanent records)
@@ -345,7 +336,9 @@ export function mergeMintPortfolio(
         arweaveUri: local.imageUri.includes('arweave') ? local.imageUri : undefined,
         filmStock: local.filmUsed,
         rollName: local.rollContext?.rollName,
-        frameNumber: local.rollContext ? `${local.rollContext.frameNumber}/${local.rollContext.totalFrames}` : undefined,
+        frameNumber: local.rollContext
+          ? `${local.rollContext.frameNumber}/${local.rollContext.totalFrames}`
+          : undefined,
         artist: local.artist,
         mintedAt: local.mintedAt || new Date().toISOString(),
         transactionSignature: local.transactionSignature,

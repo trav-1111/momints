@@ -1,9 +1,11 @@
 # Autonomous Seeker Phone QA Agent & Human-Like Auditor
 
 ## Overview
+
 This directory contains the autonomous human-like testing agent designed to audit all user flows on the physical **Solana Seeker (`SM02G40619133790`)** via ADB.
 
 ## Architecture
+
 - `device.py`: `SeekerDevice` class wrapping ADB (`uiautomator dump` XML parsing, human coordinate clicking, swipe, screencap, keyevents).
 - `monitor.py`: `SystemAuditor` monitoring `dumpsys meminfo com.momints.app` (PSS, Native Heap, Graphics) and logcat error tracking.
 - `flows.py`: `SeekerTestScenarios` implementing the 6 core end-to-end flows:
@@ -17,7 +19,9 @@ This directory contains the autonomous human-like testing agent designed to audi
 - `run.sh`: One-line launcher.
 
 ## Usage
+
 To execute the automated test suite when ready:
+
 ```bash
 python3 scripts/seeker-agent/runner.py
 # or
@@ -25,6 +29,8 @@ bash scripts/seeker-agent/run.sh
 ```
 
 ## Generated Artifacts
+
 Screenshots and logs are stored at:
+
 - `.orchestrator/qa-artifacts/` (e.g. `00_initial_state.png`, `wallet_modal.png`, `mode_select.png`, `camera_bw.png`, `pro_open.png`, `ev_panel.png`, `reticle_active.png`, `after_capture.png`)
 - `.orchestrator/seeker-audit-report.md`

@@ -295,12 +295,7 @@ async function main(args) {
     const apk = path.join(source, 'android', 'app', 'build', 'outputs', 'apk', 'release', 'app-release.apk')
     const tools = path.join(sdk, 'build-tools', '36.0.0')
     const apksigner = path.join(tools, process.platform === 'win32' ? 'apksigner.bat' : 'apksigner')
-    const signature = await run('apk-signature', apksigner, [
-      'verify',
-      '--verbose',
-      '--print-certs',
-      apk,
-    ])
+    const signature = await run('apk-signature', apksigner, ['verify', '--verbose', '--print-certs', apk])
     const certificate = signature.match(/Signer #1 certificate SHA-256 digest: ([a-f0-9]{64})/i)?.[1]?.toLowerCase()
     if (certificate !== expectedCert) throw new Error('APK certificate does not match verified release key')
     const aapt2 = path.join(tools, process.platform === 'win32' ? 'aapt2.exe' : 'aapt2')

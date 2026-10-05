@@ -18,11 +18,7 @@ import { useMintQueue } from '../store/mintQueue'
 import { drainPendingFinalizes } from '../store/quickFinalize'
 import { getSolscanUrl, getSolscanNftUrl } from '../services/mint'
 import { reconcileActiveRollFrames } from '../services/rollReconciliation'
-import {
-  fetchUserOnChainMints,
-  mergeMintPortfolio,
-  type UserMintAsset,
-} from '../services/onChainPortfolio'
+import { fetchUserOnChainMints, mergeMintPortfolio, type UserMintAsset } from '../services/onChainPortfolio'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { colors, fonts, tracking } from '../theme'
 import { IconBack, IconFilm, IconGallery } from '../components/icons'
@@ -596,7 +592,9 @@ export default function PastMintsScreen() {
                       backgroundColor: colors.accent,
                     }}
                   >
-                    <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.white }}>CONNECT WALLET</Text>
+                    <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.white }}>
+                      CONNECT WALLET
+                    </Text>
                   </Pressable>
                 </>
               ) : (
