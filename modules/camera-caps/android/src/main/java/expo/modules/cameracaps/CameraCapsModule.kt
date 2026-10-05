@@ -55,11 +55,24 @@ class CameraCapsModule : Module() {
         // on older API levels or unsupporting devices — never throws — so this
         // is safe to read unconditionally and gate features on the result
         // rather than inferring support from Build.VERSION.SDK_INT alone.
-        val aePriorityModes = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_PRIORITY_MODES) ?: IntArray(0)
-        val hasIsoPriority =
-          aePriorityModes.contains(CameraCharacteristics.CONTROL_AE_PRIORITY_MODE_SENSOR_SENSITIVITY_PRIORITY)
-        val hasShutterPriority =
-          aePriorityModes.contains(CameraCharacteristics.CONTROL_AE_PRIORITY_MODE_SENSOR_EXPOSURE_TIME_PRIORITY)
+        var hasIsoPriority = false
+        var hasShutterPriority = false
+        if (android.os.Build.VERSION.SDK_INT >= 36) {
+          try {
+            val keyField = CameraCharacteristics::class.java.getField("CONTROL_AE_AVAILABLE_PRIORITY_MODES")
+            @Suppress("UNCHECKED_CAST")
+            val key = keyField.get(null) as? CameraCharacteristics.Key<IntArray>
+            if (key != null) {
+              val aePriorityModes = chars.get(key) ?: IntArray(0)
+              val isoPriorityField = CameraCharacteristics::class.java.getField("CONTROL_AE_PRIORITY_MODE_SENSOR_SENSITIVITY_PRIORITY")
+              val shutterPriorityField = CameraCharacteristics::class.java.getField("CONTROL_AE_PRIORITY_MODE_SENSOR_EXPOSURE_TIME_PRIORITY")
+              val isoVal = isoPriorityField.getInt(null)
+              val shutterVal = shutterPriorityField.getInt(null)
+              hasIsoPriority = aePriorityModes.contains(isoVal)
+              hasShutterPriority = aePriorityModes.contains(shutterVal)
+            }
+          } catch (_: Throwable) {}
+        }
 
         val entry = JSONObject()
         entry.put("cameraId", id)

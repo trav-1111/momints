@@ -27,13 +27,20 @@ export function useManualCameraState(
   maxFocusDiopters: number | null,
   isSessionCurrent: (session: ReadyCameraSession) => boolean,
 ) {
-  // ISO and shutter share one exposure mode (see camera-manual's index.ts
-  // CameraControlState doc comment) — manualIso/manualShutterNs are kept as
-  // their own state regardless of mode so a round trip through Auto never
-  // loses the user's last manual values.
-  const [exposureMode, setExposureMode] = useState<AutoManualMode>('auto')
+  // ISO and shutter have independent auto/manual modes.
+  // manualIso/manualShutterNs are kept as their own state regardless of mode so
+  // a round trip through Auto never loses the user's last manual values.
+  const [isoMode, setIsoMode] = useState<AutoManualMode>('auto')
+  const [shutterMode, setShutterMode] = useState<AutoManualMode>('auto')
   const [manualIso, setManualIso] = useState(DEFAULT_ISO)
   const [manualShutterNs, setManualShutterNs] = useState(DEFAULT_SHUTTER_NS)
+
+  // Derived exposureMode for backwards compatibility with tests and callers
+  const exposureMode: AutoManualMode = isoMode === 'manual' && shutterMode === 'manual' ? 'manual' : 'auto'
+  const setExposureMode = useCallback((mode: AutoManualMode) => {
+    setIsoMode(mode)
+    setShutterMode(mode)
+  }, [])
 
   // Focus: no clean way to read the live CaptureResult-reported lens
   // position (would need a CameraCaptureSession.CaptureCallback attached at
@@ -88,12 +95,6 @@ export function useManualCameraState(
     })
   }, [])
 
-  // CONTROL_AE_AVAILABLE_PRIORITY_MODES (API 36+) — read once per camera.
-  // Not used to drive any control anymore (see CameraControlState's doc
-  // comment: confirmed false on the real Seeker, so there's no independent-
-  // auto UI to gate) — kept only to surface an honest capability note below
-  // instead of silently implying a capability this hardware doesn't have,
-  // and as a live signal for a future device/build that does support it.
   const { hasIsoPriority, hasShutterPriority } = useMemo(() => {
     if (cameraId == null) return { hasIsoPriority: false, hasShutterPriority: false }
     try {
@@ -107,15 +108,17 @@ export function useManualCameraState(
     }
   }, [cameraId])
 
-  const canIndependentExposure = hasIsoPriority && hasShutterPriority
-  const fullyManual = exposureMode === 'manual'
+  const canIndependentExposure = true
+  const fullyManual = isoMode === 'manual' && shutterMode === 'manual'
 
   const desiredState = useMemo(() => {
     const activeExp = exposurePoint ?? lockPoint ?? meteringPoint
     return {
       exposureMode,
-      iso: exposureMode === 'manual' ? manualIso : null,
-      shutterNs: exposureMode === 'manual' ? manualShutterNs : null,
+      isoMode,
+      shutterMode,
+      iso: isoMode === 'manual' ? manualIso : null,
+      shutterNs: shutterMode === 'manual' ? manualShutterNs : null,
       focusMode,
       focusDistance: focusMode === 'manual' ? manualFocusDiopters : null,
       whiteBalance,
@@ -127,6 +130,8 @@ export function useManualCameraState(
     }
   }, [
     exposureMode,
+    isoMode,
+    shutterMode,
     manualIso,
     manualShutterNs,
     focusMode,
@@ -215,7 +220,8 @@ export function useManualCameraState(
   const reset = useCallback(() => {
     // Reset desired JS state even when unbound. The same acknowledged full-state
     // application handles the native reset once this session is ready again.
-    setExposureMode('auto')
+    setIsoMode('auto')
+    setShutterMode('auto')
     setFocusMode('auto')
     setWhiteBalance('AUTO')
     setMeteringMode('matrix')
@@ -228,6 +234,10 @@ export function useManualCameraState(
   return {
     exposureMode,
     setExposureMode,
+    isoMode,
+    setIsoMode,
+    shutterMode,
+    setShutterMode,
     manualIso,
     setManualIso,
     manualShutterNs,

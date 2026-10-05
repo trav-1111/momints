@@ -33,6 +33,12 @@ class CameraStateRecord : Record {
   var exposureMode: String = "auto"
 
   @Field
+  var isoMode: String = "auto"
+
+  @Field
+  var shutterMode: String = "auto"
+
+  @Field
   var iso: Int? = null
 
   @Field
@@ -71,7 +77,7 @@ class CameraManualModule : Module() {
     AsyncFunction("applyCameraState") { viewTag: Int, cameraId: String, state: CameraStateRecord, promise: Promise ->
       val camera = requireCamera(viewTag, cameraId)
       val future = applyCameraState(camera, viewTag, state)
-      val timeoutMs = ((state.shutterNs ?: 0L) / 1_000_000L + 3_000L).coerceIn(3_000L, 20_000L)
+      val timeoutMs = 3_000L
       acknowledge(future, camera, viewTag, cameraId, timeoutMs, promise)
     }.runOnQueue(Queues.MAIN)
 
@@ -100,38 +106,170 @@ class CameraManualModule : Module() {
   @OptIn(ExperimentalCamera2Interop::class)
   @SuppressLint("RestrictedApi")
   private fun applyCameraState(camera: Camera, viewTag: Int, state: CameraStateRecord): ListenableFuture<Void> {
-    val camera2ConfigBuilder = Camera2ImplConfig.Builder()
+    val stillConfigBuilder = Camera2ImplConfig.Builder()
+    val previewConfigBuilder = Camera2ImplConfig.Builder()
 
-    // --- Exposure (ISO / shutter, one shared mode) ---
-    if (state.exposureMode == "manual") {
-      camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+    val isIsoManual = state.isoMode == "manual" || (state.exposureMode == "manual" && state.iso != null)
+    val isShutterManual = state.shutterMode == "manual" || (state.exposureMode == "manual" && state.shutterNs != null)
+
+    // --- Exposure (ISO / Shutter decoupling & preview clamping) ---
+    if (isIsoManual && isShutterManual) {
+      // Both manual
+      stillConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.CONTROL_AE_MODE,
+        CaptureRequest.CONTROL_AE_MODE_OFF,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
+      previewConfigBuilder.setCaptureRequestOptionWithPriority(
         CaptureRequest.CONTROL_AE_MODE,
         CaptureRequest.CONTROL_AE_MODE_OFF,
         Config.OptionPriority.ALWAYS_OVERRIDE
       )
       state.iso?.let {
-        camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_SENSITIVITY,
+          it,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        previewConfigBuilder.setCaptureRequestOptionWithPriority(
           CaptureRequest.SENSOR_SENSITIVITY,
           it,
           Config.OptionPriority.ALWAYS_OVERRIDE
         )
       }
       state.shutterNs?.let { ns ->
-        camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+        // Still capture receives the full requested exposure duration (up to 16s)
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
           CaptureRequest.SENSOR_EXPOSURE_TIME,
           ns,
           Config.OptionPriority.ALWAYS_OVERRIDE
         )
         val ceiling = maxFrameDuration(camera) ?: ns
-        camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
           CaptureRequest.SENSOR_FRAME_DURATION,
           ns.coerceAtMost(ceiling),
           Config.OptionPriority.ALWAYS_OVERRIDE
         )
+
+        // Repeating preview viewfinder exposure time is clamped to max 100ms (10 FPS)
+        // so the screen never freezes or blows out to white
+        val previewNs = ns.coerceAtMost(100_000_000L)
+        previewConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_EXPOSURE_TIME,
+          previewNs,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        previewConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_FRAME_DURATION,
+          previewNs,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+      }
+    } else if (isIsoManual && !isShutterManual) {
+      // ISO Priority (manual ISO, auto shutter)
+      stillConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.CONTROL_AE_MODE,
+        CaptureRequest.CONTROL_AE_MODE_ON,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
+      previewConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.CONTROL_AE_MODE,
+        CaptureRequest.CONTROL_AE_MODE_ON,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
+      state.iso?.let {
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_SENSITIVITY,
+          it,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        previewConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_SENSITIVITY,
+          it,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+      }
+      if (state.aeLock) {
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.CONTROL_AE_LOCK,
+          true,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        previewConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.CONTROL_AE_LOCK,
+          true,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+      }
+    } else if (!isIsoManual && isShutterManual) {
+      // Shutter Priority (auto ISO, manual shutter)
+      state.shutterNs?.let { ns ->
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.CONTROL_AE_MODE,
+          CaptureRequest.CONTROL_AE_MODE_OFF,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_EXPOSURE_TIME,
+          ns,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        val ceiling = maxFrameDuration(camera) ?: ns
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_FRAME_DURATION,
+          ns.coerceAtMost(ceiling),
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        val fallbackIso = state.iso ?: 400
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_SENSITIVITY,
+          fallbackIso,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+
+        previewConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.CONTROL_AE_MODE,
+          CaptureRequest.CONTROL_AE_MODE_ON,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        val previewNs = ns.coerceAtMost(100_000_000L)
+        previewConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_EXPOSURE_TIME,
+          previewNs,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+      }
+      if (state.aeLock) {
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.CONTROL_AE_LOCK,
+          true,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        previewConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.CONTROL_AE_LOCK,
+          true,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
       }
     } else {
+      // Full Auto
+      stillConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.CONTROL_AE_MODE,
+        CaptureRequest.CONTROL_AE_MODE_ON,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
+      previewConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.CONTROL_AE_MODE,
+        CaptureRequest.CONTROL_AE_MODE_ON,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
       if (state.aeLock) {
-        camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.CONTROL_AE_LOCK,
+          true,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        previewConfigBuilder.setCaptureRequestOptionWithPriority(
           CaptureRequest.CONTROL_AE_LOCK,
           true,
           Config.OptionPriority.ALWAYS_OVERRIDE
@@ -141,20 +279,35 @@ class CameraManualModule : Module() {
 
     // --- Focus ---
     if (state.focusMode == "manual") {
-      camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+      stillConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.CONTROL_AF_MODE,
+        CaptureRequest.CONTROL_AF_MODE_OFF,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
+      previewConfigBuilder.setCaptureRequestOptionWithPriority(
         CaptureRequest.CONTROL_AF_MODE,
         CaptureRequest.CONTROL_AF_MODE_OFF,
         Config.OptionPriority.ALWAYS_OVERRIDE
       )
       state.focusDistance?.let {
-        camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.LENS_FOCUS_DISTANCE,
+          it,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        previewConfigBuilder.setCaptureRequestOptionWithPriority(
           CaptureRequest.LENS_FOCUS_DISTANCE,
           it,
           Config.OptionPriority.ALWAYS_OVERRIDE
         )
       }
     } else if (state.afLock) {
-      camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+      stillConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.CONTROL_AF_MODE,
+        CaptureRequest.CONTROL_AF_MODE_AUTO,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
+      previewConfigBuilder.setCaptureRequestOptionWithPriority(
         CaptureRequest.CONTROL_AF_MODE,
         CaptureRequest.CONTROL_AF_MODE_AUTO,
         Config.OptionPriority.ALWAYS_OVERRIDE
@@ -162,7 +315,12 @@ class CameraManualModule : Module() {
     }
 
     // --- White balance ---
-    camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+    stillConfigBuilder.setCaptureRequestOptionWithPriority(
+      CaptureRequest.CONTROL_AWB_MODE,
+      state.awbMode,
+      Config.OptionPriority.ALWAYS_OVERRIDE
+    )
+    previewConfigBuilder.setCaptureRequestOptionWithPriority(
       CaptureRequest.CONTROL_AWB_MODE,
       state.awbMode,
       Config.OptionPriority.ALWAYS_OVERRIDE
@@ -178,12 +336,22 @@ class CameraManualModule : Module() {
           else -> null
         }
         if (region != null) {
-          camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+          stillConfigBuilder.setCaptureRequestOptionWithPriority(
             CaptureRequest.CONTROL_AE_REGIONS,
             arrayOf(region),
             Config.OptionPriority.ALWAYS_OVERRIDE
           )
-          camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+          stillConfigBuilder.setCaptureRequestOptionWithPriority(
+            CaptureRequest.CONTROL_AF_REGIONS,
+            arrayOf(region),
+            Config.OptionPriority.ALWAYS_OVERRIDE
+          )
+          previewConfigBuilder.setCaptureRequestOptionWithPriority(
+            CaptureRequest.CONTROL_AE_REGIONS,
+            arrayOf(region),
+            Config.OptionPriority.ALWAYS_OVERRIDE
+          )
+          previewConfigBuilder.setCaptureRequestOptionWithPriority(
             CaptureRequest.CONTROL_AF_REGIONS,
             arrayOf(region),
             Config.OptionPriority.ALWAYS_OVERRIDE
@@ -192,13 +360,14 @@ class CameraManualModule : Module() {
       }
     }
 
-    val camera2Config = camera2ConfigBuilder.build()
+    val stillConfig = stillConfigBuilder.build()
+    val previewConfig = previewConfigBuilder.build()
 
     // 1. Update the still capture pipeline (ImageCapture -> ImagePipeline -> mCaptureConfig)
-    resolveImagePipeline(viewTag)?.let { applyStillCaptureConfig(it, camera2Config) }
+    resolveImagePipeline(viewTag)?.let { applyStillCaptureConfig(it, stillConfig) }
 
     // 2. Update the repeating viewfinder preview (Camera2CameraControl)
-    val options = CaptureRequestOptions.Builder.from(camera2Config).build()
+    val options = CaptureRequestOptions.Builder.from(previewConfig).build()
     return Camera2CameraControl.from(camera.cameraControl).setCaptureRequestOptions(options)
   }
 

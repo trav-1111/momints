@@ -361,6 +361,56 @@ test('JS wrapper waits for native acknowledgement and supplies camera identity',
   assert.equal(complete, true)
 })
 
+test('isoMode and shutterMode operate independently in useManualCameraState', async () => {
+  const h = await harness()
+  try {
+    await h.bind()
+    await h.resolve()
+    assert.equal(h.value.controls.isoMode, 'auto')
+    assert.equal(h.value.controls.shutterMode, 'auto')
+
+    // Set ISO to manual, shutter remains auto
+    await h.run(({ controls }) => {
+      controls.setIsoMode('manual')
+      controls.setManualIso(800)
+    })
+    assert.equal(h.value.controls.isoMode, 'manual')
+    assert.equal(h.value.controls.shutterMode, 'auto')
+    assert.equal(h.calls[h.calls.length - 1].state.isoMode, 'manual')
+    assert.equal(h.calls[h.calls.length - 1].state.shutterMode, 'auto')
+    assert.equal(h.calls[h.calls.length - 1].state.iso, 800)
+    assert.equal(h.calls[h.calls.length - 1].state.shutterNs, null)
+    await h.resolve()
+
+    // Set shutter to manual 2 seconds (2_000_000_000 ns), ISO remains manual 800
+    await h.run(({ controls }) => {
+      controls.setShutterMode('manual')
+      controls.setManualShutterNs(2_000_000_000)
+    })
+    assert.equal(h.value.controls.isoMode, 'manual')
+    assert.equal(h.value.controls.shutterMode, 'manual')
+    assert.equal(h.calls[h.calls.length - 1].state.isoMode, 'manual')
+    assert.equal(h.calls[h.calls.length - 1].state.shutterMode, 'manual')
+    assert.equal(h.calls[h.calls.length - 1].state.iso, 800)
+    assert.equal(h.calls[h.calls.length - 1].state.shutterNs, 2_000_000_000)
+    await h.resolve()
+
+    // Toggle ISO back to auto, shutter remains manual 2s
+    await h.run(({ controls }) => {
+      controls.setIsoMode('auto')
+    })
+    assert.equal(h.value.controls.isoMode, 'auto')
+    assert.equal(h.value.controls.shutterMode, 'manual')
+    assert.equal(h.calls[h.calls.length - 1].state.isoMode, 'auto')
+    assert.equal(h.calls[h.calls.length - 1].state.shutterMode, 'manual')
+    assert.equal(h.calls[h.calls.length - 1].state.iso, null)
+    assert.equal(h.calls[h.calls.length - 1].state.shutterNs, 2_000_000_000)
+    await h.resolve()
+  } finally {
+    await h.close()
+  }
+})
+
 test('capture gate precedes sensor call and queue entry; native acknowledgement is bounded and identity checked', () => {
   const camera = fs.readFileSync(path.join(__dirname, '../src/app/camera.tsx'), 'utf8')
   const gate = camera.indexOf('if (!cameraRef.current || !canCapture()) return')

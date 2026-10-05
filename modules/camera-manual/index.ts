@@ -46,16 +46,13 @@ export type WhiteBalancePresetName = keyof typeof WhiteBalancePreset
 export type AutoManualMode = 'auto' | 'manual'
 export type MeteringMode = 'matrix' | 'center' | 'spot'
 
-// ISO and shutter share ONE exposure mode, not two independent ones — the
-// real Seeker (and per camera-caps, every camera on it) reports no
-// CONTROL_AE_AVAILABLE_PRIORITY_MODES support, so "ISO manual + shutter
-// auto" isn't a state Camera2 can actually run on this hardware. See
-// hasIsoPriority/hasShutterPriority in modules/camera-caps for the capability
-// check retained for a possible future independent-auto build.
+// ISO and shutter can be controlled independently.
 export type CameraControlState = {
-  exposureMode: AutoManualMode
-  iso: number | null // required when exposureMode === 'manual'
-  shutterNs: number | null // required when exposureMode === 'manual'
+  exposureMode?: AutoManualMode
+  isoMode?: AutoManualMode
+  shutterMode?: AutoManualMode
+  iso: number | null
+  shutterNs: number | null
   focusMode: AutoManualMode
   focusDistance: number | null // diopters, required when focusMode === 'manual'
   whiteBalance: WhiteBalancePresetName
@@ -85,9 +82,14 @@ function clamp(value: number, range: { min: number; max: number }): number {
 export async function applyCameraState(viewTag: number, cameraId: string, state: CameraControlState): Promise<void> {
   const iso = state.iso == null ? null : Math.round(clamp(state.iso, ISO_RANGE))
   const shutterNs = state.shutterNs == null ? null : Math.round(clamp(state.shutterNs, SHUTTER_NS_RANGE))
+  const isoMode = state.isoMode ?? (state.exposureMode ?? 'auto')
+  const shutterMode = state.shutterMode ?? (state.exposureMode ?? 'auto')
+  const exposureMode = state.exposureMode ?? (isoMode === 'manual' && shutterMode === 'manual' ? 'manual' : 'auto')
 
   await CameraManualNative.applyCameraState(viewTag, cameraId, {
-    exposureMode: state.exposureMode,
+    exposureMode,
+    isoMode,
+    shutterMode,
     iso,
     shutterNs,
     focusMode: state.focusMode,
