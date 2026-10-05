@@ -158,6 +158,7 @@ type RulerProps = {
   pxRange: number
   onDrag: (v: number) => void
   dim?: boolean
+  disabled?: boolean
   labels: ReactNode[]
   majorCount?: number
   minorCount?: number
@@ -168,12 +169,25 @@ type RulerProps = {
   hapticStep?: number
 }
 
-function Ruler({ value, min, max, pxRange, onDrag, dim, labels, majorCount, minorCount = 28, hapticStep }: RulerProps) {
+function Ruler({
+  value,
+  min,
+  max,
+  pxRange,
+  onDrag,
+  dim,
+  disabled = false,
+  labels,
+  majorCount,
+  minorCount = 28,
+  hapticStep,
+}: RulerProps) {
+  const [trackWidth, setTrackWidth] = useState(pxRange)
   const baseValue = useRef(value)
   const lastDetent = useRef<number | null>(null)
   const step = hapticStep ?? (max - min) / minorCount
   const pan = Gesture.Pan()
-    .enabled(!dim)
+    .enabled(!disabled)
     .onStart(() => {
       baseValue.current = value
       lastDetent.current = Math.round((value - min) / step)
@@ -190,13 +204,32 @@ function Ruler({ value, min, max, pxRange, onDrag, dim, labels, majorCount, mino
     })
     .runOnJS(true)
 
+  const tap = Gesture.Tap()
+    .enabled(!disabled)
+    .onEnd((e) => {
+      const effectiveWidth = trackWidth > 0 ? trackWidth : pxRange
+      const x = Math.max(0, Math.min(effectiveWidth, e.x))
+      const next = min + (x / effectiveWidth) * (max - min)
+      Haptics.selectionAsync()
+      onDrag(next)
+    })
+    .runOnJS(true)
+
+  const gesture = Gesture.Exclusive(pan, tap)
+
   const fillPct = Math.max(0, Math.min(1, (value - min) / (max - min))) * 100
 
   return (
     <View style={styles.rulerCol}>
       <View style={styles.rulerLabelRow}>{labels}</View>
-      <GestureDetector gesture={pan}>
-        <View style={styles.rulerTrack}>
+      <GestureDetector gesture={gesture}>
+        <View
+          style={styles.rulerTrack}
+          onLayout={(e) => {
+            const w = e.nativeEvent.layout.width
+            if (w > 0) setTrackWidth(w)
+          }}
+        >
           {majorCount != null ? (
             <>
               <View style={styles.tickRowMinor} pointerEvents="none">
@@ -267,17 +300,27 @@ function IsoPanel({ controls }: { controls: ManualCameraState }) {
         pxRange={ISO_NOTCHES.length * ISO_PX_PER_NOTCH}
         onDrag={(v) => {
           if (auto) setExposureMode('manual')
-          setManualIso(ISO_NOTCHES[Math.round(v)])
+          const idx = Math.min(ISO_NOTCHES.length - 1, Math.max(0, Math.round(v)))
+          setManualIso(ISO_NOTCHES[idx])
         }}
         dim={auto}
         majorCount={ISO_NOTCHES.length - 1}
         minorCount={24}
         hapticStep={1}
-        labels={ISO_NOTCHES.map((n) => (
-          <Text key={n} style={styles.rulerLabelText}>
-            {n}
-          </Text>
-        ))}
+        labels={ISO_NOTCHES.map((n) => {
+          const isSelected = !auto && manualIso === n
+          return (
+            <Text
+              key={n}
+              style={[
+                styles.rulerLabelText,
+                isSelected && { color: colors.accent, fontFamily: fonts.monoBold },
+              ]}
+            >
+              {n}
+            </Text>
+          )
+        })}
       />
     </View>
   )
@@ -305,14 +348,31 @@ function ShutterPanel({ controls }: { controls: ManualCameraState }) {
         }}
         dim={auto}
         minorCount={30}
-        labels={[
-          <Text key="min" style={styles.rulerLabelText}>
-            {formatShutter(SHUTTER_NS_RANGE.min)}
-          </Text>,
-          <Text key="max" style={styles.rulerLabelText}>
-            {formatShutter(SHUTTER_NS_RANGE.max)}
-          </Text>,
-        ]}
+        labels={
+          auto
+            ? [
+                <Text key="min" style={styles.rulerLabelText}>
+                  {formatShutter(SHUTTER_NS_RANGE.min)}
+                </Text>,
+                <Text key="max" style={styles.rulerLabelText}>
+                  {formatShutter(SHUTTER_NS_RANGE.max)}
+                </Text>,
+              ]
+            : [
+                <Text key="min" style={styles.rulerLabelText}>
+                  {formatShutter(SHUTTER_NS_RANGE.min)}
+                </Text>,
+                <Text
+                  key="cur"
+                  style={[styles.rulerLabelText, { color: colors.accent, fontFamily: fonts.monoBold }]}
+                >
+                  {formatShutter(manualShutterNs)}
+                </Text>,
+                <Text key="max" style={styles.rulerLabelText}>
+                  {formatShutter(SHUTTER_NS_RANGE.max)}
+                </Text>,
+              ]
+        }
       />
     </View>
   )
@@ -341,6 +401,7 @@ function EvPanel({
         pxRange={Math.max(1, maxExposure - minExposure) * PX_PER_STOP}
         onDrag={setEv}
         dim={dim}
+        disabled={dim}
         majorCount={4}
         minorCount={20}
         labels={[
