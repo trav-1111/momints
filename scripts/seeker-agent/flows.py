@@ -263,10 +263,15 @@ class SeekerTestScenarios:
         artifacts.append(shot_shelf2)
 
         shelf_elems2 = self.device.dump_hierarchy()
+        if not has_momints_bw:
+            has_momints_bw = any("Momints B&W" in (e.text + e.content_desc) for e in shelf_elems2)
+        if not has_momints_color:
+            has_momints_color = any("Momints Color" in (e.text + e.content_desc) for e in shelf_elems2)
         if not has_bali_400:
             has_bali_400 = any("Bali 400" in (e.text + e.content_desc) for e in shelf_elems2)
         if not has_martha:
             has_martha = any("Martha" in (e.text + e.content_desc) for e in shelf_elems2)
+
 
         all_four_films = has_momints_color and has_momints_bw and has_bali_400 and has_martha
 
