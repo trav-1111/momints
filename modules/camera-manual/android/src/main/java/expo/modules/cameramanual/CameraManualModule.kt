@@ -1,17 +1,22 @@
 package expo.modules.cameramanual
 
+import android.annotation.SuppressLint
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.MeteringRectangle
 import android.view.View
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
+import androidx.camera.camera2.impl.Camera2ImplConfig
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraControl
+import androidx.camera.core.impl.CaptureConfig
+import androidx.camera.core.impl.Config
 import com.google.common.util.concurrent.ListenableFuture
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.functions.Queues
@@ -23,16 +28,6 @@ import expo.modules.kotlin.records.Record
 import java.util.concurrent.Executor
 import java.util.concurrent.ExecutionException
 
-// exposureMode/focusMode: "auto" | "manual". ISO and shutter share ONE
-// exposureMode (see index.ts CameraControlState doc comment for why: this
-// hardware has no CONTROL_AE_AVAILABLE_PRIORITY_MODES support, so an
-// independent "ISO manual, shutter auto" state isn't real on this device).
-// meteringMode: "matrix" | "center" | "spot".
-// awbMode: CameraMetadata.CONTROL_AWB_MODE_* (see index.ts presets).
-// A plain Record class instead of ~9 individual Function() params — Expo's
-// Function() DSL has an arity ceiling (Function0..FunctionN) that a flat
-// multi-parameter lambda exceeds; a single structured JS-object argument
-// sails under it and reads better besides.
 class CameraStateRecord : Record {
   @Field
   var exposureMode: String = "auto"
@@ -60,62 +55,29 @@ class CameraStateRecord : Record {
 
   @Field
   var meteringNormY: Float = 0.5f
+
+  @Field
+  var aeLock: Boolean = false
+
+  @Field
+  var afLock: Boolean = false
 }
 
-// TIER 2 — manual camera controls via CameraX's Camera2Interop, pushed onto
-// the LIVE react-native-vision-camera session.
-//
-// vision-camera's CameraView.cameraSession and CameraSession.camera are
-// declared `internal` (Kotlin module-private) — a different Gradle module
-// like this one can't reference them with normal syntax. Reflection is the
-// deliberate, stable way around that: it reads the backing FIELD by its
-// literal name, and Kotlin only mangles cross-module METHOD names, not
-// backing fields — so this doesn't depend on guessing a mangled accessor
-// name and isn't fragile to compiler-version churn the way that would be.
-// No vision-camera fork or patch-package needed. Proven on-device across
-// ISO, shutter, white balance, focus, and metering: zero crashes, measured
-// effects landing in the actual captured photo, not just the preview.
-//
-// ARCHITECTURE: applyCameraState rebuilds the ENTIRE desired capture-request
-// override set from scratch on every call and uses setCaptureRequestOptions
-// (REPLACE), never addCaptureRequestOptions (MERGE). This sidesteps a real
-// problem with the merge-based approach: there is no "clear just this one
-// key" API on Camera2CameraControl (only clearCaptureRequestOptions(), which
-// clears everything). Independent auto/manual toggles for ISO/shutter/focus
-// need to be able to release JUST one control back to auto while others stay
-// manual — only achievable by owning the full state and replacing it
-// wholesale each time, which is exactly what the JS layer already does
-// (it holds all UI state and calls this after every change anyway).
 class CameraManualModule : Module() {
   @OptIn(ExperimentalCamera2Interop::class)
   override fun definition() = ModuleDefinition {
     Name("CameraManual")
 
-    // exposureMode maps to Camera2's real exposure states:
-    //   auto   -> AE_MODE_ON, no manual overrides (camera picks ISO + shutter)
-    //   manual -> AE_MODE_OFF, both SENSOR_SENSITIVITY and SENSOR_EXPOSURE_TIME
-    //             set from the caller, plus a matching SENSOR_FRAME_DURATION
-    //             (Camera2 requires frame duration >= exposure time; without
-    //             this a shutter speed slower than the default ~33ms frame
-    //             duration would silently get clipped by the driver).
-    // ISO-priority / shutter-priority (independent auto per-control) is
-    // deliberately not implemented here — see index.ts's CameraControlState
-    // comment: this hardware doesn't support CONTROL_AE_AVAILABLE_PRIORITY_MODES,
-    // so there's no real Camera2 state to drive it with.
     AsyncFunction("applyCameraState") { viewTag: Int, cameraId: String, state: CameraStateRecord, promise: Promise ->
       val camera = requireCamera(viewTag, cameraId)
-      val future = applyCameraState(camera, state)
-      // A long manual shutter can also slow repeating requests. Bound the wait,
-      // but allow the requested exposure rather than timing it out at one frame.
+      val future = applyCameraState(camera, viewTag, state)
       val timeoutMs = ((state.shutterNs ?: 0L) / 1_000_000L + 3_000L).coerceIn(3_000L, 20_000L)
       acknowledge(future, camera, viewTag, cameraId, timeoutMs, promise)
     }.runOnQueue(Queues.MAIN)
 
-    // Full escape hatch — clears every override in one call, distinct from
-    // applyCameraState(all auto) in that it doesn't require knowing/computing
-    // a valid full state first. Useful on screen unmount/cleanup.
     AsyncFunction("resetToAuto") { viewTag: Int, cameraId: String, promise: Promise ->
       val camera = requireCamera(viewTag, cameraId)
+      resolveImagePipeline(viewTag)?.let { applyStillCaptureConfig(it, Camera2ImplConfig.Builder().build()) }
       val future = Camera2CameraControl.from(camera.cameraControl).clearCaptureRequestOptions()
       acknowledge(future, camera, viewTag, cameraId, 3_000L, promise)
     }.runOnQueue(Queues.MAIN)
@@ -136,38 +98,77 @@ class CameraManualModule : Module() {
   }
 
   @OptIn(ExperimentalCamera2Interop::class)
-  private fun applyCameraState(camera: Camera, state: CameraStateRecord): ListenableFuture<Void> {
-
-    val builder = CaptureRequestOptions.Builder()
+  @SuppressLint("RestrictedApi")
+  private fun applyCameraState(camera: Camera, viewTag: Int, state: CameraStateRecord): ListenableFuture<Void> {
+    val camera2ConfigBuilder = Camera2ImplConfig.Builder()
 
     // --- Exposure (ISO / shutter, one shared mode) ---
     if (state.exposureMode == "manual") {
-      builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
-      state.iso?.let { builder.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, it) }
+      camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.CONTROL_AE_MODE,
+        CaptureRequest.CONTROL_AE_MODE_OFF,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
+      state.iso?.let {
+        camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_SENSITIVITY,
+          it,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+      }
       state.shutterNs?.let { ns ->
-        builder.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, ns)
-        // Frame duration must be >= exposure time or the driver silently caps
-        // the achieved exposure at the (much shorter) default frame duration.
-        // Clamp to the sensor's real ceiling so an extreme shutter value
-        // can't request a frame duration the hardware doesn't support.
+        camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_EXPOSURE_TIME,
+          ns,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
         val ceiling = maxFrameDuration(camera) ?: ns
-        builder.setCaptureRequestOption(CaptureRequest.SENSOR_FRAME_DURATION, ns.coerceAtMost(ceiling))
+        camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.SENSOR_FRAME_DURATION,
+          ns.coerceAtMost(ceiling),
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+      }
+    } else {
+      if (state.aeLock) {
+        camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.CONTROL_AE_LOCK,
+          true,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
       }
     }
-    // else ("auto"): omit AE_MODE/sensor keys entirely so CameraX's own
-    // default (fully auto) applies — nothing to override.
 
     // --- Focus ---
     if (state.focusMode == "manual") {
-      builder.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
-      state.focusDistance?.let { builder.setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, it) }
+      camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.CONTROL_AF_MODE,
+        CaptureRequest.CONTROL_AF_MODE_OFF,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
+      state.focusDistance?.let {
+        camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.LENS_FOCUS_DISTANCE,
+          it,
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+      }
+    } else if (state.afLock) {
+      camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.CONTROL_AF_MODE,
+        CaptureRequest.CONTROL_AF_MODE_AUTO,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
     }
-    // else: omit AF_MODE/LENS_FOCUS_DISTANCE — CameraX's own continuous-AF default applies.
 
-    // --- White balance (always has a value; AUTO=1 is a real preset, not "unset") ---
-    builder.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, state.awbMode)
+    // --- White balance ---
+    camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+      CaptureRequest.CONTROL_AWB_MODE,
+      state.awbMode,
+      Config.OptionPriority.ALWAYS_OVERRIDE
+    )
 
-    // --- Metering (only meaningful while AE_MODE isn't OFF, harmless otherwise) ---
+    // --- Metering ---
     if (state.meteringMode != "matrix") {
       val array = activeArraySize(camera)
       if (array != null) {
@@ -177,18 +178,30 @@ class CameraManualModule : Module() {
           else -> null
         }
         if (region != null) {
-          builder.setCaptureRequestOption(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(region))
+          camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+            CaptureRequest.CONTROL_AE_REGIONS,
+            arrayOf(region),
+            Config.OptionPriority.ALWAYS_OVERRIDE
+          )
+          camera2ConfigBuilder.setCaptureRequestOptionWithPriority(
+            CaptureRequest.CONTROL_AF_REGIONS,
+            arrayOf(region),
+            Config.OptionPriority.ALWAYS_OVERRIDE
+          )
         }
       }
     }
-    // "matrix": omit CONTROL_AE_REGIONS — device default is whole-frame metering.
 
-    return Camera2CameraControl.from(camera.cameraControl).setCaptureRequestOptions(builder.build())
+    val camera2Config = camera2ConfigBuilder.build()
+
+    // 1. Update the still capture pipeline (ImageCapture -> ImagePipeline -> mCaptureConfig)
+    resolveImagePipeline(viewTag)?.let { applyStillCaptureConfig(it, camera2Config) }
+
+    // 2. Update the repeating viewfinder preview (Camera2CameraControl)
+    val options = CaptureRequestOptions.Builder.from(camera2Config).build()
+    return Camera2CameraControl.from(camera.cameraControl).setCaptureRequestOptions(options)
   }
 
-  // A square region of `sizeFraction` of the active array's shorter side,
-  // centered at (centerXFrac, centerYFrac) in 0..1 normalized coordinates,
-  // clamped so it never runs off the sensor's real pixel bounds.
   private fun centeredRegion(
     array: android.graphics.Rect,
     centerXFrac: Float,
@@ -215,7 +228,6 @@ class CameraManualModule : Module() {
       .getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_MAX_FRAME_DURATION)
   }
 
-  @OptIn(ExperimentalCamera2Interop::class)
   private fun acknowledge(
     future: ListenableFuture<Void>,
     camera: Camera,
@@ -238,7 +250,7 @@ class CameraManualModule : Module() {
         settled = true
         handler.removeCallbacks(timeout)
         try {
-          future.get() // Listener runs only after completion; never blocks the UI.
+          future.get()
           if (requireCamera(viewTag, cameraId) !== camera) {
             promise.reject("ERR_CAMERA_SESSION_CHANGED", "Camera session changed while applying settings", null)
           } else {
@@ -268,4 +280,45 @@ class CameraManualModule : Module() {
     cameraField.isAccessible = true
     return cameraField.get(session) as? Camera
   }
+
+  private fun resolveImagePipeline(viewTag: Int): Any? {
+    val view = appContext.findView<View>(viewTag) ?: return null
+    return try {
+      val sessionField = view.javaClass.getDeclaredField("cameraSession")
+      sessionField.isAccessible = true
+      val session = sessionField.get(view) ?: return null
+
+      val photoField = session.javaClass.getDeclaredField("photoOutput")
+      photoField.isAccessible = true
+      val photoOutput = photoField.get(session) ?: return null
+
+      val takePicMgrField = photoOutput.javaClass.getDeclaredField("mTakePictureManager")
+      takePicMgrField.isAccessible = true
+      val takePicMgr = takePicMgrField.get(photoOutput) ?: return null
+
+      val pipelineField = takePicMgr.javaClass.getDeclaredField("mImagePipeline")
+      pipelineField.isAccessible = true
+      pipelineField.get(takePicMgr)
+    } catch (e: Throwable) {
+      Log.w("CameraManual", "Could not resolve ImagePipeline: ${e.message}")
+      null
+    }
+  }
+
+  @SuppressLint("RestrictedApi")
+  private fun applyStillCaptureConfig(pipeline: Any, camera2Config: Config) {
+    try {
+      val captureConfigField = pipeline.javaClass.getDeclaredField("mCaptureConfig")
+      captureConfigField.isAccessible = true
+      val currentConfig = captureConfigField.get(pipeline) as? CaptureConfig ?: return
+
+      val builder = CaptureConfig.Builder.from(currentConfig)
+      builder.setImplementationOptions(camera2Config)
+      captureConfigField.set(pipeline, builder.build())
+      Log.i("CameraManual", "Propagated manual settings directly to CameraX still capture pipeline")
+    } catch (e: Throwable) {
+      Log.w("CameraManual", "Could not update still capture pipeline: ${e.message}")
+    }
+  }
 }
+

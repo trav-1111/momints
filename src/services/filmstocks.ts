@@ -2,6 +2,7 @@ import { createHash } from 'react-native-quick-crypto'
 import { Directory, File, Paths } from 'expo-file-system'
 import { ROLL_API_BASE } from '../config/rollApi'
 import { isCurrentlyStocked } from './filmstockPolicy.cjs'
+import { getBundledLutBytes } from './bundledLuts'
 
 export const FILMSTOCK_ENGINE_VERSION = 2
 export const DEFAULT_COLOR_FILM_ID = 'momints-color-v1'
@@ -82,7 +83,7 @@ const GRAYSCALE_MATRIX = [
   0,     0,     0,     1, 0,
 ]
 
-const BUILTIN_RECIPES: Record<string, FilmStockRecipeV1> = {
+const BUILTIN_RECIPES: Record<string, FilmStockRecipe> = {
   [DEFAULT_COLOR_FILM_ID]: {
     schemaVersion: 1,
     filmStockId: DEFAULT_COLOR_FILM_ID,
@@ -92,6 +93,54 @@ const BUILTIN_RECIPES: Record<string, FilmStockRecipeV1> = {
     schemaVersion: 1,
     filmStockId: DEFAULT_BW_FILM_ID,
     colorMatrix: GRAYSCALE_MATRIX,
+  },
+  'bali-400-v1': {
+    schemaVersion: 2,
+    filmStockId: 'bali-400-v1',
+    displayName: 'Bali 400',
+    shortDescription: 'Warm, nostalgic colour with dense shadows and restrained highlights.',
+    characteristics: ['warm skin tones', 'restrained highlights', 'muted greens', 'subtle grain'],
+    inputColorSpace: 'sRGB',
+    outputColorSpace: 'sRGB',
+    baseMode: 'color',
+    lut: {
+      format: 'momints-lut',
+      size: 33,
+      intensity: 1,
+      uri: 'runtime/bali-400-v1.lut',
+      sha256: 'af4c0a4641872990e1da7d8d1ad03101f7084995ddfa15f29a64086e615ae778',
+    },
+    exposure: { ev: 0 },
+    grain: { amount: 0.13, size: 0.32, roughness: 0.35 },
+    halation: { amount: 0.025, radius: 0.16 },
+    bloom: { amount: 0.015, radius: 0.16 },
+    sharpness: { amount: -0.06 },
+    vignette: { amount: 0.02 },
+    minimumEngineVersion: 2,
+  },
+  'martha-v1': {
+    schemaVersion: 2,
+    filmStockId: 'martha-v1',
+    displayName: 'Martha',
+    shortDescription: 'Lush saturation, rich colors, lifted blacks, vintage tone.',
+    characteristics: ['lush saturation', 'rich colors', 'lifted blacks', 'vintage tone', 'subtle grain'],
+    inputColorSpace: 'sRGB',
+    outputColorSpace: 'sRGB',
+    baseMode: 'color',
+    lut: {
+      format: 'momints-lut',
+      size: 33,
+      intensity: 1,
+      uri: 'runtime/martha-v1.lut',
+      sha256: '068f18bc5e41ed7fca5b8bc6d65887e9b90016c97245557a0e45aaf12c2f8e92',
+    },
+    exposure: { ev: 0 },
+    grain: { amount: 0.12, size: 0.3, roughness: 0.34 },
+    halation: { amount: 0, radius: 0 },
+    bloom: { amount: 0, radius: 0 },
+    sharpness: { amount: 0 },
+    vignette: { amount: 0 },
+    minimumEngineVersion: 2,
   },
 }
 
@@ -124,6 +173,32 @@ export const FALLBACK_HOUSE_CATALOGUE: FilmStockCatalogueResponse = {
       evergreen: true,
       minimumEngineVersion: 1,
       baseMode: 'bw',
+    },
+    {
+      filmStockId: 'bali-400-v1',
+      displayName: 'Bali 400',
+      shortDescription: 'Warm, nostalgic colour with dense shadows and restrained highlights.',
+      characteristics: ['warm skin tones', 'restrained highlights', 'muted greens', 'subtle grain'],
+      previewImageUrls: [],
+      recipeUrl: 'builtin:bali-400-v1',
+      availableFrom: null,
+      availableUntil: null,
+      evergreen: true,
+      minimumEngineVersion: 2,
+      baseMode: 'color',
+    },
+    {
+      filmStockId: 'martha-v1',
+      displayName: 'Martha',
+      shortDescription: 'Lush saturation, rich colors, lifted blacks, vintage tone.',
+      characteristics: ['lush saturation', 'rich colors', 'lifted blacks', 'vintage tone', 'subtle grain'],
+      previewImageUrls: [],
+      recipeUrl: 'builtin:martha-v1',
+      availableFrom: null,
+      availableUntil: null,
+      evergreen: true,
+      minimumEngineVersion: 2,
+      baseMode: 'color',
     },
   ],
   receivedAtDeviceMs: 0,
@@ -364,7 +439,22 @@ export async function ensureFilmStockRecipe(stock: FilmStockCatalogueItem): Prom
     throw new Error(`${stock.displayName} needs a newer Momints processing engine`)
   }
   const builtin = BUILTIN_RECIPES[stock.filmStockId]
-  if (builtin) return builtin
+  if (builtin) {
+    if (builtin.schemaVersion === 2) {
+      const runtime = runtimeFile(stock.filmStockId)
+      if (!runtime.exists) {
+        const lutBytes = getBundledLutBytes(stock.filmStockId)
+        if (lutBytes) {
+          const directory = packageDirectory(stock.filmStockId)
+          if (!directory.exists) directory.create({ idempotent: true, intermediates: true })
+          runtime.write(lutBytes)
+          recipeFile(stock.filmStockId).write(JSON.stringify(builtin))
+          touchPackage(stock.filmStockId)
+        }
+      }
+    }
+    return builtin
+  }
   const cached = recipeFile(stock.filmStockId)
   if (cached.exists) {
     const recipe = validateRecipe(JSON.parse(await cached.text()), stock.filmStockId)
@@ -403,7 +493,23 @@ export async function ensureFilmStockRecipe(stock: FilmStockCatalogueItem): Prom
 
 export async function loadFilmStockPackage(id: string): Promise<LoadedFilmStockPackage> {
   const builtin = BUILTIN_RECIPES[id]
-  if (builtin) return { recipe: builtin }
+  if (builtin) {
+    if (builtin.schemaVersion === 1) return { recipe: builtin }
+    const runtime = runtimeFile(id)
+    if (!runtime.exists) {
+      const lutBytes = getBundledLutBytes(id)
+      if (lutBytes) {
+        const directory = packageDirectory(id)
+        if (!directory.exists) directory.create({ idempotent: true, intermediates: true })
+        runtime.write(lutBytes)
+        recipeFile(id).write(JSON.stringify(builtin))
+      }
+    }
+    if (runtime.exists) {
+      touchPackage(id)
+      return { recipe: builtin, runtimeLutUri: runtime.uri }
+    }
+  }
   const file = recipeFile(id)
   if (!file.exists) throw new Error(`Film recipe ${id} is not downloaded`)
   const recipe = validateRecipe(JSON.parse(await file.text()), id)
