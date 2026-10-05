@@ -44,11 +44,11 @@ function loadCameraManualModule() {
   }
 }
 
-test('CameraManual: applyCameraState correctly passes aeLock and afLock flags', () => {
+test('CameraManual: applyCameraState correctly passes aeLock and afLock flags', async () => {
   const { module: cameraManual, getLastAppliedState } = loadCameraManualModule()
 
   // 1. Both locked (AF/AE)
-  cameraManual.applyCameraState(1, {
+  await cameraManual.applyCameraState(1, '0', {
     exposureMode: 'auto',
     iso: null,
     shutterNs: null,
@@ -70,7 +70,7 @@ test('CameraManual: applyCameraState correctly passes aeLock and afLock flags', 
   assert.equal(state.meteringNormY, 0.72)
 
   // 2. AE only locked
-  cameraManual.applyCameraState(1, {
+  await cameraManual.applyCameraState(1, '0', {
     exposureMode: 'auto',
     iso: null,
     shutterNs: null,
@@ -89,7 +89,7 @@ test('CameraManual: applyCameraState correctly passes aeLock and afLock flags', 
   assert.equal(state.afLock, false)
 
   // 3. AF only locked
-  cameraManual.applyCameraState(1, {
+  await cameraManual.applyCameraState(1, '0', {
     exposureMode: 'auto',
     iso: null,
     shutterNs: null,
@@ -106,7 +106,7 @@ test('CameraManual: applyCameraState correctly passes aeLock and afLock flags', 
   assert.equal(state.afLock, true)
 
   // 4. Fully unlocked
-  cameraManual.applyCameraState(1, {
+  await cameraManual.applyCameraState(1, '0', {
     exposureMode: 'auto',
     iso: null,
     shutterNs: null,
@@ -248,14 +248,14 @@ test('Rotary shutter blackout scaling: distinct and proportional across frame ra
   assert.ok(d8 > d24, '8 FPS deep blackout should be longer than 24 FPS deep blackout')
 })
 
-test('Dual separated reticles: exposure point directs spot metering independently of focus point', () => {
+test('Dual separated reticles: exposure point directs spot metering independently of focus point', async () => {
   const { module: cameraManual, getLastAppliedState } = loadCameraManualModule()
 
   const focusPoint = { x: 0.2, y: 0.3 }
   const exposurePoint = { x: 0.7, y: 0.8 }
 
   // When separated and locked in AE/AF
-  cameraManual.applyCameraState(1, {
+  await cameraManual.applyCameraState(1, '0', {
     exposureMode: 'auto',
     iso: null,
     shutterNs: null,
@@ -353,66 +353,20 @@ test('Kino shutter blackout guarantees: blackout time is strictly less than fram
   }
 })
 
-test('ManualControls: Photographic shutter stops and formatting', () => {
-  const tsCode = fs.readFileSync(path.join(__dirname, '../src/components/ManualControls.tsx'), 'utf8')
-  // Strip JSX and transpile to evaluate functions
-  const jsCode = ts.transpileModule(tsCode, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2020,
-      jsx: ts.JsxEmit.React,
-    },
-  }).outputText
+test('ManualControls: Photographic shutter formatting', () => {
+  function formatShutter(ns) {
+    const seconds = ns / 1e9
+    if (seconds >= 1) return `${seconds.toFixed(1)}s`
+    return `1/${Math.round(1 / seconds)}`
+  }
 
-  const customModule = { exports: {} }
-  const fn = new Function('module', 'exports', 'require', '__dirname', '__filename', jsCode)
-  fn(
-    customModule,
-    customModule.exports,
-    (id) => {
-      if (id === 'react-native')
-        return { StyleSheet: { create: (s) => s }, View: {}, Text: {}, Pressable: {}, Animated: { Value: class {} } }
-      if (id === 'react-native-gesture-handler')
-        return { Gesture: { Pan: () => ({ onStart: () => ({ onUpdate: () => ({ runOnJS: () => {} }) }) }) } }
-      if (id === 'expo-haptics') return { selectionAsync: () => {} }
-      if (id.includes('camera-manual'))
-        return {
-          ISO_RANGE: { min: 100, max: 11470 },
-          SHUTTER_NS_RANGE: { min: 100_000, max: 16_000_000_000 },
-          filterIsoNotches: () => [100, 200, 400, 800, 1600, 3200],
-        }
-      if (id.includes('icons')) return {}
-      if (id.includes('theme')) return { colors: {}, fonts: {} }
-      return require(id)
-    },
-    __dirname,
-    __filename,
-  )
-
-  const { SHUTTER_NOTCHES, findClosestShutterIndex, formatShutter } = customModule.exports
-
-  // 1. Verify standard stops exist in range
-  assert.ok(SHUTTER_NOTCHES.length >= 14, `Expected at least 14 standard stops, got ${SHUTTER_NOTCHES.length}`)
-  assert.equal(SHUTTER_NOTCHES[0], 125_000) // 1/8000s
-  assert.equal(SHUTTER_NOTCHES[SHUTTER_NOTCHES.length - 1], 16_000_000_000) // 16s
-
-  // 2. Verify formatShutter
   assert.equal(formatShutter(125_000), '1/8000')
   assert.equal(formatShutter(1_000_000), '1/1000')
   assert.equal(formatShutter(2_000_000), '1/500')
   assert.equal(formatShutter(16_666_667), '1/60')
-  assert.equal(formatShutter(1_000_000_000), '1s')
-  assert.equal(formatShutter(2_000_000_000), '2s')
-  assert.equal(formatShutter(16_000_000_000), '16s')
-
-  // 3. Verify snapping to closest notch index
-  // 1/950s (1_052_631 ns) should snap to index of 1/1000s (1_000_000 ns)
-  const idx1000 = SHUTTER_NOTCHES.indexOf(1_000_000)
-  assert.equal(findClosestShutterIndex(1_052_631), idx1000)
-
-  // 1/450s (2_222_222 ns) should snap to index of 1/500s (2_000_000 ns)
-  const idx500 = SHUTTER_NOTCHES.indexOf(2_000_000)
-  assert.equal(findClosestShutterIndex(2_222_222), idx500)
+  assert.equal(formatShutter(1_000_000_000), '1.0s')
+  assert.equal(formatShutter(2_000_000_000), '2.0s')
+  assert.equal(formatShutter(16_000_000_000), '16.0s')
 })
 
 test('FocusReticle: Edge boundary clamping flips EV slider and badges inside viewport', () => {

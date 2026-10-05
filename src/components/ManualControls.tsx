@@ -29,7 +29,7 @@
 // native prop, not a Camera2Interop override) and is passed in as props.
 // This component is purely presentational.
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { View, Text, Pressable, StyleSheet, Animated } from 'react-native'
+import { View, Text, Pressable, StyleSheet } from 'react-native'
 import {
   Gesture,
   GestureDetector,
@@ -66,40 +66,6 @@ const PX_PER_STOP = 48 // drag distance for one full log2 stop
 const ISO_PX_PER_NOTCH = 42
 const ISO_NOTCHES = filterIsoNotches(ISO_RANGE)
 
-export const SHUTTER_NOTCHES: number[] = [
-  125_000, // 1/8000
-  250_000, // 1/4000
-  500_000, // 1/2000
-  1_000_000, // 1/1000
-  2_000_000, // 1/500
-  4_000_000, // 1/250
-  8_000_000, // 1/125
-  16_666_667, // 1/60
-  33_333_333, // 1/30
-  66_666_667, // 1/15
-  125_000_000, // 1/8
-  250_000_000, // 1/4
-  500_000_000, // 1/2
-  1_000_000_000, // 1s
-  2_000_000_000, // 2s
-  4_000_000_000, // 4s
-  8_000_000_000, // 8s
-  16_000_000_000, // 16s
-]
-
-export function findClosestShutterIndex(ns: number): number {
-  let closestIndex = 0
-  let minDiff = Infinity
-  for (let i = 0; i < SHUTTER_NOTCHES.length; i++) {
-    const diff = Math.abs(Math.log(SHUTTER_NOTCHES[i] / ns))
-    if (diff < minDiff) {
-      minDiff = diff
-      closestIndex = i
-    }
-  }
-  return closestIndex
-}
-
 function log2(n: number): number {
   return Math.log(n) / Math.LN2
 }
@@ -110,13 +76,9 @@ function shutterToStops(ns: number): number {
 function stopsToShutter(stops: number): number {
   return SHUTTER_NS_RANGE.min * Math.pow(2, stops)
 }
-export function formatShutter(ns: number): string {
+function formatShutter(ns: number): string {
   const seconds = ns / 1e9
-  if (seconds >= 1) {
-    return Number.isInteger(seconds) || seconds % 1 === 0
-      ? `${Math.round(seconds)}s`
-      : `${parseFloat(seconds.toFixed(1))}s`
-  }
+  if (seconds >= 1) return `${seconds.toFixed(1)}s`
   return `1/${Math.round(1 / seconds)}`
 }
 // Focus also drags in log2 stops, not raw diopters — a linear-diopter scale
@@ -484,10 +446,9 @@ type Props = {
   setEv: (v: number) => void
   minExposure: number
   maxExposure: number
-  uiRotationAnim?: Animated.Value
 }
 
-export default function ManualControls({ controls, ev, setEv, minExposure, maxExposure, uiRotationAnim }: Props) {
+export default function ManualControls({ controls, ev, setEv, minExposure, maxExposure }: Props) {
   const [activeParam, setActiveParam] = useState<ParamKey | null>(null)
   const {
     exposureMode,
@@ -517,14 +478,6 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
   }
   const MeteringIcon = METERING_ICON[meteringMode]
 
-  const uiRotationDeg = uiRotationAnim
-    ? uiRotationAnim.interpolate({
-        inputRange: [-360, 360],
-        outputRange: ['-360deg', '360deg'],
-      })
-    : '0deg'
-  const hudRotateStyle = { transform: [{ rotate: uiRotationDeg }] }
-
   return (
     <View>
       {activeParam != null && (
@@ -542,63 +495,51 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
 
       <View style={styles.strip}>
         <Pressable style={styles.stripCol} onPress={() => toggle('M')}>
-          <Animated.View style={[{ alignItems: 'center', gap: 7 }, hudRotateStyle]}>
-            <Text style={[styles.stripLabel, activeParam === 'M' && styles.stripLabelActive]}>M</Text>
-            <View style={styles.stripValueRow}>
-              <MeteringIcon size={17} color={fullyManual ? colors.textMuted : colors.text} />
-            </View>
-          </Animated.View>
+          <Text style={[styles.stripLabel, activeParam === 'M' && styles.stripLabelActive]}>M</Text>
+          <View style={styles.stripValueRow}>
+            <MeteringIcon size={17} color={fullyManual ? colors.textMuted : colors.text} />
+          </View>
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('ISO')}>
-          <Animated.View style={[{ alignItems: 'center', gap: 7 }, hudRotateStyle]}>
-            <Text style={[styles.stripLabel, activeParam === 'ISO' && styles.stripLabelActive]}>ISO</Text>
-            <View style={styles.stripValueRow}>
-              <Text style={styles.stripValueText}>{isoMode === 'auto' ? 'AUTO' : manualIso}</Text>
-            </View>
-          </Animated.View>
+          <Text style={[styles.stripLabel, activeParam === 'ISO' && styles.stripLabelActive]}>ISO</Text>
+          <View style={styles.stripValueRow}>
+            <Text style={styles.stripValueText}>{isoMode === 'auto' ? 'AUTO' : manualIso}</Text>
+          </View>
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('S')}>
-          <Animated.View style={[{ alignItems: 'center', gap: 7 }, hudRotateStyle]}>
-            <Text style={[styles.stripLabel, activeParam === 'S' && styles.stripLabelActive]}>S</Text>
-            <View style={styles.stripValueRow}>
-              <Text style={styles.stripValueText}>
-                {shutterMode === 'auto' ? 'AUTO' : formatShutter(manualShutterNs)}
-              </Text>
-            </View>
-          </Animated.View>
+          <Text style={[styles.stripLabel, activeParam === 'S' && styles.stripLabelActive]}>S</Text>
+          <View style={styles.stripValueRow}>
+            <Text style={styles.stripValueText}>
+              {shutterMode === 'auto' ? 'AUTO' : formatShutter(manualShutterNs)}
+            </Text>
+          </View>
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('EV')} disabled={fullyManual}>
-          <Animated.View style={[{ alignItems: 'center', gap: 7 }, hudRotateStyle]}>
-            <Text
-              style={[
-                styles.stripLabel,
-                activeParam === 'EV' && styles.stripLabelActive,
-                fullyManual && styles.stripDisabled,
-              ]}
-            >
-              EV
-            </Text>
-            <View style={styles.stripValueRow}>
-              <Text style={[styles.stripValueText, fullyManual && styles.stripDisabled]}>{formatEv(ev)}</Text>
-            </View>
-          </Animated.View>
+          <Text
+            style={[
+              styles.stripLabel,
+              activeParam === 'EV' && styles.stripLabelActive,
+              fullyManual && styles.stripDisabled,
+            ]}
+          >
+            EV
+          </Text>
+          <View style={styles.stripValueRow}>
+            <Text style={[styles.stripValueText, fullyManual && styles.stripDisabled]}>{formatEv(ev)}</Text>
+          </View>
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('WB')}>
-          <Animated.View style={[{ alignItems: 'center', gap: 7 }, hudRotateStyle]}>
-            <Text style={[styles.stripLabel, activeParam === 'WB' && styles.stripLabelActive]}>WB</Text>
-            <View style={styles.stripValueRow}>
-              <Text style={styles.stripValueText}>{WB_STRIP_LABEL[whiteBalance]}</Text>
-            </View>
-          </Animated.View>
+          <Text style={[styles.stripLabel, activeParam === 'WB' && styles.stripLabelActive]}>WB</Text>
+          <View style={styles.stripValueRow}>
+            <Text style={styles.stripValueText}>{WB_STRIP_LABEL[whiteBalance]}</Text>
+          </View>
         </Pressable>
         {canFocus && (
           <Pressable style={styles.stripCol} onPress={() => toggle('AF')}>
-            <Animated.View style={[{ alignItems: 'center', gap: 7 }, hudRotateStyle]}>
-              <Text style={[styles.stripLabel, activeParam === 'AF' && styles.stripLabelActive]}>AF</Text>
-              <View style={styles.stripValueRow}>
-                <Text style={styles.stripValueText}>{focusMode === 'auto' ? 'AF' : 'MF'}</Text>
-              </View>
-            </Animated.View>
+            <Text style={[styles.stripLabel, activeParam === 'AF' && styles.stripLabelActive]}>AF</Text>
+            <View style={styles.stripValueRow}>
+              <Text style={styles.stripValueText}>{focusMode === 'auto' ? 'AF' : 'MF'}</Text>
+            </View>
           </Pressable>
         )}
       </View>
