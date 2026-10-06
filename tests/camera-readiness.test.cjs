@@ -157,7 +157,7 @@ test('rapid settings changes reject stale acknowledgements and accept only the l
     await h.resolve(1)
     assert.equal(h.value.controls.canCapture(), false)
     assert.equal(h.calls[2].state.iso, 1600)
-    assert.equal(h.calls[2].state.shutterNs, 1000000)
+    assert.equal(h.calls[2].state.shutterNs, 16666667)
     assert.equal(h.calls[2].state.whiteBalance, 'AUTO')
     await h.resolve(2)
     assert.equal(h.value.controls.canCapture(), true)

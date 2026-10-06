@@ -109,12 +109,15 @@ class CameraManualModule : Module() {
     val stillConfigBuilder = Camera2ImplConfig.Builder()
     val previewConfigBuilder = Camera2ImplConfig.Builder()
 
-    val isIsoManual = state.isoMode == "manual" || (state.exposureMode == "manual" && state.iso != null)
-    val isShutterManual = state.shutterMode == "manual" || (state.exposureMode == "manual" && state.shutterNs != null)
+    val isManualExposure = state.exposureMode == "manual" || state.isoMode == "manual" || state.shutterMode == "manual"
 
-    // --- Exposure (ISO / Shutter decoupling & preview clamping) ---
-    if (isIsoManual && isShutterManual) {
-      // Both manual
+    // --- Exposure (ISO / Shutter & preview clamping) ---
+    if (isManualExposure) {
+      val targetIso = state.iso ?: 400
+      val targetShutter = state.shutterNs ?: 16_666_667L
+      val previewShutter = targetShutter.coerceAtMost(100_000_000L)
+      val ceiling = maxFrameDuration(camera) ?: targetShutter
+
       stillConfigBuilder.setCaptureRequestOptionWithPriority(
         CaptureRequest.CONTROL_AE_MODE,
         CaptureRequest.CONTROL_AE_MODE_OFF,
@@ -125,132 +128,39 @@ class CameraManualModule : Module() {
         CaptureRequest.CONTROL_AE_MODE_OFF,
         Config.OptionPriority.ALWAYS_OVERRIDE
       )
-      state.iso?.let {
-        stillConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_SENSITIVITY,
-          it,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-        previewConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_SENSITIVITY,
-          it,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-      }
-      state.shutterNs?.let { ns ->
-        // Still capture receives the full requested exposure duration (up to 16s)
-        stillConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_EXPOSURE_TIME,
-          ns,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-        val ceiling = maxFrameDuration(camera) ?: ns
-        stillConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_FRAME_DURATION,
-          ns.coerceAtMost(ceiling),
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
 
-        // Repeating preview viewfinder exposure time is clamped to max 100ms (10 FPS)
-        // so the screen never freezes or blows out to white
-        val previewNs = ns.coerceAtMost(100_000_000L)
-        previewConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_EXPOSURE_TIME,
-          previewNs,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-        previewConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_FRAME_DURATION,
-          previewNs,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-      }
-    } else if (isIsoManual && !isShutterManual) {
-      // ISO Priority (manual ISO, auto shutter)
       stillConfigBuilder.setCaptureRequestOptionWithPriority(
-        CaptureRequest.CONTROL_AE_MODE,
-        CaptureRequest.CONTROL_AE_MODE_ON,
+        CaptureRequest.SENSOR_SENSITIVITY,
+        targetIso,
         Config.OptionPriority.ALWAYS_OVERRIDE
       )
       previewConfigBuilder.setCaptureRequestOptionWithPriority(
-        CaptureRequest.CONTROL_AE_MODE,
-        CaptureRequest.CONTROL_AE_MODE_ON,
+        CaptureRequest.SENSOR_SENSITIVITY,
+        targetIso,
         Config.OptionPriority.ALWAYS_OVERRIDE
       )
-      state.iso?.let {
-        stillConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_SENSITIVITY,
-          it,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-        previewConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_SENSITIVITY,
-          it,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-      }
-      if (state.aeLock) {
-        stillConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.CONTROL_AE_LOCK,
-          true,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-        previewConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.CONTROL_AE_LOCK,
-          true,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-      }
-    } else if (!isIsoManual && isShutterManual) {
-      // Shutter Priority (auto ISO, manual shutter)
-      state.shutterNs?.let { ns ->
-        stillConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.CONTROL_AE_MODE,
-          CaptureRequest.CONTROL_AE_MODE_OFF,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-        stillConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_EXPOSURE_TIME,
-          ns,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-        val ceiling = maxFrameDuration(camera) ?: ns
-        stillConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_FRAME_DURATION,
-          ns.coerceAtMost(ceiling),
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-        val fallbackIso = state.iso ?: 400
-        stillConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_SENSITIVITY,
-          fallbackIso,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
 
-        previewConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.CONTROL_AE_MODE,
-          CaptureRequest.CONTROL_AE_MODE_ON,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-        val previewNs = ns.coerceAtMost(100_000_000L)
-        previewConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.SENSOR_EXPOSURE_TIME,
-          previewNs,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-      }
-      if (state.aeLock) {
-        stillConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.CONTROL_AE_LOCK,
-          true,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-        previewConfigBuilder.setCaptureRequestOptionWithPriority(
-          CaptureRequest.CONTROL_AE_LOCK,
-          true,
-          Config.OptionPriority.ALWAYS_OVERRIDE
-        )
-      }
+      stillConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.SENSOR_EXPOSURE_TIME,
+        targetShutter,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
+      stillConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.SENSOR_FRAME_DURATION,
+        targetShutter.coerceAtMost(ceiling),
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
+
+      previewConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.SENSOR_EXPOSURE_TIME,
+        previewShutter,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
+      previewConfigBuilder.setCaptureRequestOptionWithPriority(
+        CaptureRequest.SENSOR_FRAME_DURATION,
+        previewShutter,
+        Config.OptionPriority.ALWAYS_OVERRIDE
+      )
     } else {
       // Full Auto
       stillConfigBuilder.setCaptureRequestOptionWithPriority(
