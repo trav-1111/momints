@@ -17,7 +17,7 @@ import { getCameraCapabilities } from '../../modules/camera-caps'
 import type { ReadyCameraSession } from './useCameraReadiness'
 
 const DEFAULT_ISO = 400
-const DEFAULT_SHUTTER_NS = 1_000_000 // 1/1000s
+const DEFAULT_SHUTTER_NS = 16_666_667 // 1/60s baseline (16.6ms)
 
 export type CameraLockMode = 'none' | 'AF/AE' | 'AE' | 'AF'
 
