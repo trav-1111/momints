@@ -271,6 +271,32 @@ export default function GalleryScreen() {
               {item.action === 'delete' && <IconTrash size={10} color={colors.white} strokeWidth={2} />}
             </View>
           )}
+
+          {item.aspect && item.aspect !== 'full' && (
+            <View
+              style={{
+                position: 'absolute',
+                bottom: 5,
+                left: 5,
+                backgroundColor: 'rgba(0,0,0,0.72)',
+                paddingHorizontal: 5,
+                paddingVertical: 1.5,
+                borderRadius: 4,
+                borderWidth: 0.5,
+                borderColor: 'rgba(255,255,255,0.22)',
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: fonts.monoBold,
+                  fontSize: 9,
+                  color: colors.white,
+                }}
+              >
+                {item.aspect}
+              </Text>
+            </View>
+          )}
         </Pressable>
       )
     },
