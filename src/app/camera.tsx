@@ -1706,9 +1706,56 @@ export default function CameraScreen() {
           </Pressable>
         </View>
 
-        {/* Quick mode only — a roll's frames mint as a whole roll, not here */}
+        {/* Quick mode shows MINT; Roll mode shows DARKROOM / Gallery */}
         {activeMode === 'roll' ? (
-          <View style={{ width: 44, height: 44 }} />
+          <View style={{ alignItems: 'center', gap: 5 }}>
+            <Pressable
+              onPress={() => router.push('/gallery')}
+              accessibilityRole="button"
+              accessibilityLabel="Open Darkroom"
+              style={roundChip(44)}
+            >
+              <IconGallery size={20} color={colors.text} strokeWidth={1.5} />
+              {activeRoll && activeRoll.frameIds.length > 0 && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: -4,
+                    right: -4,
+                    minWidth: 18,
+                    height: 18,
+                    borderRadius: 9,
+                    paddingHorizontal: 4,
+                    backgroundColor: activeRoll.developed ? colors.accent : colors.surface,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: fonts.monoBold,
+                      fontSize: 10,
+                      color: activeRoll.developed ? colors.white : colors.textSoft,
+                    }}
+                  >
+                    {activeRoll.frameIds.length}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+            <Text
+              style={{
+                fontFamily: fonts.mono,
+                fontSize: 9,
+                letterSpacing: tracking(0.14, 9),
+                color: colors.textSoft,
+              }}
+            >
+              DARKROOM
+            </Text>
+          </View>
         ) : (
           <View style={{ alignItems: 'center', gap: 5 }}>
             <Pressable onPress={handleReview} style={roundChip(44)}>
@@ -1796,6 +1843,27 @@ export default function CameraScreen() {
               {walletAddress ? formatWalletDisplay(walletAddress, domain) : ''}
             </Text>
           </View>
+
+          <Pressable
+            onPress={() => {
+              setWalletMenuVisible(false)
+              router.push('/gallery')
+            }}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              minHeight: 56,
+              paddingHorizontal: 20,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              backgroundColor: pressed ? colors.accentTint : colors.surface,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            })}
+          >
+            <IconFilm size={18} color={colors.textSecondary} />
+            <Text style={{ flex: 1, fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>Darkroom / Gallery</Text>
+          </Pressable>
 
           <Pressable
             onPress={handleOpenHistory}
