@@ -41,12 +41,40 @@ export function useMintRoll() {
     }
 
     if (activeRoll.collectionAddress) {
+      const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
+      if (!SOLANA_ADDRESS_PATTERN.test(activeRoll.collectionAddress)) {
+        Alert.alert(
+          'Invalid Roll Collection',
+          'This roll has an invalid collection address and cannot be minted on-chain. Would you like to discard it?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Discard Roll',
+              style: 'destructive',
+              onPress: () => {
+                useSessionStore.getState().abandonRoll()
+              },
+            },
+          ],
+        )
+        return false
+      }
       try {
         await ensureWorkerRollAuthorization(activeRoll.collectionAddress, walletAddress, signMessage)
       } catch (error) {
         Alert.alert(
           'Roll Authorization Required',
           error instanceof Error ? error.message : 'This roll could not be authorized safely.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Discard Roll',
+              style: 'destructive',
+              onPress: () => {
+                useSessionStore.getState().abandonRoll()
+              },
+            },
+          ],
         )
         return false
       }

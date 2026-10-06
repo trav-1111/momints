@@ -7,6 +7,7 @@ import type { AppMode, AspectRatio } from '../store/session'
 import { useWalletDomain } from '../hooks/useWalletDomain'
 import { useCreateRoll, SKR_UNAVAILABLE_MESSAGE, type CreateRollPhase } from '../hooks/useCreateRoll'
 import { useMintRoll } from '../hooks/useMintRoll'
+import { useRollActions } from '../hooks/useRollActions'
 import { PREPAID_ROLL_SIZES, getRollFeeLamports, formatSol, type PrepaidRollSize } from '../config/roll'
 import { formatSkr } from '../config/skr'
 import { isWorkerRollEnabled } from '../config/rollApi'
@@ -100,6 +101,7 @@ export default function ModeSelectScreen() {
   const { domain } = useWalletDomain(walletAddress)
   const { createRoll, phase, error: createError, isCreating } = useCreateRoll()
   const { mintRoll } = useMintRoll()
+  const { discardRoll } = useRollActions()
 
   const [selectedMode, setSelectedMode] = useState<AppMode>('quick')
   const [artist, setArtist] = useState('')
@@ -140,6 +142,24 @@ export default function ModeSelectScreen() {
     }
     router.replace('/camera')
   }, [activeRoll, resumeRoll, mintRoll, router])
+
+  const handleDiscardRoll = useCallback(() => {
+    if (!activeRoll) return
+    Alert.alert(
+      'Discard roll',
+      `Delete "${activeRoll.name}" and its ${activeRoll.frameIds.length} frame(s) without minting?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Discard',
+          style: 'destructive',
+          onPress: () => {
+            void discardRoll()
+          },
+        },
+      ],
+    )
+  }, [activeRoll, discardRoll])
 
   // A roll the backend still has open that this device knows nothing about —
   // e.g. its frames were minted but the roll never reached its purchased size,
@@ -337,45 +357,57 @@ export default function ModeSelectScreen() {
 
       {/* Roll in progress — resume it (one roll at a time) */}
       {hasRoll && activeRoll && (
-        <Pressable
-          onPress={handleResumeRoll}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 12,
-            paddingVertical: 12,
-            paddingHorizontal: 14,
-            borderRadius: 12,
-            backgroundColor: colors.surface,
-            borderWidth: 1,
-            borderColor: colors.border,
-            marginBottom: 16,
-          }}
-        >
-          <View
+        <View style={{ marginBottom: 16 }}>
+          <Pressable
+            onPress={handleResumeRoll}
             style={{
-              width: 34,
-              height: 34,
-              borderRadius: 8,
-              backgroundColor: colors.accentTint,
+              flexDirection: 'row',
               alignItems: 'center',
-              justifyContent: 'center',
+              gap: 12,
+              paddingVertical: 12,
+              paddingHorizontal: 14,
+              borderRadius: 12,
+              backgroundColor: colors.surface,
+              borderWidth: 1,
+              borderColor: colors.border,
             }}
           >
-            <IconFilm size={17} color={colors.accent} />
-          </View>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text numberOfLines={1} style={{ fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.text }}>
-              {activeRoll.name}
+            <View
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 8,
+                backgroundColor: colors.accentTint,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <IconFilm size={17} color={colors.accent} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text numberOfLines={1} style={{ fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.text }}>
+                {activeRoll.name}
+              </Text>
+              <Text style={{ fontFamily: fonts.mono, fontSize: 10.5, color: colors.textSecondary }}>
+                {activeRoll.frameIds.length} / {activeRoll.size} exposures
+              </Text>
+            </View>
+            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accent }}>
+              {activeRoll.developed ? 'MINT →' : 'RESUME →'}
             </Text>
-            <Text style={{ fontFamily: fonts.mono, fontSize: 10.5, color: colors.textSecondary }}>
-              {activeRoll.frameIds.length} / {activeRoll.size} exposures
-            </Text>
+          </Pressable>
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 6 }}>
+            <Pressable
+              onPress={handleDiscardRoll}
+              hitSlop={8}
+              style={{ paddingVertical: 4, paddingHorizontal: 10 }}
+            >
+              <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.redSoft }}>
+                Discard roll
+              </Text>
+            </Pressable>
           </View>
-          <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accent }}>
-            {activeRoll.developed ? 'MINT →' : 'RESUME →'}
-          </Text>
-        </Pressable>
+        </View>
       )}
 
       {/* Unfinished roll held open by the backend but absent from this device —
