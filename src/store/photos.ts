@@ -36,6 +36,9 @@ export interface Photo {
   // rather than read from session.activeRoll.frameIds: completeRoll() nulls
   // the active roll, and screens that hid frames by subtracting that array
   // un-hid all of them the moment a roll finished minting.
+  /** Local or permanent URI of the raw DNG negative if shot in RAW mode. */
+  rawNegativeUri?: string
+  rawNegativeBytes?: number
   rollId?: string
   rollName?: string
   /** Stable 1-based position within a prepaid roll, retained across retries. */
@@ -60,6 +63,8 @@ interface PhotoStore {
     filmStockId?: string,
     artifact?: PhotoArtifact,
     kino?: { id: string; index: number },
+    rawNegativeUri?: string,
+    rawNegativeBytes?: number,
   ) => string
   setAction: (id: string, action: Photo['action']) => void
   setBulkAction: (ids: string[], action: Photo['action']) => void
@@ -77,7 +82,7 @@ interface PhotoStore {
 export const usePhotoStore = create<PhotoStore>((set, get) => ({
   photos: [],
 
-  addPhoto: (uri, roll, aspect, filmStockId, artifact, kino): string => {
+  addPhoto: (uri, roll, aspect, filmStockId, artifact, kino, rawNegativeUri, rawNegativeBytes): string => {
     const newPhoto: Photo = {
       id: uuidv4(),
       uri,
@@ -86,6 +91,8 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
       aspect,
       filmStockId,
       artifact,
+      rawNegativeUri,
+      rawNegativeBytes,
       rollId: roll?.id,
       rollName: roll?.name,
       rollFrameNumber: roll?.frameNumber,

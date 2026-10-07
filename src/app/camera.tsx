@@ -40,8 +40,12 @@ import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
 import { CompositionGridOverlay, type GridMode } from '../components/CompositionGridOverlay'
 import { FocusReticle } from '../components/FocusReticle'
 import ManualControls from '../components/ManualControls'
+import { KinoBanners } from '../features/kino'
+import { LongExposureBanner } from '../features/long-exposure'
 import { useManualCameraState } from '../hooks/useManualCameraState'
 import { useCameraReadiness } from '../hooks/useCameraReadiness'
+import { captureLongExposure, WhiteBalancePreset } from '../../modules/camera-manual'
+import { captureRawDng, isRawSupported } from '../../modules/camera-raw'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { useSessionStore } from '../store/session'
@@ -181,6 +185,7 @@ export default function CameraScreen() {
   // Pro mode — Tier 1 (EV bias, metering) is always available here; Tier 2
   // (manual ISO/shutter/focus/WB) mounts underneath, gated by TIER2_ENABLED.
   const [proOpen, setProOpen] = useState(false)
+  const [rawMode, setRawMode] = useState(false)
   const [ev, setEv] = useState(0)
 
   // Release the camera when the screen loses focus or the app is backgrounded
@@ -257,6 +262,10 @@ export default function CameraScreen() {
   const frontDevice = useCameraDevice('front')
   const backDevice = useCameraDevice('back')
   const activeDevice = cameraPosition === 'front' ? frontDevice : backDevice
+  const isRawHardwareSupported = useMemo(
+    () => (activeDevice?.id != null ? isRawSupported(activeDevice.id) : false),
+    [activeDevice?.id],
+  )
   const captureFormat = useMemo(() => {
     if (!activeDevice) return undefined
     return [...activeDevice.formats]
@@ -384,14 +393,60 @@ export default function CameraScreen() {
       await new Promise((resolve) => setTimeout(resolve, 300))
     }
     let captureUri: string | null = null
+    let rawNegativePath: string | null = null
+    let rawNegativeUri: string | null = null
     let createdPhotoId: string | null = null
     try {
       // Also recheck after the torch delay. Never shoot with unconfirmed controls.
       if (!cameraRef.current || !canCapture()) return
-      const photo: PhotoFile = await cameraRef.current.takePhoto({
-        flash: usingTorchForFlash ? 'off' : supportsFlash ? flash : 'off',
-        enableShutterSound: true,
-      })
+      const currentManualCamera = manualCamera
+      const currentReadiness = cameraReadiness
+      const isComputationalLongExposure =
+        currentManualCamera.shutterMode === 'manual' &&
+        currentManualCamera.manualShutterNs != null &&
+        currentManualCamera.manualShutterNs > 1_000_000_000 &&
+        currentReadiness.session != null
+
+      let photoPath: string
+      let rawNegativeSize: number | null = null
+      if (isComputationalLongExposure) {
+        Vibration.vibrate(40)
+        const durationSec = currentManualCamera.manualShutterNs! / 1e9
+        photoPath = await captureLongExposure(
+          currentReadiness.session!.viewTag,
+          currentReadiness.session!.cameraId,
+          durationSec,
+        )
+      } else if (rawMode && isRawHardwareSupported && currentReadiness.session != null) {
+        Vibration.vibrate(40)
+        const rawResult = await captureRawDng({
+          cameraId: currentReadiness.session!.cameraId,
+          viewTag: currentReadiness.session!.viewTag,
+          includeJpeg: true,
+          manualIso:
+            currentManualCamera.isoMode === 'manual' && currentManualCamera.manualIso != null
+              ? currentManualCamera.manualIso
+              : undefined,
+          manualExposureNs:
+            currentManualCamera.shutterMode === 'manual' && currentManualCamera.manualShutterNs != null
+              ? currentManualCamera.manualShutterNs
+              : undefined,
+          manualFocusDistance:
+            currentManualCamera.focusMode === 'manual' && currentManualCamera.manualFocusDiopters != null
+              ? currentManualCamera.manualFocusDiopters
+              : undefined,
+          whiteBalanceMode: WhiteBalancePreset[currentManualCamera.whiteBalance],
+        })
+        rawNegativePath = rawResult.dngPath
+        rawNegativeSize = rawResult.dngByteLength
+        photoPath = rawResult.jpegPath ?? rawResult.dngPath
+      } else {
+        const photo: PhotoFile = await cameraRef.current.takePhoto({
+          flash: usingTorchForFlash ? 'off' : supportsFlash ? flash : 'off',
+          enableShutterSound: true,
+        })
+        photoPath = photo.path
+      }
 
       // Shutter flash + haptic feedback
       Vibration.vibrate(80)
@@ -402,7 +457,14 @@ export default function CameraScreen() {
         useNativeDriver: true,
       }).start()
 
-      captureUri = adoptTemporaryCapture(`file://${photo.path}`)
+      captureUri = adoptTemporaryCapture(`file://${photoPath}`)
+      if (rawNegativePath) {
+        try {
+          rawNegativeUri = adoptTemporaryCapture(`file://${rawNegativePath}`)
+        } catch {
+          rawNegativeUri = `file://${rawNegativePath}`
+        }
+      }
 
       // Originals are session-only. No photo enters the store/queue until the
       // selected immutable package has rendered and its output is verified.
@@ -433,6 +495,9 @@ export default function CameraScreen() {
           recipeSha256: receipt.recipeSha256,
           lutSha256: receipt.lutSha256,
         },
+        undefined,
+        rawNegativeUri ?? undefined,
+        rawNegativeSize ?? undefined,
       )
       createdPhotoId = photoId
 
@@ -1243,6 +1308,40 @@ export default function CameraScreen() {
               PRO
             </Text>
           </Pressable>
+
+          {isRawHardwareSupported && (
+            <Pressable
+              onPress={() => {
+                setRawMode((r) => !r)
+                Haptics.selectionAsync()
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Capture format: ${rawMode ? 'RAW' : 'JPG'}`}
+              style={[
+                chip,
+                {
+                  height: 42,
+                  paddingHorizontal: 12,
+                  borderRadius: 21,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderColor: rawMode ? colors.accent : colors.chipBorder,
+                  backgroundColor: rawMode ? colors.accentTint : colors.chipBg,
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  fontFamily: fonts.sansBold,
+                  fontSize: 11,
+                  letterSpacing: tracking(0.1, 11),
+                  color: rawMode ? colors.accentSoft : colors.text,
+                }}
+              >
+                {rawMode ? 'RAW' : 'JPG'}
+              </Text>
+            </Pressable>
+          )}
         </View>
 
         {account && walletAddress ? (
@@ -1495,72 +1594,13 @@ export default function CameraScreen() {
         </View>
       )}
 
-      {/* LomoKino Cranking Banner */}
-      {isCranking && (
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            bottom: 155,
-            left: 0,
-            right: 0,
-            alignItems: 'center',
-          }}
-        >
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 8,
-              backgroundColor: 'rgba(10, 10, 15, 0.92)',
-              paddingHorizontal: 16,
-              paddingVertical: 8,
-              borderRadius: 20,
-              borderWidth: 1,
-              borderColor: '#f39c12',
-            }}
-          >
-            <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#e74c3c' }} />
-            <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: '#fff' }}>
-              🎞️ KINO CRANKING ({captureFps === 8 ? '8 FPS · F5' : `${captureFps} FPS`}) · {crankCount} FRAMES (
-              {(crankCount / captureFps).toFixed(1)}s)
-            </Text>
-          </View>
-        </View>
-      )}
-
-      {/* LomoKino Developing Banner */}
-      {kinoDevelopingCount !== null && (
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            bottom: 155,
-            left: 0,
-            right: 0,
-            alignItems: 'center',
-          }}
-        >
-          <View
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 10,
-              backgroundColor: 'rgba(10, 10, 15, 0.94)',
-              paddingHorizontal: 18,
-              paddingVertical: 9,
-              borderRadius: 20,
-              borderWidth: 1,
-              borderColor: colors.accent,
-            }}
-          >
-            <ActivityIndicator size="small" color={colors.accent} />
-            <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.text }}>
-              DEVELOPING {kinoDevelopingCount} KINO FRAMES...
-            </Text>
-          </View>
-        </View>
-      )}
+      {/* LomoKino Cranking & Developing Banners */}
+      <KinoBanners
+        isCranking={isCranking}
+        crankCount={crankCount}
+        captureFps={captureFps}
+        kinoDevelopingCount={kinoDevelopingCount}
+      />
 
       {/* Bottom row — flip · shutter · mint */}
       <View
@@ -1576,33 +1616,12 @@ export default function CameraScreen() {
           paddingHorizontal: 26,
         }}
       >
-        {isCapturing && manualCamera.shutterMode === 'manual' && manualCamera.manualShutterNs >= 500_000_000 && (
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              top: 8,
-              left: 0,
-              right: 0,
-              alignItems: 'center',
-            }}
-          >
-            <View
-              style={{
-                backgroundColor: 'rgba(15,15,20,0.88)',
-                paddingHorizontal: 12,
-                paddingVertical: 5,
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: colors.accentSoft,
-              }}
-            >
-              <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.accentSoft, letterSpacing: 0.8 }}>
-                {`HOLD STILL · EXPOSING ${(manualCamera.manualShutterNs / 1e9).toFixed(1)}s`}
-              </Text>
-            </View>
-          </View>
-        )}
+        {/* Long Exposure Hold Still Banner */}
+        <LongExposureBanner
+          isCapturing={isCapturing}
+          shutterMode={manualCamera.shutterMode}
+          manualShutterNs={manualCamera.manualShutterNs}
+        />
 
         <Pressable onPress={toggleCamera} style={roundChip(44)}>
           <IconFlip size={20} color={colors.text} />

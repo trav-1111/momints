@@ -1,0 +1,8 @@
+{
+  "name": "camera-raw",
+  "version": "1.0.0",
+  "description": "Native Android Camera2 RAW Bayer capture and Adobe DNG creation engine for Solana Seeker.",
+  "main": "index.ts",
+  "license": "UNLICENSED",
+  "private": true
+}

@@ -21,4 +21,5 @@ dependencies {
   // version vision-camera uses to avoid any duplicate-class resolution surprises.
   compileOnly "androidx.camera:camera-core:1.5.0-alpha03"
   compileOnly "androidx.camera:camera-camera2:1.5.0-alpha03"
+  compileOnly "androidx.camera:camera-lifecycle:1.5.0-alpha03"
 }
