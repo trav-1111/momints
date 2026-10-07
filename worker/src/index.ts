@@ -482,6 +482,28 @@ async function handleHealth(env: Env): Promise<Response> {
   return json({ ok, checks }, ok ? 200 : 500)
 }
 
+function handleAssetLinks(): Response {
+  const assetLinks = [
+    {
+      relation: ['delegate_permission/common.handle_all_urls'],
+      target: {
+        namespace: 'android_app',
+        package_name: 'com.momints.app',
+        sha256_cert_fingerprints: [
+          'FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C',
+        ],
+      },
+    },
+  ]
+  return new Response(JSON.stringify(assetLinks, null, 2), {
+    status: 200,
+    headers: {
+      'content-type': 'application/json',
+      'cache-control': 'public, max-age=86400',
+    },
+  })
+}
+
 /**
  * Read-only introspection into what the treasury monitor currently thinks,
  * without waiting for the next cron. Reads the balance; posts nothing.
@@ -826,6 +848,9 @@ export default {
         }
         if (request.method === 'GET' && path === '/health') {
           return handleHealth(env)
+        }
+        if (request.method === 'GET' && path === '/.well-known/assetlinks.json') {
+          return handleAssetLinks()
         }
 
         const route = matchRoute(request.method, path)

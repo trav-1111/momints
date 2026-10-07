@@ -266,6 +266,13 @@ function legacyClaimMessage(input: {
   ].join('\n')
 }
 
+export function extractSignatureBytes(signedPayload: Uint8Array): Uint8Array {
+  if (signedPayload.length < 64) {
+    throw new Error(`Invalid signature from wallet: expected at least 64 bytes, got ${signedPayload.length}`)
+  }
+  return signedPayload.length === 64 ? signedPayload : signedPayload.subarray(signedPayload.length - 64)
+}
+
 /** One-time wallet-signed capability recovery for a pre-contract open roll. */
 export async function ensureWorkerRollAuthorization(
   collectionAddress: string,
@@ -274,11 +281,11 @@ export async function ensureWorkerRollAuthorization(
 ): Promise<void> {
   if (await getRollCapability(collectionAddress)) return
   const rollCapability = createRollCapability()
-  await saveRollCapability(collectionAddress, rollCapability)
   const issuedAt = new Date().toISOString()
   const capabilityHash = hashRollCapability(rollCapability)
   const message = legacyClaimMessage({ collectionAddress, wallet, capabilityHash, issuedAt })
-  const signature = await signMessage(new TextEncoder().encode(message))
+  const signedPayload = await signMessage(new TextEncoder().encode(message))
+  const signature = extractSignatureBytes(signedPayload)
   await request(
     `/rolls/${collectionAddress}/authorize`,
     {
@@ -293,6 +300,7 @@ export async function ensureWorkerRollAuthorization(
     },
     READ_TIMEOUT_MS,
   )
+  await saveRollCapability(collectionAddress, rollCapability)
 }
 
 export interface CompleteRollResponse {
