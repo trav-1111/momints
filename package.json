@@ -23,6 +23,7 @@
     "test:film-processing": "node --test tests/film-processing.test.cjs",
     "test:image-artifact": "node --test tests/image-artifact.test.cjs",
     "test:camera-readiness": "node --test tests/camera-readiness.test.cjs",
+    "test:camera-raw": "node --test tests/camera-raw.test.cjs",
     "test:roll-reconciliation": "node --test tests/roll-reconciliation.test.cjs",
     "test:roll-registry": "node --test tests/roll-registry.test.cjs",
     "test:portfolio": "node --test tests/on-chain-portfolio.test.cjs",

@@ -40,6 +40,8 @@ import { FocusReticle } from '../components/FocusReticle'
 import ManualControls from '../components/ManualControls'
 import { useManualCameraState } from '../hooks/useManualCameraState'
 import { useCameraReadiness } from '../hooks/useCameraReadiness'
+import { captureLongExposure, WhiteBalancePreset } from '../../modules/camera-manual'
+import { captureRawDng, isRawSupported } from '../../modules/camera-raw'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { useSessionStore } from '../store/session'
@@ -149,6 +151,7 @@ export default function CameraScreen() {
   // Pro mode — Tier 1 (EV bias, metering) is always available here; Tier 2
   // (manual ISO/shutter/focus/WB) mounts underneath, gated by TIER2_ENABLED.
   const [proOpen, setProOpen] = useState(false)
+  const [rawMode, setRawMode] = useState(false)
   const [ev, setEv] = useState(0)
 
   // Release the camera when the screen loses focus or the app is backgrounded
@@ -225,6 +228,10 @@ export default function CameraScreen() {
   const frontDevice = useCameraDevice('front')
   const backDevice = useCameraDevice('back')
   const activeDevice = cameraPosition === 'front' ? frontDevice : backDevice
+  const isRawHardwareSupported = useMemo(
+    () => (activeDevice?.id != null ? isRawSupported(activeDevice.id) : false),
+    [activeDevice?.id],
+  )
   const captureFormat = useMemo(() => {
     if (!activeDevice) return undefined
     return [...activeDevice.formats]
@@ -269,6 +276,10 @@ export default function CameraScreen() {
     cameraReadiness.isCurrent,
   )
   const { canCapture, controlsReady, controlsError, retry: retryCameraControls } = manualCamera
+  const manualCameraRef = useRef(manualCamera)
+  manualCameraRef.current = manualCamera
+  const cameraReadinessRef = useRef(cameraReadiness)
+  cameraReadinessRef.current = cameraReadiness
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') invalidateCamera()
@@ -352,14 +363,60 @@ export default function CameraScreen() {
       await new Promise((resolve) => setTimeout(resolve, 300))
     }
     let captureUri: string | null = null
+    let rawNegativePath: string | null = null
+    let rawNegativeUri: string | null = null
     let createdPhotoId: string | null = null
     try {
       // Also recheck after the torch delay. Never shoot with unconfirmed controls.
       if (!cameraRef.current || !canCapture()) return
-      const photo: PhotoFile = await cameraRef.current.takePhoto({
-        flash: usingTorchForFlash ? 'off' : supportsFlash ? flash : 'off',
-        enableShutterSound: true,
-      })
+      const currentManualCamera = manualCameraRef.current
+      const currentReadiness = cameraReadinessRef.current
+      const isComputationalLongExposure =
+        currentManualCamera.shutterMode === 'manual' &&
+        currentManualCamera.manualShutterNs != null &&
+        currentManualCamera.manualShutterNs > 1_000_000_000 &&
+        currentReadiness.session != null
+
+      let photoPath: string
+      let rawNegativeSize: number | null = null
+      if (isComputationalLongExposure) {
+        Vibration.vibrate(40)
+        const durationSec = currentManualCamera.manualShutterNs! / 1e9
+        photoPath = await captureLongExposure(
+          currentReadiness.session!.viewTag,
+          currentReadiness.session!.cameraId,
+          durationSec,
+        )
+      } else if (rawMode && isRawHardwareSupported && currentReadiness.session != null) {
+        Vibration.vibrate(40)
+        const rawResult = await captureRawDng({
+          cameraId: currentReadiness.session!.cameraId,
+          viewTag: currentReadiness.session!.viewTag,
+          includeJpeg: true,
+          manualIso:
+            currentManualCamera.isoMode === 'manual' && currentManualCamera.manualIso != null
+              ? currentManualCamera.manualIso
+              : undefined,
+          manualExposureNs:
+            currentManualCamera.shutterMode === 'manual' && currentManualCamera.manualShutterNs != null
+              ? currentManualCamera.manualShutterNs
+              : undefined,
+          manualFocusDistance:
+            currentManualCamera.focusMode === 'manual' && currentManualCamera.manualFocusDiopters != null
+              ? currentManualCamera.manualFocusDiopters
+              : undefined,
+          whiteBalanceMode: WhiteBalancePreset[currentManualCamera.whiteBalance],
+        })
+        rawNegativePath = rawResult.dngPath
+        rawNegativeSize = rawResult.dngByteLength
+        photoPath = rawResult.jpegPath ?? rawResult.dngPath
+      } else {
+        const photo: PhotoFile = await cameraRef.current.takePhoto({
+          flash: usingTorchForFlash ? 'off' : supportsFlash ? flash : 'off',
+          enableShutterSound: true,
+        })
+        photoPath = photo.path
+      }
 
       // Shutter flash + haptic feedback
       Vibration.vibrate(80)
@@ -370,7 +427,14 @@ export default function CameraScreen() {
         useNativeDriver: true,
       }).start()
 
-      captureUri = adoptTemporaryCapture(`file://${photo.path}`)
+      captureUri = adoptTemporaryCapture(`file://${photoPath}`)
+      if (rawNegativePath) {
+        try {
+          rawNegativeUri = adoptTemporaryCapture(`file://${rawNegativePath}`)
+        } catch {
+          rawNegativeUri = `file://${rawNegativePath}`
+        }
+      }
 
       // Originals are session-only. No photo enters the store/queue until the
       // selected immutable package has rendered and its output is verified.
@@ -401,6 +465,8 @@ export default function CameraScreen() {
           recipeSha256: receipt.recipeSha256,
           lutSha256: receipt.lutSha256,
         },
+        rawNegativeUri ?? undefined,
+        rawNegativeSize ?? undefined,
       )
       createdPhotoId = photoId
 
@@ -443,6 +509,8 @@ export default function CameraScreen() {
         .catch(() => {})
     } catch (error) {
       deleteCapture(captureUri)
+      if (rawNegativeUri) deleteCapture(rawNegativeUri)
+      else if (rawNegativePath) deleteCapture(`file://${rawNegativePath}`)
       if (createdPhotoId) removePhoto(createdPhotoId)
       console.error('Failed to capture photo:', error)
       Alert.alert(
@@ -459,6 +527,8 @@ export default function CameraScreen() {
     addPhoto,
     supportsFlash,
     supportsTorch,
+    rawMode,
+    isRawHardwareSupported,
     activeMode,
     activeRoll,
     addFrameToRoll,
@@ -968,7 +1038,7 @@ export default function CameraScreen() {
           alignItems: 'center',
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Pressable
             onPress={toggleFlash}
             disabled={!supportsFlash}
@@ -1029,6 +1099,40 @@ export default function CameraScreen() {
               PRO
             </Text>
           </Pressable>
+
+          {isRawHardwareSupported && (
+            <Pressable
+              onPress={() => {
+                setRawMode((r) => !r)
+                Haptics.selectionAsync()
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Capture format: ${rawMode ? 'RAW' : 'JPG'}`}
+              style={[
+                chip,
+                {
+                  height: 42,
+                  paddingHorizontal: 12,
+                  borderRadius: 21,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderColor: rawMode ? colors.accent : colors.chipBorder,
+                  backgroundColor: rawMode ? colors.accentTint : colors.chipBg,
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  fontFamily: fonts.sansBold,
+                  fontSize: 11,
+                  letterSpacing: tracking(0.1, 11),
+                  color: rawMode ? colors.accentSoft : colors.text,
+                }}
+              >
+                {rawMode ? 'RAW' : 'JPG'}
+              </Text>
+            </Pressable>
+          )}
         </View>
 
         {account && walletAddress ? (

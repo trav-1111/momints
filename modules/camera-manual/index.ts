@@ -110,3 +110,11 @@ export async function applyCameraState(viewTag: number, cameraId: string, state:
 export async function resetToAuto(viewTag: number, cameraId: string): Promise<void> {
   await CameraManualNative.resetToAuto(viewTag, cameraId)
 }
+
+export async function captureLongExposure(
+  viewTag: number,
+  cameraId: string,
+  durationSeconds: number,
+): Promise<string> {
+  return await CameraManualNative.captureLongExposure(viewTag, cameraId, durationSeconds)
+}

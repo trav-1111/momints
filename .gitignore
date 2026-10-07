@@ -77,3 +77,9 @@ modules/*/android/.gradle/
 *.apk
 *.aab
 /worker/wrangler.review.local.toml
+
+# Scratch testing screenshots
+after_exposure.png
+camera_screen.png
+exposing_*.png
+review_*.png
