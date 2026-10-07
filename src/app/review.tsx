@@ -360,6 +360,23 @@ export default function ReviewScreen() {
               </Text>
             </View>
           )}
+          {Boolean(currentPhoto?.rawNegativeUri) && (
+            <View
+              style={[
+                chip,
+                {
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  borderRadius: 999,
+                  borderColor: colors.accent,
+                },
+              ]}
+            >
+              <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.accent }}>
+                RAW
+              </Text>
+            </View>
+          )}
         </View>
 
         <Pressable

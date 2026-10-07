@@ -32,6 +32,9 @@ export interface Photo {
   /** Verified developed-artifact metadata. Contains no image bytes. */
   artifact?: PhotoArtifact
   meta?: CaptureMeta
+  /** Local or permanent URI of the raw DNG negative if shot in RAW mode. */
+  rawNegativeUri?: string
+  rawNegativeBytes?: number
   // Roll membership, stamped at capture. Deliberately stored on the photo
   // rather than read from session.activeRoll.frameIds: completeRoll() nulls
   // the active roll, and screens that hid frames by subtracting that array
@@ -57,6 +60,8 @@ interface PhotoStore {
     aspect?: AspectRatio,
     filmStockId?: string,
     artifact?: PhotoArtifact,
+    rawNegativeUri?: string,
+    rawNegativeBytes?: number,
   ) => string
   setAction: (id: string, action: Photo['action']) => void
   setBulkAction: (ids: string[], action: Photo['action']) => void
@@ -74,7 +79,7 @@ interface PhotoStore {
 export const usePhotoStore = create<PhotoStore>((set, get) => ({
   photos: [],
 
-  addPhoto: (uri, roll, aspect, filmStockId, artifact): string => {
+  addPhoto: (uri, roll, aspect, filmStockId, artifact, rawNegativeUri, rawNegativeBytes): string => {
     const newPhoto: Photo = {
       id: uuidv4(),
       uri,
@@ -83,6 +88,8 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
       aspect,
       filmStockId,
       artifact,
+      rawNegativeUri,
+      rawNegativeBytes,
       rollId: roll?.id,
       rollName: roll?.name,
       rollFrameNumber: roll?.frameNumber,

@@ -1,0 +1,22 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.momints.raw'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.cameraraw"
+  defaultConfig {
+    versionCode 1
+    versionName "1.0.0"
+  }
+}
+
+dependencies {
+  implementation 'com.facebook.react:react-android'
+  compileOnly "androidx.camera:camera-core:1.5.0-alpha03"
+  compileOnly "androidx.camera:camera-camera2:1.5.0-alpha03"
+  compileOnly "androidx.camera:camera-lifecycle:1.5.0-alpha03"
+}

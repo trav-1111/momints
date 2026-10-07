@@ -8,6 +8,8 @@ import android.view.View
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.graphics.Bitmap
+import android.graphics.Matrix
 import androidx.camera.camera2.impl.Camera2ImplConfig
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
@@ -15,8 +17,14 @@ import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraControl
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.impl.CaptureConfig
 import androidx.camera.core.impl.Config
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.LifecycleOwner
 import com.google.common.util.concurrent.ListenableFuture
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.functions.Queues
@@ -25,8 +33,12 @@ import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.records.Field
 import expo.modules.kotlin.records.Record
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.Executor
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 class CameraStateRecord : Record {
   @Field
@@ -86,6 +98,10 @@ class CameraManualModule : Module() {
       resolveImagePipeline(viewTag)?.let { applyStillCaptureConfig(it, Camera2ImplConfig.Builder().build()) }
       val future = Camera2CameraControl.from(camera.cameraControl).clearCaptureRequestOptions()
       acknowledge(future, camera, viewTag, cameraId, 3_000L, promise)
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("captureLongExposure") { viewTag: Int, cameraId: String, durationSeconds: Double, promise: Promise ->
+      captureLongExposure(viewTag, cameraId, durationSeconds, promise)
     }.runOnQueue(Queues.MAIN)
   }
 
@@ -398,6 +414,247 @@ class CameraManualModule : Module() {
     } catch (e: Throwable) {
       Log.w("CameraManual", "Could not update still capture pipeline: ${e.message}")
     }
+  }
+
+  private fun captureLongExposure(
+    viewTag: Int,
+    cameraId: String,
+    durationSeconds: Double,
+    promise: Promise
+  ) {
+    val view = appContext.findView<View>(viewTag)
+    if (view == null) {
+      promise.reject("ERR_VIEW_NOT_FOUND", "View $viewTag not found", null)
+      return
+    }
+
+    val sessionField = view.javaClass.getDeclaredField("cameraSession")
+    sessionField.isAccessible = true
+    val session = sessionField.get(view) as? LifecycleOwner
+    if (session == null) {
+      promise.reject("ERR_SESSION_NOT_FOUND", "No active camera session for view $viewTag", null)
+      return
+    }
+
+    val context = view.context
+    val providerFuture = ProcessCameraProvider.getInstance(context)
+    providerFuture.addListener({
+      try {
+        val provider = providerFuture.get()
+        startLongExposureCapture(view, session, provider, cameraId, durationSeconds, promise)
+      } catch (e: Throwable) {
+        promise.reject("ERR_CAMERA_PROVIDER", "Failed to get CameraProvider: ${e.message}", e)
+      }
+    }, ContextCompat.getMainExecutor(context))
+  }
+
+  @OptIn(ExperimentalCamera2Interop::class)
+  private fun startLongExposureCapture(
+    view: View,
+    session: LifecycleOwner,
+    provider: ProcessCameraProvider,
+    cameraId: String,
+    durationSeconds: Double,
+    promise: Promise
+  ) {
+    val durationMs = (durationSeconds * 1000.0).toLong()
+    val targetFrames = (durationSeconds * 30.0).roundToInt().coerceAtLeast(2)
+    val cacheDir = appContext.reactContext?.cacheDir ?: view.context.cacheDir
+    val outputFile = File(cacheDir, "long_exp_${System.currentTimeMillis()}.jpg")
+
+    val resolutionSelector = androidx.camera.core.resolutionselector.ResolutionSelector.Builder()
+      .setAspectRatioStrategy(androidx.camera.core.resolutionselector.AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+      .setAllowedResolutionMode(androidx.camera.core.resolutionselector.ResolutionSelector.PREFER_CAPTURE_RATE_OVER_HIGHER_RESOLUTION)
+      .build()
+
+    val analysis = ImageAnalysis.Builder()
+      .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
+      .setBackpressureStrategy(ImageAnalysis.STRATEGY_BLOCK_PRODUCER)
+      .setResolutionSelector(resolutionSelector)
+      .build()
+
+    val cameraSelector = CameraSelector.Builder().addCameraFilter { cameraInfos ->
+      cameraInfos.filter {
+        Camera2CameraInfo.from(it).cameraId == cameraId
+      }
+    }.build()
+
+    val executor = Executors.newSingleThreadExecutor()
+    val mainHandler = Handler(Looper.getMainLooper())
+    var settled = false
+
+    fun cleanup() {
+      mainHandler.post {
+        try {
+          if (provider.isBound(analysis)) {
+            provider.unbind(analysis)
+          }
+        } catch (_: Throwable) {}
+      }
+      executor.shutdown()
+    }
+
+    val timeoutRunnable = Runnable {
+      if (!settled) {
+        settled = true
+        cleanup()
+        promise.reject("ERR_TIMEOUT", "Long exposure capture timed out", null)
+      }
+    }
+    mainHandler.postDelayed(timeoutRunnable, durationMs + 4000L)
+
+    val analyzer = LongExposureAnalyzer(
+      targetFrames = targetFrames,
+      durationMs = durationMs,
+      outputFile = outputFile,
+      onComplete = { savedFile ->
+        if (!settled) {
+          settled = true
+          mainHandler.removeCallbacks(timeoutRunnable)
+          cleanup()
+          promise.resolve(savedFile.absolutePath)
+        }
+      },
+      onError = { error ->
+        if (!settled) {
+          settled = true
+          mainHandler.removeCallbacks(timeoutRunnable)
+          cleanup()
+          promise.reject("ERR_CAPTURE_FAILED", "Long exposure failed: ${error.message}", error)
+        }
+      }
+    )
+
+    analysis.setAnalyzer(executor, analyzer)
+
+    try {
+      provider.bindToLifecycle(session, cameraSelector, analysis)
+      Log.i("CameraManual", "Bound computational long exposure analysis ($durationSeconds s, $targetFrames frames)")
+    } catch (e: Throwable) {
+      if (!settled) {
+        settled = true
+        mainHandler.removeCallbacks(timeoutRunnable)
+        cleanup()
+        promise.reject("ERR_BIND_FAILED", "Could not bind long exposure analysis: ${e.message}", e)
+      }
+    }
+  }
+}
+
+class LongExposureAnalyzer(
+  private val targetFrames: Int,
+  private val durationMs: Long,
+  private val outputFile: File,
+  private val onComplete: (File) -> Unit,
+  private val onError: (Throwable) -> Unit
+) : ImageAnalysis.Analyzer {
+
+  @Volatile
+  private var isCapturing = true
+  private var framesAccumulated = 0
+  private val startTimeMs = System.currentTimeMillis()
+  private var rotationDegrees = 0
+
+  private var accumulatorR: IntArray? = null
+  private var accumulatorG: IntArray? = null
+  private var accumulatorB: IntArray? = null
+  private var rowBytes: ByteArray? = null
+  private var frameWidth = 0
+  private var frameHeight = 0
+
+  override fun analyze(image: ImageProxy) {
+    try {
+      if (!isCapturing) return
+
+      val width = image.width
+      val height = image.height
+      val plane = image.planes[0]
+      val buffer = plane.buffer
+      val rowStride = plane.rowStride
+      val pixelStride = plane.pixelStride
+
+      if (accumulatorR == null || frameWidth != width || frameHeight != height) {
+        frameWidth = width
+        frameHeight = height
+        val totalPixels = width * height
+        accumulatorR = IntArray(totalPixels)
+        accumulatorG = IntArray(totalPixels)
+        accumulatorB = IntArray(totalPixels)
+        rowBytes = ByteArray(rowStride)
+        rotationDegrees = image.imageInfo.rotationDegrees
+      }
+
+      val accR = accumulatorR ?: return
+      val accG = accumulatorG ?: return
+      val accB = accumulatorB ?: return
+      val rowBuf = rowBytes ?: return
+
+      for (y in 0 until height) {
+        buffer.position(y * rowStride)
+        val toRead = minOf(rowStride, buffer.remaining())
+        buffer.get(rowBuf, 0, toRead)
+
+        val rowOffset = y * width
+        for (x in 0 until width) {
+          val byteOffset = x * pixelStride
+          val r = rowBuf[byteOffset].toInt() and 0xFF
+          val g = rowBuf[byteOffset + 1].toInt() and 0xFF
+          val b = rowBuf[byteOffset + 2].toInt() and 0xFF
+
+          val pixelIndex = rowOffset + x
+          accR[pixelIndex] += r
+          accG[pixelIndex] += g
+          accB[pixelIndex] += b
+        }
+      }
+
+      framesAccumulated++
+
+      val elapsed = System.currentTimeMillis() - startTimeMs
+      if (framesAccumulated >= targetFrames || elapsed >= durationMs) {
+        isCapturing = false
+        saveAveragedBitmap(outputFile, rotationDegrees)
+        onComplete(outputFile)
+      }
+    } catch (e: Throwable) {
+      isCapturing = false
+      onError(e)
+    } finally {
+      image.close()
+    }
+  }
+
+  private fun saveAveragedBitmap(destFile: File, rotation: Int) {
+    val accR = accumulatorR ?: return
+    val accG = accumulatorG ?: return
+    val accB = accumulatorB ?: return
+    val totalPixels = frameWidth * frameHeight
+    val count = framesAccumulated.toFloat().coerceAtLeast(1f)
+
+    val outputPixels = IntArray(totalPixels)
+    for (i in 0 until totalPixels) {
+      val r = (accR[i] / count).toInt().coerceIn(0, 255)
+      val g = (accG[i] / count).toInt().coerceIn(0, 255)
+      val b = (accB[i] / count).toInt().coerceIn(0, 255)
+      val a = 0xFF
+
+      outputPixels[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    var bitmap = Bitmap.createBitmap(outputPixels, frameWidth, frameHeight, Bitmap.Config.ARGB_8888)
+
+    if (rotation != 0) {
+      val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
+      val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, frameWidth, frameHeight, matrix, true)
+      bitmap.recycle()
+      bitmap = rotatedBitmap
+    }
+
+    destFile.parentFile?.mkdirs()
+    FileOutputStream(destFile).use { fos ->
+      bitmap.compress(Bitmap.CompressFormat.JPEG, 95, fos)
+    }
+    bitmap.recycle()
   }
 }
 
