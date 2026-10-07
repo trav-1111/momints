@@ -101,3 +101,52 @@ test('walletAuthCache clears both SecureStore and any legacy AsyncStorage keys',
   assert.equal(secureStore.size, 0)
   assert.equal(asyncStorage.size, 0)
 })
+
+test('walletAuthCache preserves legacy AsyncStorage token if SecureStore write fails', async () => {
+  let shouldFailSecureWrite = true
+  const secureStore = new Map()
+  const asyncStorage = new Map([['authorization-cache', JSON.stringify(DUMMY_AUTH)]])
+
+  const load = sourceLoader({
+    'expo-secure-store': {
+      getItemAsync: async (key) => secureStore.get(key) ?? null,
+      setItemAsync: async (key, val) => {
+        if (shouldFailSecureWrite) throw new Error('SecureStore disk error')
+        secureStore.set(key, val)
+      },
+      deleteItemAsync: async (key) => {
+        secureStore.delete(key)
+      },
+      WHEN_UNLOCKED_THIS_DEVICE_ONLY: 1,
+    },
+    '@react-native-async-storage/async-storage': {
+      getItem: async (key) => asyncStorage.get(key) ?? null,
+      setItem: async (key, val) => {
+        asyncStorage.set(key, val)
+      },
+      removeItem: async (key) => {
+        asyncStorage.delete(key)
+      },
+    },
+    '@solana/kit': {
+      address: (val) => String(val),
+    },
+  })
+
+  const { createSecureWalletAuthCache } = load('src/services/walletAuthCache.ts')
+  const cache = createSecureWalletAuthCache()
+
+  // First get() attempts migration, but SecureStore write fails
+  const result = await cache.get()
+  assert.equal(result, undefined)
+  // Legacy copy MUST still exist in AsyncStorage!
+  assert.equal(asyncStorage.has('authorization-cache'), true)
+  assert.equal(secureStore.has('mwa-wallet-authorization'), false)
+
+  // When SecureStore recovers, subsequent get() succeeds and safely purges AsyncStorage
+  shouldFailSecureWrite = false
+  const recovered = await cache.get()
+  assert.deepEqual(recovered, DUMMY_AUTH)
+  assert.equal(secureStore.has('mwa-wallet-authorization'), true)
+  assert.equal(asyncStorage.has('authorization-cache'), false)
+})

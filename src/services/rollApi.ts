@@ -2,10 +2,13 @@ import { ROLL_API_BASE } from '../config/rollApi'
 import { Buffer } from '@craftzdog/react-native-buffer'
 import {
   bindStagedRollCapability,
+  clearRecoveryRollCapability,
   createRollCapability,
+  getPendingRecoveryRollCapability,
   getRollCapability,
   hashRollCapability,
   saveRollCapability,
+  stageRecoveryRollCapability,
 } from './rollCapability'
 
 /**
@@ -279,8 +282,16 @@ export async function ensureWorkerRollAuthorization(
   wallet: string,
   signMessage: (message: Uint8Array) => Promise<Uint8Array>,
 ): Promise<void> {
-  if (await getRollCapability(collectionAddress)) return
-  const rollCapability = createRollCapability()
+  // Reuse a staged recovery capability (from a previous retry or dropped response),
+  // or an existing local capability for this collection.
+  let rollCapability =
+    (await getPendingRecoveryRollCapability(collectionAddress)) || (await getRollCapability(collectionAddress))
+
+  if (!rollCapability) {
+    rollCapability = createRollCapability()
+    await stageRecoveryRollCapability(collectionAddress, rollCapability)
+  }
+
   const issuedAt = new Date().toISOString()
   const capabilityHash = hashRollCapability(rollCapability)
   const message = legacyClaimMessage({ collectionAddress, wallet, capabilityHash, issuedAt })
@@ -301,6 +312,7 @@ export async function ensureWorkerRollAuthorization(
     READ_TIMEOUT_MS,
   )
   await saveRollCapability(collectionAddress, rollCapability)
+  await clearRecoveryRollCapability(collectionAddress)
 }
 
 export interface CompleteRollResponse {

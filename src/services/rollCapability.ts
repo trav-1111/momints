@@ -5,6 +5,7 @@ import { createHash, randomBytes } from 'react-native-quick-crypto'
 const KEYCHAIN_SERVICE = 'app.momints.roll-capabilities.v1'
 const KEY_PREFIX = 'roll-capability-'
 const PENDING_KEY_PREFIX = 'pending-roll-capability-'
+const RECOVERY_KEY_PREFIX = 'recovery-roll-capability-'
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/
 
 const options: SecureStore.SecureStoreOptions = {
@@ -17,6 +18,13 @@ function keyForCollection(collectionAddress: string): string {
     throw new Error('Cannot access a roll capability for an invalid collection address.')
   }
   return `${KEY_PREFIX}${collectionAddress}`
+}
+
+function keyForRecovery(collectionAddress: string): string {
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(collectionAddress)) {
+    throw new Error('Cannot access a recovery capability for an invalid collection address.')
+  }
+  return `${RECOVERY_KEY_PREFIX}${collectionAddress}`
 }
 
 function keyForWallet(wallet: string): string {
@@ -74,4 +82,24 @@ export async function bindStagedRollCapability(wallet: string, collectionAddress
   await saveRollCapability(collectionAddress, capability)
   await SecureStore.deleteItemAsync(pendingKey, { keychainService: KEYCHAIN_SERVICE })
   return true
+}
+
+/**
+ * Persist before a recovery authorize request so a lost network response
+ * cannot strand the roll by forcing retry to generate a mismatched capability.
+ */
+export async function stageRecoveryRollCapability(collectionAddress: string, capability: string): Promise<void> {
+  assertRollCapability(capability)
+  await SecureStore.setItemAsync(keyForRecovery(collectionAddress), capability, options)
+}
+
+export async function getPendingRecoveryRollCapability(collectionAddress: string): Promise<string | null> {
+  const capability = await SecureStore.getItemAsync(keyForRecovery(collectionAddress), options)
+  if (capability === null) return null
+  assertRollCapability(capability)
+  return capability
+}
+
+export async function clearRecoveryRollCapability(collectionAddress: string): Promise<void> {
+  await SecureStore.deleteItemAsync(keyForRecovery(collectionAddress), { keychainService: KEYCHAIN_SERVICE })
 }

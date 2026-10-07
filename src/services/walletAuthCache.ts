@@ -18,18 +18,14 @@ export function cacheReviver(key: string, value: unknown): unknown {
   return value
 }
 
-async function tryGetAndPurgeLegacyAsyncStorage(): Promise<string | null> {
+async function tryGetLegacyAsyncStorage(): Promise<string | null> {
   try {
     // Dynamic best-effort resolution of nested peer dep
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require('@react-native-async-storage/async-storage')
     const AsyncStorage = mod?.default ?? mod
     if (AsyncStorage?.getItem) {
-      const legacy = await AsyncStorage.getItem(LEGACY_ASYNC_STORAGE_KEY)
-      if (legacy) {
-        await AsyncStorage.removeItem(LEGACY_ASYNC_STORAGE_KEY)
-        return legacy
-      }
+      return await AsyncStorage.getItem(LEGACY_ASYNC_STORAGE_KEY)
     }
   } catch {
     // Not available or cannot access — safe fallback
@@ -74,16 +70,19 @@ export function createSecureWalletAuthCache(
       }
 
       // Migration: check for legacy unencrypted token in AsyncStorage
-      const legacy = await tryGetAndPurgeLegacyAsyncStorage()
+      const legacy = await tryGetLegacyAsyncStorage()
       if (legacy) {
         try {
           const parsed = JSON.parse(legacy, cacheReviver) as WalletAuthorization
           if (parsed && typeof parsed === 'object') {
+            // Write to SecureStore FIRST
             await SecureStore.setItemAsync(storageKey, JSON.stringify(parsed), options)
+            // Purge unencrypted copy ONLY after successful encrypted write
+            await tryPurgeLegacyAsyncStorage()
             return parsed
           }
         } catch (err) {
-          console.warn('[walletAuthCache] Failed to parse legacy auth token:', err)
+          console.warn('[walletAuthCache] Failed to parse/migrate legacy auth token:', err)
         }
       }
 
