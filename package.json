@@ -21,7 +21,7 @@
     "test:wallet-domain": "node --test tests/wallet-domain.test.cjs",
     "test:filmstocks": "node --test tests/filmstock-policy.test.cjs",
     "test:film-processing": "node --test tests/film-processing.test.cjs",
-    "test:fast": "node --test tests/privacy.test.cjs tests/camera-readiness.test.cjs",
+    "test:fast": "node --test tests/privacy.test.cjs tests/camera-readiness.test.cjs tests/camera-raw.test.cjs",
     "agent:check": "tsc --noEmit && npm run test:fast",
     "test:camera-readiness": "node --test tests/camera-readiness.test.cjs",
     "test:camera-raw": "node --test tests/camera-raw.test.cjs",
