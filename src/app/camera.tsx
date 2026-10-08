@@ -13,6 +13,8 @@ import {
   AppState,
   useWindowDimensions,
   ViewStyle,
+  Easing,
+  ActivityIndicator,
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useIsFocused } from '@react-navigation/native'
@@ -38,6 +40,7 @@ import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
 import { CompositionGridOverlay, type GridMode } from '../components/CompositionGridOverlay'
 import { FocusReticle } from '../components/FocusReticle'
 import ManualControls from '../components/ManualControls'
+import { KinoBanners } from '../features/kino'
 import { LongExposureBanner } from '../features/long-exposure'
 import { useManualCameraState } from '../hooks/useManualCameraState'
 import { useCameraReadiness } from '../hooks/useCameraReadiness'
@@ -50,6 +53,7 @@ import type { AspectRatio } from '../store/session'
 import { useLocationSettingsStore } from '../store/locationSettings'
 import type { LocationGranularity } from '../store/locationSettings'
 import { useContactSheetDiscovery } from '../store/contactSheetDiscovery'
+import { useKinoSettingsStore, CAPTURE_CADENCE_MS } from '../store/kinoSettings'
 import { PERMANENT_IMAGE_MAX_LONG_EDGE, PERMANENT_IMAGE_MAX_PIXELS } from '../config/imageArtifact'
 import { colors, fonts, tracking } from '../theme'
 import { DEFAULT_COLOR_FILM_ID, ensureFilmStockRecipe, isFilmStockDownloaded } from '../services/filmstocks'
@@ -148,6 +152,35 @@ export default function CameraScreen() {
   const [locationMenuVisible, setLocationMenuVisible] = useState(false)
   const showContactSheetNudge = useContactSheetDiscovery((state) => state.hydrated && !state.acknowledged)
   const acknowledgeContactSheet = useContactSheetDiscovery((state) => state.acknowledge)
+
+  // LomoKino burst state
+  const [isCranking, setIsCranking] = useState(false)
+  const [crankCount, setCrankCount] = useState(0)
+  const [kinoDevelopingCount, setKinoDevelopingCount] = useState<number | null>(null)
+  const isCrankingRef = useRef(false)
+  const crankHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const didCrankRef = useRef(false)
+  const crankAnim = useRef(new Animated.Value(0)).current
+
+  const captureFps = useKinoSettingsStore((s) => s.captureFps)
+  const cycleCaptureFps = useKinoSettingsStore((s) => s.cycleCaptureFps)
+
+  useEffect(() => {
+    if (isCranking) {
+      const loop = Animated.loop(
+        Animated.timing(crankAnim, {
+          toValue: 1,
+          duration: 400,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        }),
+      )
+      loop.start()
+      return () => loop.stop()
+    } else {
+      crankAnim.setValue(0)
+    }
+  }, [isCranking, crankAnim])
 
   // Pro mode — Tier 1 (EV bias, metering) is always available here; Tier 2
   // (manual ISO/shutter/focus/WB) mounts underneath, gated by TIER2_ENABLED.
@@ -277,10 +310,6 @@ export default function CameraScreen() {
     cameraReadiness.isCurrent,
   )
   const { canCapture, controlsReady, controlsError, retry: retryCameraControls } = manualCamera
-  const manualCameraRef = useRef(manualCamera)
-  manualCameraRef.current = manualCamera
-  const cameraReadinessRef = useRef(cameraReadiness)
-  cameraReadinessRef.current = cameraReadiness
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') invalidateCamera()
@@ -370,8 +399,8 @@ export default function CameraScreen() {
     try {
       // Also recheck after the torch delay. Never shoot with unconfirmed controls.
       if (!cameraRef.current || !canCapture()) return
-      const currentManualCamera = manualCameraRef.current
-      const currentReadiness = cameraReadinessRef.current
+      const currentManualCamera = manualCamera
+      const currentReadiness = cameraReadiness
       const isComputationalLongExposure =
         currentManualCamera.shutterMode === 'manual' &&
         currentManualCamera.manualShutterNs != null &&
@@ -466,6 +495,7 @@ export default function CameraScreen() {
           recipeSha256: receipt.recipeSha256,
           lutSha256: receipt.lutSha256,
         },
+        undefined,
         rawNegativeUri ?? undefined,
         rawNegativeSize ?? undefined,
       )
@@ -510,8 +540,6 @@ export default function CameraScreen() {
         .catch(() => {})
     } catch (error) {
       deleteCapture(captureUri)
-      if (rawNegativeUri) deleteCapture(rawNegativeUri)
-      else if (rawNegativePath) deleteCapture(`file://${rawNegativePath}`)
       if (createdPhotoId) removePhoto(createdPhotoId)
       console.error('Failed to capture photo:', error)
       Alert.alert(
@@ -528,8 +556,6 @@ export default function CameraScreen() {
     addPhoto,
     supportsFlash,
     supportsTorch,
-    rawMode,
-    isRawHardwareSupported,
     activeMode,
     activeRoll,
     addFrameToRoll,
@@ -548,6 +574,188 @@ export default function CameraScreen() {
     canCapture,
     cameraRef,
   ])
+
+  const handleStartCrank = useCallback(async () => {
+    if (!cameraRef.current || isCapturing || !canCapture()) return
+
+    if (!isFilmStockDownloaded(effectiveFilm.filmStockId)) {
+      const stock = filmCatalogue.find((item) => item.filmStockId === effectiveFilm.filmStockId)
+      if (!stock) {
+        Alert.alert('Film recipe missing', 'Reconnect and refresh the Film Shelf before shooting this film.')
+        return
+      }
+      try {
+        await ensureFilmStockRecipe(stock)
+      } catch {
+        Alert.alert('Connect to download', `${stock.displayName} must be downloaded before this shot can be processed.`)
+        return
+      }
+    }
+
+    if (activeRoll?.developed || rollIsFull) {
+      Alert.alert('Roll Complete', 'Every frame on this roll is shot. Mint the roll to see them.', [
+        { text: 'Later', style: 'cancel' },
+        { text: 'Mint Roll', onPress: () => mintRoll() },
+      ])
+      return
+    }
+
+    isCrankingRef.current = true
+    didCrankRef.current = true
+    setIsCranking(true)
+    setCrankCount(0)
+
+    const rawSnapshots: string[] = []
+    const isRoll = activeMode === 'roll' && activeRoll !== null
+    const maxRollFrames = activeRoll ? activeRoll.size - activeRoll.frameIds.length : 36
+    const kinoSeqId = `kino-${Date.now()}`
+
+    // Initial mechanical crank pulse
+    Vibration.vibrate(30)
+
+    const targetIntervalMs = CAPTURE_CADENCE_MS[captureFps] ?? 0
+
+    try {
+      while (isCrankingRef.current) {
+        if (isRoll && rawSnapshots.length >= maxRollFrames) {
+          break
+        }
+        if (rawSnapshots.length >= 36) {
+          break
+        }
+
+        const frameStart = performance.now()
+        const photo = await cameraRef.current.takeSnapshot({ quality: 85 })
+        rawSnapshots.push(photo.path)
+        setCrankCount(rawSnapshots.length)
+        // Mechanical gear-tooth tactile feedback
+        Vibration.vibrate(20)
+
+        if (targetIntervalMs > 0) {
+          const snapElapsed = performance.now() - frameStart
+          const remainingDelay = Math.max(0, targetIntervalMs - snapElapsed)
+          if (remainingDelay > 0 && isCrankingRef.current) {
+            await new Promise((r) => setTimeout(r, remainingDelay))
+          }
+        } else {
+          // Yield briefly for React batching and gesture polling
+          await new Promise((r) => setTimeout(r, 10))
+        }
+      }
+    } catch (err) {
+      console.error('[Kino] burst capture error:', err)
+    } finally {
+      isCrankingRef.current = false
+      setIsCranking(false)
+    }
+
+    // Develop captured Kino frames sequentially through verified film processor
+    if (rawSnapshots.length > 0) {
+      setKinoDevelopingCount(rawSnapshots.length)
+      setIsCapturing(true)
+      try {
+        for (let i = 0; i < rawSnapshots.length; i++) {
+          const rawPath = rawSnapshots[i]
+          let captureUri: string | null = adoptTemporaryCapture(`file://${rawPath}`)
+
+          if (effectiveAspect !== 'full') {
+            captureUri = await cropToAspect(captureUri, effectiveAspect)
+          }
+          let receipt = await processFilm(captureUri, effectiveFilm)
+          captureUri = receipt.outputUri
+          captureUri = await ensureUnderCeiling(captureUri)
+          receipt = await verifyCompressedFilmOutput(receipt, captureUri)
+
+          const photoId = addPhoto(
+            receipt.outputUri,
+            isRoll && activeRoll !== null
+              ? { id: activeRoll.id, name: activeRoll.name, frameNumber: activeRoll.frameIds.length + 1 }
+              : undefined,
+            effectiveAspect,
+            receipt.filmStockId,
+            {
+              mime: receipt.mime,
+              byteLength: receipt.byteLength,
+              width: receipt.width,
+              height: receipt.height,
+              imageHash: receipt.outputSha256,
+              renderer: receipt.renderer,
+              recipeSha256: receipt.recipeSha256,
+              lutSha256: receipt.lutSha256,
+            },
+            { id: kinoSeqId, index: i },
+          )
+
+          if (isRoll && activeRoll !== null) {
+            setAction(photoId, 'mint')
+            const storedPhoto = usePhotoStore.getState().photos.find((candidate) => candidate.id === photoId)
+            if (!storedPhoto) throw new Error('The captured roll frame could not be registered.')
+
+            const vaultUri = await persistRollFrame(storedPhoto, activeRoll.frameIds.length + 1)
+            updatePhotoUri(photoId, vaultUri)
+            addFrameToRoll(photoId)
+          }
+        }
+
+        if (isRoll && activeRoll && activeRoll.frameIds.length >= activeRoll.size) {
+          developRoll()
+          Alert.alert('Roll Complete! 🎞️', `All ${activeRoll.size} frames are shot. Mint the roll?`, [
+            { text: 'Later', style: 'cancel' },
+            { text: 'Mint Roll', onPress: () => mintRoll() },
+          ])
+        }
+      } catch (err) {
+        console.error('[Kino] failed to develop frames:', err)
+        Alert.alert('Error', 'Failed to develop some Kino frames.')
+      } finally {
+        setKinoDevelopingCount(null)
+        setIsCapturing(false)
+      }
+    }
+  }, [
+    activeMode,
+    activeRoll,
+    addFrameToRoll,
+    addPhoto,
+    canCapture,
+    cameraRef,
+    captureFps,
+    developRoll,
+    effectiveAspect,
+    effectiveFilm,
+    filmCatalogue,
+    isCapturing,
+    mintRoll,
+    rollIsFull,
+    setAction,
+    updatePhotoUri,
+  ])
+
+  const handleShutterPressIn = useCallback(() => {
+    if (isCapturing || !controlsReady || rollIsFull || activeRoll?.developed || kinoDevelopingCount !== null) return
+    didCrankRef.current = false
+    crankHoldTimer.current = setTimeout(() => {
+      handleStartCrank()
+    }, 280)
+  }, [isCapturing, controlsReady, rollIsFull, activeRoll?.developed, kinoDevelopingCount, handleStartCrank])
+
+  const handleShutterPressOut = useCallback(() => {
+    if (crankHoldTimer.current) {
+      clearTimeout(crankHoldTimer.current)
+      crankHoldTimer.current = null
+    }
+    if (isCrankingRef.current) {
+      isCrankingRef.current = false
+    }
+  }, [])
+
+  const handleShutterPress = useCallback(() => {
+    if (didCrankRef.current) {
+      didCrankRef.current = false
+      return
+    }
+    handleCapture()
+  }, [handleCapture])
 
   const toggleFlash = useCallback(() => {
     if (!supportsFlash) return
@@ -1039,7 +1247,7 @@ export default function CameraScreen() {
           alignItems: 'center',
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
           <Pressable
             onPress={toggleFlash}
             disabled={!supportsFlash}
@@ -1195,59 +1403,99 @@ export default function CameraScreen() {
         )}
       </View>
 
-      {/* Second row — mode chip · EXP dial */}
-      <Pressable
-        onPress={() => router.push('/mode-select')}
-        style={[
-          chip,
-          {
-            position: 'absolute',
-            top: 74,
-            left: 18,
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 8,
-            paddingVertical: 7,
-            paddingHorizontal: 11,
-            borderRadius: 10,
-          },
-        ]}
+      {/* Second row — mode chip · Kino cadence chip · EXP dial */}
+      <View
+        style={{
+          position: 'absolute',
+          top: 74,
+          left: 18,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+        }}
       >
-        {activeMode === 'roll' ? (
-          <IconFilm size={15} color={colors.text} />
-        ) : (
-          <IconCamera size={15} color={colors.text} />
-        )}
-        <Text
-          style={{
-            fontFamily: fonts.sansBold,
-            fontSize: 11,
-            letterSpacing: tracking(0.1, 11),
-            color: colors.text,
-          }}
+        <Pressable
+          onPress={() => router.push('/mode-select')}
+          style={[
+            chip,
+            {
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+              paddingVertical: 7,
+              paddingHorizontal: 11,
+              borderRadius: 10,
+            },
+          ]}
         >
-          {activeMode === 'roll' ? 'FILM' : 'QUICK'}
-        </Text>
-        {activeMode === 'roll' && activeRoll !== null && (
-          <>
-            <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-            <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
-              {effectiveFilmName.toUpperCase()}
-            </Text>
-            {activeRoll.aspect !== 'full' && (
-              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>{activeRoll.aspect}</Text>
-            )}
-          </>
-        )}
-        {activeMode === 'quick' && (
-          <>
-            <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-            <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
-              {effectiveFilmName.toUpperCase()}
-            </Text>
-          </>
-        )}
-      </Pressable>
+          {activeMode === 'roll' ? (
+            <IconFilm size={15} color={colors.text} />
+          ) : (
+            <IconCamera size={15} color={colors.text} />
+          )}
+          <Text
+            style={{
+              fontFamily: fonts.sansBold,
+              fontSize: 11,
+              letterSpacing: tracking(0.1, 11),
+              color: colors.text,
+            }}
+          >
+            {activeMode === 'roll' ? 'FILM' : 'QUICK'}
+          </Text>
+          {activeMode === 'roll' && activeRoll !== null && (
+            <>
+              <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+              <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
+                {effectiveFilmName.toUpperCase()}
+              </Text>
+              {activeRoll.aspect !== 'full' && (
+                <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>{activeRoll.aspect}</Text>
+              )}
+            </>
+          )}
+          {activeMode === 'quick' && (
+            <>
+              <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+              <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
+                {effectiveFilmName.toUpperCase()}
+              </Text>
+            </>
+          )}
+        </Pressable>
+
+        {/* Kino Cadence Selector Chip */}
+        <Pressable
+          onPress={() => {
+            cycleCaptureFps()
+            Vibration.vibrate(25)
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
+          style={[
+            chip,
+            {
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 5,
+              paddingVertical: 7,
+              paddingHorizontal: 10,
+              borderRadius: 10,
+            },
+          ]}
+        >
+          <Text
+            style={{
+              fontFamily: fonts.monoBold,
+              fontSize: 10,
+              color: colors.accentSoft,
+              letterSpacing: 0.5,
+            }}
+          >
+            🎞️ {captureFps === 8 ? '8 FPS · F5' : `${captureFps} FPS`}
+          </Text>
+        </Pressable>
+      </View>
 
       {/* EXP dial — frames remaining, counts down like a film counter */}
       {activeMode === 'roll' && activeRoll !== null && (
@@ -1346,6 +1594,14 @@ export default function CameraScreen() {
         </View>
       )}
 
+      {/* LomoKino Cranking & Developing Banners */}
+      <KinoBanners
+        isCranking={isCranking}
+        crankCount={crankCount}
+        captureFps={captureFps}
+        kinoDevelopingCount={kinoDevelopingCount}
+      />
+
       {/* Bottom row — flip · shutter · mint */}
       <View
         style={{
@@ -1371,31 +1627,103 @@ export default function CameraScreen() {
           <IconFlip size={20} color={colors.text} />
         </Pressable>
 
-        <Pressable
-          onPress={handleCapture}
-          disabled={isCapturing || !controlsReady}
-          style={{
-            width: 80,
-            height: 80,
-            borderRadius: 40,
-            borderWidth: 2,
-            borderColor: colors.accent,
-            alignItems: 'center',
-            justifyContent: 'center',
-            opacity: isCapturing || !controlsReady || rollIsFull || activeRoll?.developed ? 0.5 : 1,
-          }}
-        >
-          <View
+        <View style={{ alignItems: 'center' }}>
+          <Pressable
+            onPressIn={handleShutterPressIn}
+            onPressOut={handleShutterPressOut}
+            onPress={handleShutterPress}
+            disabled={isCapturing || !controlsReady}
             style={{
-              width: 64,
-              height: 64,
-              borderRadius: 32,
-              backgroundColor: colors.text,
-              borderWidth: 4,
-              borderColor: 'rgba(12,13,22,0.35)',
+              width: 82,
+              height: 82,
+              borderRadius: 41,
+              borderWidth: isCranking ? 3 : 2,
+              borderColor: isCranking ? '#f39c12' : colors.accent,
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: isCapturing || !controlsReady || rollIsFull || activeRoll?.developed ? 0.5 : 1,
+              transform: [{ scale: isCranking ? 1.08 : 1 }],
             }}
-          />
-        </Pressable>
+          >
+            {isCranking && (
+              <Animated.View
+                style={{
+                  position: 'absolute',
+                  width: 92,
+                  height: 92,
+                  borderRadius: 46,
+                  borderWidth: 2,
+                  borderColor: '#f39c12',
+                  borderStyle: 'dashed',
+                  transform: [
+                    {
+                      rotate: crankAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: ['0deg', '360deg'],
+                      }),
+                    },
+                  ],
+                }}
+              />
+            )}
+            <View
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: 32,
+                backgroundColor: isCranking ? '#d35400' : colors.text,
+                borderWidth: 4,
+                borderColor: 'rgba(12,13,22,0.35)',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {isCranking ? (
+                <Text style={{ fontFamily: fonts.monoBold, fontSize: 16, color: '#fff' }}>
+                  {crankCount}
+                </Text>
+              ) : null}
+            </View>
+          </Pressable>
+          {/* Shutter sub-label: shows current mode and speed, tapping cycles capture FPS */}
+          <Pressable
+            onPress={() => {
+              if (!isCranking) {
+                cycleCaptureFps()
+                Vibration.vibrate(25)
+              }
+            }}
+            hitSlop={12}
+            accessibilityRole="button"
+            accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
+          >
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 5,
+                marginTop: 6,
+                paddingHorizontal: 8,
+                paddingVertical: 3,
+                borderRadius: 6,
+                backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                borderWidth: 1,
+                borderColor: isCranking ? '#f39c12' : 'rgba(255, 255, 255, 0.16)',
+              }}
+            >
+              <Text
+                style={{
+                  fontFamily: fonts.mono,
+                  fontSize: 8,
+                  letterSpacing: tracking(0.12, 8),
+                  color: isCranking ? '#f39c12' : colors.textSoft,
+                }}
+              >
+                {isCranking ? 'CRANKING' : `HOLD FOR KINO · ${captureFps === 8 ? '8 FPS (F5)' : `${captureFps} FPS`}`}
+              </Text>
+            </View>
+          </Pressable>
+        </View>
 
         {/* Quick mode shows MINT; Roll mode shows DARKROOM / Gallery */}
         {activeMode === 'roll' ? (

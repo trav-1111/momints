@@ -32,17 +32,19 @@ export interface Photo {
   /** Verified developed-artifact metadata. Contains no image bytes. */
   artifact?: PhotoArtifact
   meta?: CaptureMeta
-  /** Local or permanent URI of the raw DNG negative if shot in RAW mode. */
-  rawNegativeUri?: string
-  rawNegativeBytes?: number
   // Roll membership, stamped at capture. Deliberately stored on the photo
   // rather than read from session.activeRoll.frameIds: completeRoll() nulls
   // the active roll, and screens that hid frames by subtracting that array
   // un-hid all of them the moment a roll finished minting.
+  /** Local or permanent URI of the raw DNG negative if shot in RAW mode. */
+  rawNegativeUri?: string
+  rawNegativeBytes?: number
   rollId?: string
   rollName?: string
   /** Stable 1-based position within a prepaid roll, retained across retries. */
   rollFrameNumber?: number
+  kinoId?: string
+  kinoIndex?: number
 }
 
 /** Roll a frame belongs to, passed at capture so membership is stamped atomically. */
@@ -60,6 +62,7 @@ interface PhotoStore {
     aspect?: AspectRatio,
     filmStockId?: string,
     artifact?: PhotoArtifact,
+    kino?: { id: string; index: number },
     rawNegativeUri?: string,
     rawNegativeBytes?: number,
   ) => string
@@ -79,7 +82,7 @@ interface PhotoStore {
 export const usePhotoStore = create<PhotoStore>((set, get) => ({
   photos: [],
 
-  addPhoto: (uri, roll, aspect, filmStockId, artifact, rawNegativeUri, rawNegativeBytes): string => {
+  addPhoto: (uri, roll, aspect, filmStockId, artifact, kino, rawNegativeUri, rawNegativeBytes): string => {
     const newPhoto: Photo = {
       id: uuidv4(),
       uri,
@@ -93,6 +96,8 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
       rollId: roll?.id,
       rollName: roll?.name,
       rollFrameNumber: roll?.frameNumber,
+      kinoId: kino?.id,
+      kinoIndex: kino?.index,
     }
     set((state) => {
       const photos = [...state.photos, newPhoto]
