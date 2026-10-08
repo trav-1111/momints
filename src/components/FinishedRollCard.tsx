@@ -1,7 +1,8 @@
-import { View, Text, Image } from 'react-native'
+import { View, Text } from 'react-native'
 import type { Photo } from '../store/photos'
 import { colors, fonts, tracking } from '../theme'
 import { IconCheck, IconFilm } from './icons'
+import { PrivatePhotoImage } from './PrivatePhotoImage'
 
 interface FinishedRollCardProps {
   name: string
@@ -72,9 +73,13 @@ export function FinishedRollCard({ name, frames }: FinishedRollCardProps) {
 
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         {shown.map((frame) => (
-          <Image
+          <PrivatePhotoImage
             key={frame.id}
-            source={{ uri: frame.uri }}
+            uri={frame.uri}
+            photoId={frame.id}
+            displayWidth={THUMB}
+            displayHeight={THUMB}
+            contentFit="cover"
             style={{ width: THUMB, height: THUMB, borderRadius: 6, backgroundColor: colors.bg }}
           />
         ))}

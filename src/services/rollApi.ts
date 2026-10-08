@@ -1,4 +1,12 @@
 import { ROLL_API_BASE } from '../config/rollApi'
+import { Buffer } from '@craftzdog/react-native-buffer'
+import {
+  bindStagedRollCapability,
+  createRollCapability,
+  getRollCapability,
+  hashRollCapability,
+  saveRollCapability,
+} from './rollCapability'
 
 /**
  * Typed client for the roll backend Worker. Mirrors the endpoints documented
@@ -85,6 +93,8 @@ export async function request<T>(path: string, init: RequestInit, timeoutMs: num
 export interface CreateRollBody {
   wallet: string
   size: 12 | 24
+  /** Immutable recipe identity selected before loading the roll. */
+  filmStockId: string
   /** User-editable vanity display name. */
   artist?: string
   /** Verified SKR handle, resolved app-side. Defaults to the wallet address. */
@@ -95,6 +105,8 @@ export interface CreateRollBody {
   feeSignature: string
   /** Which currency paid the fee. Defaults 'SOL'. See services/skrApi.ts. */
   payment?: 'SOL' | 'SKR'
+  /** Device-held 256-bit bearer capability; Worker persists only its hash. */
+  rollCapability: string
 }
 
 export interface CreateRollResponse {
@@ -110,6 +122,7 @@ export interface CreateRollResponse {
   status: 'OPEN'
   mintedCount: number
   fundingWarning: string | null
+  filmStockId: string
 }
 
 export function createWorkerRoll(body: CreateRollBody): Promise<CreateRollResponse> {
@@ -148,6 +161,19 @@ export interface MintFrameResponse {
   rollStatus: 'OPEN' | 'COMPLETE'
   mintedCount: number
   fundingWarning: string | null
+  mime: 'image/jpeg'
+  byteLength: number
+  width: number
+  height: number
+  imageHash: string
+}
+
+async function rollAuthorization(collectionAddress: string): Promise<Record<string, string>> {
+  const capability = await getRollCapability(collectionAddress)
+  if (!capability) {
+    throw new RollApiError(428, 'This roll is missing its device authorization and cannot be changed safely.')
+  }
+  return { Authorization: `Roll ${capability}` }
 }
 
 // Two calls for the same frame must never both be in flight at once: the
@@ -189,13 +215,17 @@ export function mintWorkerFrame(params: MintFrameParams): Promise<MintFrameRespo
   if (attributes?.length) form.append('attributes', JSON.stringify(attributes))
 
   // No explicit content-type: the runtime sets it with the multipart boundary.
-  const promise = request<MintFrameResponse>(
-    `/rolls/${collectionAddress}/frames`,
-    { method: 'POST', body: form },
-    FRAME_TIMEOUT_MS,
-  ).finally(() => {
-    inFlightFrameMints.delete(key)
-  })
+  const promise = rollAuthorization(collectionAddress)
+    .then((headers) =>
+      request<MintFrameResponse>(
+        `/rolls/${collectionAddress}/frames`,
+        { method: 'POST', headers, body: form },
+        FRAME_TIMEOUT_MS,
+      ),
+    )
+    .finally(() => {
+      inFlightFrameMints.delete(key)
+    })
   inFlightFrameMints.set(key, promise)
   return promise
 }
@@ -217,7 +247,52 @@ export async function getOpenWorkerRoll(wallet: string): Promise<OpenRollSummary
     { method: 'GET' },
     READ_TIMEOUT_MS,
   )
+  if (openRoll) await bindStagedRollCapability(wallet, openRoll.collectionAddress)
   return openRoll
+}
+
+function legacyClaimMessage(input: {
+  collectionAddress: string
+  wallet: string
+  capabilityHash: string
+  issuedAt: string
+}): string {
+  return [
+    'Momints roll authorization v1',
+    `Collection: ${input.collectionAddress}`,
+    `Wallet: ${input.wallet}`,
+    `Capability SHA-256: ${input.capabilityHash}`,
+    `Issued at: ${input.issuedAt}`,
+  ].join('\n')
+}
+
+/** One-time wallet-signed capability recovery for a pre-contract open roll. */
+export async function ensureWorkerRollAuthorization(
+  collectionAddress: string,
+  wallet: string,
+  signMessage: (message: Uint8Array) => Promise<Uint8Array>,
+): Promise<void> {
+  if (await getRollCapability(collectionAddress)) return
+  const rollCapability = createRollCapability()
+  await saveRollCapability(collectionAddress, rollCapability)
+  const issuedAt = new Date().toISOString()
+  const capabilityHash = hashRollCapability(rollCapability)
+  const message = legacyClaimMessage({ collectionAddress, wallet, capabilityHash, issuedAt })
+  const signature = await signMessage(new TextEncoder().encode(message))
+  await request(
+    `/rolls/${collectionAddress}/authorize`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        wallet,
+        rollCapability,
+        issuedAt,
+        signature: Buffer.from(signature).toString('base64'),
+      }),
+    },
+    READ_TIMEOUT_MS,
+  )
 }
 
 export interface CompleteRollResponse {
@@ -235,8 +310,13 @@ export interface CompleteRollResponse {
  * discarded roll — or one with a frame that never minted — needs this to avoid
  * blocking every future roll. Idempotent.
  */
-export function completeWorkerRoll(collectionAddress: string): Promise<CompleteRollResponse> {
-  return request<CompleteRollResponse>(`/rolls/${collectionAddress}/complete`, { method: 'POST' }, READ_TIMEOUT_MS)
+export async function completeWorkerRoll(collectionAddress: string): Promise<CompleteRollResponse> {
+  const headers = await rollAuthorization(collectionAddress)
+  return request<CompleteRollResponse>(
+    `/rolls/${collectionAddress}/complete`,
+    { method: 'POST', headers },
+    READ_TIMEOUT_MS,
+  )
 }
 
 export interface WorkerFrameSummary {
@@ -246,6 +326,11 @@ export interface WorkerFrameSummary {
   imageUri: string | null
   metadataUri: string | null
   signature: string | null
+  mime: string | null
+  byteLength: number | null
+  width: number | null
+  height: number | null
+  imageHash: string | null
   updatedAt: string
 }
 
@@ -256,11 +341,14 @@ export interface WorkerRollDetail extends OpenRollSummary {
   coverUri: string
   metadataUri: string
   createdAt: string
+  /** Worker added the verified developed marker before revoking its delegate. */
+  developedOnChain: boolean
   frames: WorkerFrameSummary[]
 }
 
-export function getWorkerRoll(collectionAddress: string): Promise<WorkerRollDetail> {
-  return request<WorkerRollDetail>(`/rolls/${collectionAddress}`, { method: 'GET' }, READ_TIMEOUT_MS)
+export async function getWorkerRoll(collectionAddress: string): Promise<WorkerRollDetail> {
+  const headers = await rollAuthorization(collectionAddress)
+  return request<WorkerRollDetail>(`/rolls/${collectionAddress}`, { method: 'GET', headers }, READ_TIMEOUT_MS)
 }
 
 // ─── Fees ─────────────────────────────────────────────────────────────────────

@@ -93,7 +93,12 @@ export interface HealthSnapshot {
   generatedAt: string
   crons: {
     /** fee_cache's own attempt bookkeeping — see fees/cache.ts's recordSuccess/recordFailedAttempt doc comments. */
-    feeRecompute: { lastAttemptAt: string | null; lastAttemptOk: boolean; lastAttemptNote: string | null; computedAt: string }
+    feeRecompute: {
+      lastAttemptAt: string | null
+      lastAttemptOk: boolean
+      lastAttemptNote: string | null
+      computedAt: string
+    }
     /**
      * ops_alert_state.updated_at is written on EVERY run of the 6h cron
      * (treasury monitor + the quick-mint/roll-handoff sweeps run in the same
@@ -135,7 +140,11 @@ export async function getHealthSnapshot(deps: HealthDeps): Promise<HealthSnapsho
     throw new ConfigError('fee_cache has no row — re-run migrations (0007_fee_cache.sql seeds it).')
   }
 
-  const dead = sumWhere(quickCounts, (c) => c.status === 'DEAD', (c) => c.count)
+  const dead = sumWhere(
+    quickCounts,
+    (c) => c.status === 'DEAD',
+    (c) => c.count,
+  )
 
   return {
     generatedAt: new Date().toISOString(),
@@ -213,17 +222,53 @@ export async function getMetricsSnapshot(deps: MetricsDeps, window: MetricsWindo
     db.getRollFramesPerDay(mintsOverTimeSince),
   ])
 
-  const quickTotal = sumWhere(quickCounts, (c) => c.status === 'FINALIZED', (c) => c.count)
-  const quickSolCount = sumWhere(quickCounts, (c) => c.status === 'FINALIZED' && c.feeCurrency === 'SOL', (c) => c.count)
-  const quickSkrCount = sumWhere(quickCounts, (c) => c.status === 'FINALIZED' && c.feeCurrency === 'SKR', (c) => c.count)
+  const quickTotal = sumWhere(
+    quickCounts,
+    (c) => c.status === 'FINALIZED',
+    (c) => c.count,
+  )
+  const quickSolCount = sumWhere(
+    quickCounts,
+    (c) => c.status === 'FINALIZED' && c.feeCurrency === 'SOL',
+    (c) => c.count,
+  )
+  const quickSkrCount = sumWhere(
+    quickCounts,
+    (c) => c.status === 'FINALIZED' && c.feeCurrency === 'SKR',
+    (c) => c.count,
+  )
 
-  const rollsCreated = sumWhere(rollCounts, () => true, (c) => c.count)
-  const rollFramesTotal = sumWhere(rollCounts, () => true, (c) => c.framesMinted)
-  const rollSolCount = sumWhere(rollCounts, (c) => c.feeCurrency === 'SOL', (c) => c.count)
-  const rollSkrCount = sumWhere(rollCounts, (c) => c.feeCurrency === 'SKR', (c) => c.count)
+  const rollsCreated = sumWhere(
+    rollCounts,
+    () => true,
+    (c) => c.count,
+  )
+  const rollFramesTotal = sumWhere(
+    rollCounts,
+    () => true,
+    (c) => c.framesMinted,
+  )
+  const rollSolCount = sumWhere(
+    rollCounts,
+    (c) => c.feeCurrency === 'SOL',
+    (c) => c.count,
+  )
+  const rollSkrCount = sumWhere(
+    rollCounts,
+    (c) => c.feeCurrency === 'SKR',
+    (c) => c.count,
+  )
 
-  const solLamportsTotal = sumWhere(solFees, () => true, (f) => f.totalLamports)
-  const solCountTotal = sumWhere(solFees, () => true, (f) => f.count)
+  const solLamportsTotal = sumWhere(
+    solFees,
+    () => true,
+    (f) => f.totalLamports,
+  )
+  const solCountTotal = sumWhere(
+    solFees,
+    () => true,
+    (f) => f.count,
+  )
   const skrAtomicTotal = skrFees.quickTotalAtomic + skrFees.rollTotalAtomic
   const skrCountTotal = skrFees.quickCount + skrFees.rollCount
 

@@ -1,5 +1,7 @@
 # Momints — Irys-in-Workers spikes (THROWAWAY)
 
+Historical architecture evidence, retained for hackathon provenance. These results and endpoints are not current setup instructions: production uses Turbo, and the current per-image/geometry policy is in the [production checklist](../../ROLL-FRAME-PRODUCTION-CHECKLIST.md). Do not deploy or invoke these experiments as part of reviewer setup.
+
 Disposable proof-of-concept code, not production, not wired into the Momints
 app or any real backend.
 
@@ -22,7 +24,7 @@ See `RESULT2.md` for the recorded outcome.
 `/spike-large` tests exactly **one** payload per HTTP call — either a real
 uploaded binary body, or a self-generated buffer via `?sizeMB=N`. A single
 request that looped over 1/3/5/6 MB internally would lose every earlier
-*passing* result if a larger size crashed the isolate outright (Workers can
+_passing_ result if a larger size crashed the isolate outright (Workers can
 be killed mid-request on a hard memory/CPU limit, with no chance for a
 try/catch to run or a response to be sent). Testing sizes independently means
 a crash at 5 MB doesn't erase the 1 MB/3 MB passes that already returned
@@ -56,7 +58,7 @@ same provider/key family the Momints app itself already uses for
 mainnet) before running Part A for real, or every fund attempt fails outright
 rather than just being slow.
 
-### Funding latency — expect the *first* request at a new size to time out
+### Funding latency — expect the _first_ request at a new size to time out
 
 Irys tracks a separate, pre-funded balance per wallet on its own bundler
 node — it does **not** auto-fund from the wallet's on-chain SOL during
@@ -72,15 +74,18 @@ time out client-side — that's not a failure, just don't wait for it), then
 again to get the real pass/fail result.
 
 Then, for each size, either let the Worker self-generate the payload:
+
 ```
 curl -X POST "https://<your-worker>.workers.dev/spike-large?sizeMB=1"
 curl -X POST "https://<your-worker>.workers.dev/spike-large?sizeMB=3"
 curl -X POST "https://<your-worker>.workers.dev/spike-large?sizeMB=5"
 curl -X POST "https://<your-worker>.workers.dev/spike-large?sizeMB=6"
 ```
+
 or send a real binary body (more representative — exercises the actual
 request-body-ingestion layer, which self-generation on the Worker side
 bypasses entirely):
+
 ```
 head -c $((1*1024*1024)) /dev/urandom > /tmp/1mb.bin
 curl -X POST --data-binary @/tmp/1mb.bin "https://<your-worker>.workers.dev/spike-large"
@@ -88,6 +93,7 @@ curl -X POST --data-binary @/tmp/1mb.bin "https://<your-worker>.workers.dev/spik
 ```
 
 Each call returns:
+
 ```
 {
   "sizeMB": 5, "actualBytes": 5242880, "source": "uploaded-body" | "synthetic",
@@ -97,6 +103,7 @@ Each call returns:
   "failureMode": "request-body-limit" | "memory-limit" | "cpu-limit" | "irys-or-network" | "unknown" | null
 }
 ```
+
 `failureMode` is a best-effort classification from the error text/HTTP
 status — read the raw `error` alongside it, don't trust the label blindly.
 If a call never returns a JSON body at all (connection reset, timeout, 5xx
@@ -129,6 +136,7 @@ npx wrangler deploy --dry-run --outdir=dist-solana-kit     -c wrangler.solana-ki
 npx wrangler deploy --dry-run --outdir=dist-image-photon   -c wrangler.image-photon.toml
 npx wrangler deploy --dry-run --outdir=dist-combined       -c wrangler.combined.toml
 ```
+
 Each prints `Total Upload: <raw> KiB / gzip: <gzip> KiB` — that's the number
 that matters, compared against Cloudflare's Workers compressed-size limit
 (3 MB Free / 10 MB Paid, as of this writing).

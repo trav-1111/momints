@@ -25,20 +25,32 @@ import {
   PinchGestureHandlerEventPayload,
 } from 'react-native-gesture-handler'
 import { LinearGradient } from 'expo-linear-gradient'
-import { Paths, File, Directory } from 'expo-file-system'
 import { usePhotoStore } from '../store/photos'
 import { captureMetadata } from '../services/captureMetadata'
-import { applyFilm } from '../services/filmProcessor'
+import { adoptTemporaryCapture, deleteCapture } from '../services/imagePrivacy'
+import { persistRollFrame, updateStoredRollFrameMeta } from '../services/rollVault'
+import { processFilm } from '../services/filmProcessor'
+import { verifyCompressedFilmOutput } from '../services/filmOutput'
 import { cropToAspect } from '../services/cropImage'
 import { ensureUnderCeiling } from '../services/compressImage'
+import * as Haptics from 'expo-haptics'
 import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
+import { CompositionGridOverlay, type GridMode } from '../components/CompositionGridOverlay'
+import { FocusReticle } from '../components/FocusReticle'
+import ManualControls from '../components/ManualControls'
+import { useManualCameraState } from '../hooks/useManualCameraState'
+import { useCameraReadiness } from '../hooks/useCameraReadiness'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { useSessionStore } from '../store/session'
 import type { AspectRatio } from '../store/session'
 import { useLocationSettingsStore } from '../store/locationSettings'
 import type { LocationGranularity } from '../store/locationSettings'
+import { useContactSheetDiscovery } from '../store/contactSheetDiscovery'
+import { PERMANENT_IMAGE_MAX_LONG_EDGE, PERMANENT_IMAGE_MAX_PIXELS } from '../config/imageArtifact'
 import { colors, fonts, tracking } from '../theme'
+import { DEFAULT_COLOR_FILM_ID, ensureFilmStockRecipe, isFilmStockDownloaded } from '../services/filmstocks'
+import { useFilmStockStore } from '../store/filmstocks'
 import {
   IconBolt,
   IconBoltOff,
@@ -46,6 +58,8 @@ import {
   IconCheck,
   IconFilm,
   IconFlip,
+  IconGallery,
+  IconGrid,
   IconMint,
   IconPin,
 } from '../components/icons'
@@ -56,6 +70,13 @@ const QUICK_ASPECTS: { value: AspectRatio; label: string }[] = [
   { value: '4:3', label: '4:3' },
   { value: '16:9', label: '16:9' },
 ]
+
+// Tier 2 (manual ISO/shutter/focus/white balance via Camera2Interop) is
+// additive on top of Tier 1 (EV bias/tap-focus/zoom, all vision-camera-native
+// and proven). Flip to false to hide the manual-controls panel entirely
+// without touching Tier 1 — the hackathon-cutoff fallback if Tier 2 isn't
+// solid in time.
+const TIER2_ENABLED = true
 
 const LOCATION_OPTIONS: { value: LocationGranularity; label: string; description: string }[] = [
   { value: 'off', label: 'Off', description: 'No location is captured' },
@@ -84,36 +105,74 @@ export default function CameraScreen() {
   const router = useRouter()
   const { account, connect, disconnect } = useMobileWallet()
   const { hasPermission, requestPermission } = useCameraPermission()
-  const cameraRef = useRef<Camera>(null)
 
   const [flash, setFlash] = useState<'off' | 'on'>('off')
+  const [torchActive, setTorchActive] = useState(false)
   const [isCapturing, setIsCapturing] = useState(false)
   const [cameraPosition, setCameraPosition] = useState<'back' | 'front'>('back')
   const [zoom, setZoom] = useState(1)
   const baseZoomRef = useRef(1)
   const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null)
+  const [exposurePoint, setExposurePoint] = useState<{ x: number; y: number } | null>(null)
+  const [isSeparated, setIsSeparated] = useState(false)
+  const [hasPlacedAe, setHasPlacedAe] = useState(false)
+  const [isHoldingFocus, setIsHoldingFocus] = useState(false)
+  const holdProgress = useRef(new Animated.Value(0)).current
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const holdAnimRef = useRef<Animated.CompositeAnimation | null>(null)
+  const isLockedRef = useRef(false)
+  const fadeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const clearFadeTimer = useCallback(() => {
+    if (fadeTimeoutRef.current) {
+      clearTimeout(fadeTimeoutRef.current)
+      fadeTimeoutRef.current = null
+    }
+  }, [])
   const focusOpacity = useRef(new Animated.Value(0)).current
   const shutterFlashAnim = useRef(new Animated.Value(0)).current
+  const [gridMode, setGridMode] = useState<GridMode>('off')
+
+  const toggleGrid = useCallback(() => {
+    Haptics.selectionAsync()
+    setGridMode((prev) => {
+      if (prev === 'off') return '3x3'
+      if (prev === '3x3') return 'cross'
+      return 'off'
+    })
+  }, [])
+
   const [walletMenuVisible, setWalletMenuVisible] = useState(false)
   const [locationMenuVisible, setLocationMenuVisible] = useState(false)
+  const showContactSheetNudge = useContactSheetDiscovery((state) => state.hydrated && !state.acknowledged)
+  const acknowledgeContactSheet = useContactSheetDiscovery((state) => state.acknowledge)
+
+  // Pro mode — Tier 1 (EV bias, metering) is always available here; Tier 2
+  // (manual ISO/shutter/focus/WB) mounts underneath, gated by TIER2_ENABLED.
+  const [proOpen, setProOpen] = useState(false)
+  const [ev, setEv] = useState(0)
 
   // Release the camera when the screen loses focus or the app is backgrounded
   // (e.g. wallet handoff) — Android throws camera-is-restricted otherwise
   const isFocused = useIsFocused()
   const [appActive, setAppActive] = useState(AppState.currentState === 'active')
-  useEffect(() => {
-    const sub = AppState.addEventListener('change', (s) => setAppActive(s === 'active'))
-    return () => sub.remove()
-  }, [])
 
   const photos = usePhotoStore((state) => state.photos)
   const addPhoto = usePhotoStore((state) => state.addPhoto)
   const setAction = usePhotoStore((state) => state.setAction)
   const setPhotoMeta = usePhotoStore((state) => state.setPhotoMeta)
   const updatePhotoUri = usePhotoStore((state) => state.updatePhotoUri)
+  const removePhoto = usePhotoStore((state) => state.removePhoto)
 
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
+  useEffect(() => {
+    if (!account || !walletAddress) return
+    if (__DEV__)
+      console.log('[wallet] authorization completed', {
+        address: walletAddress.slice(0, 4) + '...' + walletAddress.slice(-4),
+        label: account.label ? '[present]' : '[absent]',
+      })
+  }, [account, walletAddress])
 
   const locationGranularity = useLocationSettingsStore((s) => s.granularity)
   const setLocationGranularity = useLocationSettingsStore((s) => s.setGranularity)
@@ -127,6 +186,22 @@ export default function CameraScreen() {
 
   // The roll the camera shoots into — only relevant while in roll mode.
   const activeRoll = activeMode === 'roll' ? rollInProgress : null
+  const quickFilmStockId = useFilmStockStore((state) => state.quickFilmStockId)
+  const filmCatalogue = useFilmStockStore((state) => state.catalogue)
+  const quickFilmStock = filmCatalogue.find((stock) => stock.filmStockId === quickFilmStockId)
+  const effectiveFilm = useMemo(
+    () =>
+      activeMode === 'roll' && activeRoll
+        ? activeRoll.film
+        : {
+            mode: quickFilmStock?.baseMode ?? ('color' as const),
+            filmStockId: quickFilmStock?.filmStockId ?? DEFAULT_COLOR_FILM_ID,
+          },
+    [activeMode, activeRoll, quickFilmStock],
+  )
+  const effectiveFilmName =
+    filmCatalogue.find((stock) => stock.filmStockId === effectiveFilm.filmStockId)?.displayName ??
+    (effectiveFilm.mode === 'bw' ? 'B&W' : 'Color')
 
   // Quick mode picks aspect live on the camera; roll mode uses the roll's fixed aspect.
   const [quickAspect, setQuickAspect] = useState<AspectRatio>('full')
@@ -145,18 +220,79 @@ export default function CameraScreen() {
   const quickPhotos = useMemo(() => photos.filter((p) => !p.rollId), [photos])
   // Already-minted photos are terminal — they shouldn't inflate the "needs a
   // mint decision" badge.
-  const quickMintBadgeCount = useMemo(
-    () => quickPhotos.filter((p) => p.action !== 'minted').length,
-    [quickPhotos],
-  )
+  const quickMintBadgeCount = useMemo(() => quickPhotos.filter((p) => p.action !== 'minted').length, [quickPhotos])
 
   const frontDevice = useCameraDevice('front')
   const backDevice = useCameraDevice('back')
   const activeDevice = cameraPosition === 'front' ? frontDevice : backDevice
+  const captureFormat = useMemo(() => {
+    if (!activeDevice) return undefined
+    return [...activeDevice.formats]
+      .filter(
+        (format) =>
+          format.photoWidth * format.photoHeight <= PERMANENT_IMAGE_MAX_PIXELS &&
+          Math.max(format.photoWidth, format.photoHeight) <= PERMANENT_IMAGE_MAX_LONG_EDGE,
+      )
+      .sort((left, right) => right.photoWidth * right.photoHeight - left.photoWidth * left.photoHeight)[0]
+  }, [activeDevice])
 
   const supportsFlash = activeDevice?.hasFlash && cameraPosition === 'back'
+  const supportsTorch = activeDevice?.hasTorch && cameraPosition === 'back'
   const minZoom = activeDevice?.minZoom ?? 1
   const maxZoom = Math.min(activeDevice?.maxZoom ?? 5, 10)
+  const minExposure = activeDevice?.minExposure ?? -2
+  const maxExposure = activeDevice?.maxExposure ?? 2
+  // vision-camera reports minFocusDistance in cm (0 = unknown/fixed-focus);
+  // Camera2's LENS_FOCUS_DISTANCE is diopters (1/meters) — 100/cm converts.
+  // MANUAL_FOCUS_HEADROOM_DIOPTERS: LENS_INFO_MINIMUM_FOCUS_DISTANCE is
+  // documented by Android as a "guaranteed sharp" floor, not a hard
+  // mechanical limit — the lens can be racked past it, sharp result not
+  // guaranteed. On this Seeker's main camera (reported min: 2 diopters /
+  // 50cm) autofocus visibly focuses much closer than that, which the old
+  // manual range couldn't reach. Verified on-device by manually pushing
+  // LENS_FOCUS_DISTANCE well past the declared max and confirming sharp,
+  // readable macro detail (mm ruler markings in focus) all the way past
+  // 20 diopters (~5cm) — so this headroom is empirical, not a spec value,
+  // and is specific to this camera module.
+  const MANUAL_FOCUS_HEADROOM_DIOPTERS = 20
+  const maxFocusDiopters =
+    activeDevice && activeDevice.minFocusDistance > 0
+      ? 100 / activeDevice.minFocusDistance + MANUAL_FOCUS_HEADROOM_DIOPTERS
+      : null
+
+  const cameraReadiness = useCameraReadiness(activeDevice?.id ?? null, isFocused && appActive)
+  const { cameraRef, invalidate: invalidateCamera } = cameraReadiness
+  const manualCamera = useManualCameraState(
+    cameraReadiness.session,
+    activeDevice?.id ?? null,
+    maxFocusDiopters,
+    cameraReadiness.isCurrent,
+  )
+  const { canCapture, controlsReady, controlsError, retry: retryCameraControls } = manualCamera
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') invalidateCamera()
+      setAppActive(state === 'active')
+    })
+    return () => sub.remove()
+  }, [invalidateCamera])
+  useEffect(() => {
+    if (!controlsError) return
+    console.error('Camera settings could not be confirmed:', controlsError)
+    Alert.alert(
+      'Camera controls unavailable',
+      'Capture is paused because your settings could not be confirmed. Please retry.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Retry', onPress: retryCameraControls },
+      ],
+    )
+  }, [controlsError, retryCameraControls])
+  useEffect(() => {
+    if (!cameraReadiness.error) return
+    console.error('Camera session failed:', cameraReadiness.error)
+    Alert.alert('Camera unavailable', 'The camera could not start. Return to the camera screen to try again.')
+  }, [cameraReadiness.error])
 
   useEffect(() => {
     if (!hasPermission) {
@@ -170,7 +306,21 @@ export default function CameraScreen() {
   }, [cameraPosition])
 
   const handleCapture = useCallback(async () => {
-    if (!cameraRef.current || isCapturing) return
+    if (!cameraRef.current || isCapturing || !canCapture()) return
+
+    if (!isFilmStockDownloaded(effectiveFilm.filmStockId)) {
+      const stock = filmCatalogue.find((item) => item.filmStockId === effectiveFilm.filmStockId)
+      if (!stock) {
+        Alert.alert('Film recipe missing', 'Reconnect and refresh the Film Shelf before shooting this film.')
+        return
+      }
+      try {
+        await ensureFilmStockRecipe(stock)
+      } catch {
+        Alert.alert('Connect to download', `${stock.displayName} must be downloaded before this shot can be processed.`)
+        return
+      }
+    }
 
     // A fully shot roll is closed to further frames — the only way on is to
     // mint it (or discard it from the gallery).
@@ -182,10 +332,32 @@ export default function CameraScreen() {
       return
     }
 
+    // Recipe downloads can take long enough for a lens/focus/app transition.
+    if (!canCapture()) return
     setIsCapturing(true)
+    // takePhoto's own flash:'on' (CameraX's AE-precapture-driven still
+    // flash) silently doesn't fire on this hardware — confirmed via EXIF
+    // (Flash tag came back "did not fire") and matches a long-standing,
+    // still-unresolved class of react-native-vision-camera/CameraX bugs on
+    // Android (mrousavy/react-native-vision-camera#2663, #2464). Torch is a
+    // much more primitive Camera2 mechanism (a plain repeating-request flag,
+    // no AE handshake) and reliably lights up, so when the user has flash
+    // toggled on we drive the torch for the capture instead and request
+    // flash:'off' from takePhoto so it doesn't also try its broken path.
+    const usingTorchForFlash = supportsFlash && flash === 'on' && supportsTorch
+    if (usingTorchForFlash) {
+      setTorchActive(true)
+      // Give the LED time to actually turn on and the preview to re-expose
+      // under it before the still capture reads the sensor.
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    }
+    let captureUri: string | null = null
+    let createdPhotoId: string | null = null
     try {
+      // Also recheck after the torch delay. Never shoot with unconfirmed controls.
+      if (!cameraRef.current || !canCapture()) return
       const photo: PhotoFile = await cameraRef.current.takePhoto({
-        flash: supportsFlash ? flash : 'off',
+        flash: usingTorchForFlash ? 'off' : supportsFlash ? flash : 'off',
         enableShutterSound: true,
       })
 
@@ -198,62 +370,55 @@ export default function CameraScreen() {
         useNativeDriver: true,
       }).start()
 
-      const photosDir = new Directory(Paths.document, 'photos')
-      if (!photosDir.exists) {
-        photosDir.create()
-      }
+      captureUri = adoptTemporaryCapture(`file://${photo.path}`)
 
-      const fileName = `photo_${Date.now()}.jpg`
-      const sourceFile = new File(`file://${photo.path}`)
-      const destFile = new File(photosDir, fileName)
-
-      sourceFile.move(destFile)
-
-      // Stamp roll membership at creation so it outlives the session's
-      // activeRoll — completeRoll() clears that, and frames must stay grouped
-      // as a roll (and out of the quick-photo flows) forever after.
-      const photoId = addPhoto(
-        destFile.uri,
-        activeMode === 'roll' && activeRoll !== null
-          ? { id: activeRoll.id, name: activeRoll.name }
-          : undefined,
-      )
-
-      // Post-capture processing: crop to the aspect ratio first, then apply the
-      // roll's film emulation (B&W), then fit quick shots under the upload
-      // ceiling. Each no-ops where not needed and falls back to the original on
-      // failure, so a capture is never lost.
-      let processedUri = destFile.uri
+      // Originals are session-only. No photo enters the store/queue until the
+      // selected immutable package has rendered and its output is verified.
       if (effectiveAspect !== 'full') {
-        processedUri = await cropToAspect(processedUri, effectiveAspect)
+        captureUri = await cropToAspect(captureUri, effectiveAspect)
       }
-      if (activeMode === 'roll' && activeRoll !== null && activeRoll.film.mode !== 'color') {
-        processedUri = await applyFilm(processedUri, activeRoll.film)
-      }
-      // Quick shots only. Roll frames have no server-side size ceiling, so they
-      // keep full capture quality. This is the same predicate addPhoto uses to
-      // stamp rollId above, which is exactly what the gallery filters on to
-      // decide what mints through the quick path — so the two cannot disagree.
-      //
-      // Must come after applyFilm: film re-encodes at quality 95 and would
-      // otherwise be free to push an already-fitted image back over.
-      if (activeMode !== 'roll' || activeRoll === null) {
-        processedUri = await ensureUnderCeiling(processedUri)
-      }
-      if (processedUri !== destFile.uri) updatePhotoUri(photoId, processedUri)
+      let receipt = await processFilm(captureUri, effectiveFilm)
+      captureUri = receipt.outputUri
+      // Quick Shots and prepaid frames share one permanent artifact contract.
+      // Fit after film rendering, then bind the exact encoded bytes into the
+      // receipt before store/vault registration or exposure advancement.
+      captureUri = await ensureUnderCeiling(captureUri)
+      receipt = await verifyCompressedFilmOutput(receipt, captureUri)
+      const photoId = addPhoto(
+        receipt.outputUri,
+        activeMode === 'roll' && activeRoll !== null
+          ? { id: activeRoll.id, name: activeRoll.name, frameNumber: activeRoll.frameIds.length + 1 }
+          : undefined,
+        effectiveAspect,
+        receipt.filmStockId,
+        {
+          mime: receipt.mime,
+          byteLength: receipt.byteLength,
+          width: receipt.width,
+          height: receipt.height,
+          imageHash: receipt.outputSha256,
+          renderer: receipt.renderer,
+          recipeSha256: receipt.recipeSha256,
+          lutSha256: receipt.lutSha256,
+        },
+      )
+      createdPhotoId = photoId
 
       // Best-effort location — fire-and-forget, never blocks capture. 'off'
       // short-circuits inside captureMetadata before touching GPS at all.
-      captureMetadata(locationGranularity)
-        .then((meta) => {
-          if (meta.location) setPhotoMeta(photoId, meta)
-        })
-        .catch(() => {})
-
       // In roll mode: register frame and auto-mark for minting
       if (activeMode === 'roll' && activeRoll !== null) {
-        addFrameToRoll(photoId)
         setAction(photoId, 'mint')
+        const storedPhoto = usePhotoStore.getState().photos.find((candidate) => candidate.id === photoId)
+        if (!storedPhoto) throw new Error('The captured roll frame could not be registered.')
+
+        // Commit the encrypted durable copy before advancing the roll counter.
+        // A crash between these operations remains recoverable from the vault
+        // manifest; the opposite order could lose a prepaid exposure.
+        const vaultUri = await persistRollFrame(storedPhoto, activeRoll.frameIds.length + 1)
+        updatePhotoUri(photoId, vaultUri)
+        captureUri = null
+        addFrameToRoll(photoId)
 
         // That capture finished the roll. A roll is always shot to the end, so
         // it develops itself here — there is no manual develop action — and
@@ -266,10 +431,26 @@ export default function CameraScreen() {
           ])
         }
       }
+
+      captureMetadata(locationGranularity)
+        .then(async (meta) => {
+          if (!meta.location) return
+          setPhotoMeta(photoId, meta)
+          if (activeMode === 'roll' && activeRoll !== null) {
+            await updateStoredRollFrameMeta(activeRoll.id, photoId, meta)
+          }
+        })
+        .catch(() => {})
     } catch (error) {
+      deleteCapture(captureUri)
+      if (createdPhotoId) removePhoto(createdPhotoId)
       console.error('Failed to capture photo:', error)
-      Alert.alert('Error', 'Failed to capture photo. Please try again.')
+      Alert.alert(
+        'Photo not added',
+        'Capture or film processing could not be verified. No frame was queued. Please try again.',
+      )
     } finally {
+      if (usingTorchForFlash) setTorchActive(false)
       setIsCapturing(false)
     }
   }, [
@@ -277,18 +458,24 @@ export default function CameraScreen() {
     isCapturing,
     addPhoto,
     supportsFlash,
+    supportsTorch,
     activeMode,
     activeRoll,
     addFrameToRoll,
     setAction,
     setPhotoMeta,
     updatePhotoUri,
+    removePhoto,
     effectiveAspect,
     shutterFlashAnim,
     rollIsFull,
     developRoll,
     mintRoll,
     locationGranularity,
+    effectiveFilm,
+    filmCatalogue,
+    canCapture,
+    cameraRef,
   ])
 
   const toggleFlash = useCallback(() => {
@@ -297,38 +484,223 @@ export default function CameraScreen() {
   }, [supportsFlash])
 
   const toggleCamera = useCallback(() => {
+    invalidateCamera()
     setCameraPosition((prev) => (prev === 'back' ? 'front' : 'back'))
     if (flash === 'on') {
       setFlash('off')
     }
-  }, [flash])
+  }, [flash, invalidateCamera])
 
-  const handleFocus = useCallback(
-    async (event: GestureResponderEvent) => {
-      if (!cameraRef.current || !activeDevice?.supportsFocus) return
+  // Manual ISO+shutter together (fullyManual, i.e. AE_MODE_OFF) dominates the
+  // visual result — leaving EV bias "active" underneath it is a confusing
+  // extra dial with no visible effect, so zero it out the moment both go
+  // manual. EV bias and metering both still function during a single-axis
+  // priority mode (ISO-priority or shutter-priority), since AE_MODE stays ON
+  // in those states — only disabled here for the fully-manual case.
+  useEffect(() => {
+    if (manualCamera.fullyManual) setEv(0)
+  }, [manualCamera.fullyManual])
 
-      const { locationX, locationY } = event.nativeEvent
+  useEffect(() => {
+    return () => {
+      clearFadeTimer()
+      if (holdTimerRef.current) {
+        clearTimeout(holdTimerRef.current)
+      }
+    }
+  }, [clearFadeTimer])
 
-      setFocusPoint({ x: locationX, y: locationY })
+  // Viewfinder Touch & Reticle Handlers
+  const handleViewfinderPressIn = useCallback(
+    (event: GestureResponderEvent) => {
+      if (manualCamera.lockMode !== 'none' || isSeparated) return
 
+      const touchX = typeof event.nativeEvent.pageX === 'number' ? event.nativeEvent.pageX : event.nativeEvent.locationX
+      const touchY = typeof event.nativeEvent.pageY === 'number' ? event.nativeEvent.pageY : event.nativeEvent.locationY
+      clearFadeTimer()
+      setFocusPoint({ x: touchX, y: touchY })
+      setExposurePoint({ x: touchX, y: touchY })
       focusOpacity.setValue(1)
-      Animated.sequence([
-        Animated.delay(500),
+      holdProgress.setValue(0)
+      setIsHoldingFocus(true)
+      isLockedRef.current = false
+
+      holdAnimRef.current = Animated.timing(holdProgress, {
+        toValue: 1,
+        duration: 1200,
+        useNativeDriver: false,
+      })
+      holdAnimRef.current.start()
+
+      holdTimerRef.current = setTimeout(() => {
+        isLockedRef.current = true
+        setIsHoldingFocus(false)
+        manualCamera.lock(
+          'AF/AE',
+          { x: touchX / screenW, y: touchY / screenH },
+          { x: touchX / screenW, y: touchY / screenH },
+        )
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+        if (cameraRef.current && activeDevice?.supportsFocus) {
+          cameraRef.current.focus({ x: touchX, y: touchY }).catch(() => {})
+        }
+      }, 1200)
+    },
+    [manualCamera, isSeparated, clearFadeTimer, focusOpacity, holdProgress, screenW, screenH, activeDevice, cameraRef],
+  )
+
+  const handleViewfinderPressOut = useCallback(() => {
+    if (holdTimerRef.current) {
+      clearTimeout(holdTimerRef.current)
+      holdTimerRef.current = null
+    }
+    if (holdAnimRef.current) {
+      holdAnimRef.current.stop()
+    }
+    holdProgress.setValue(0)
+    setIsHoldingFocus(false)
+  }, [holdProgress])
+
+  const handleViewfinderPress = useCallback(
+    async (event: GestureResponderEvent) => {
+      if (isLockedRef.current) {
+        isLockedRef.current = false
+        return
+      }
+
+      const touchX = typeof event.nativeEvent.pageX === 'number' ? event.nativeEvent.pageX : event.nativeEvent.locationX
+      const touchY = typeof event.nativeEvent.pageY === 'number' ? event.nativeEvent.pageY : event.nativeEvent.locationY
+
+      if (isSeparated) {
+        const normX = Math.max(0, Math.min(1, touchX / screenW))
+        const normY = Math.max(0, Math.min(1, touchY / screenH))
+        setExposurePoint({ x: touchX, y: touchY })
+        manualCamera.setExposurePoint({ x: normX, y: normY })
+        setHasPlacedAe(true)
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
+        clearFadeTimer()
+        focusOpacity.setValue(1)
+        return
+      }
+
+      if (manualCamera.lockMode !== 'none') {
+        manualCamera.unlock()
+        setIsSeparated(false)
+        setHasPlacedAe(false)
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+        clearFadeTimer()
+        Animated.timing(focusOpacity, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }).start(() => {
+          setFocusPoint(null)
+          setExposurePoint(null)
+        })
+        return
+      }
+
+      // Quick tap: focus & meter at target point with 1.5s auto fade
+      setFocusPoint({ x: touchX, y: touchY })
+      setExposurePoint({ x: touchX, y: touchY })
+      setIsSeparated(false)
+      setHasPlacedAe(false)
+      manualCamera.setMeteringPoint({ x: touchX / screenW, y: touchY / screenH })
+
+      clearFadeTimer()
+      focusOpacity.setValue(1)
+
+      fadeTimeoutRef.current = setTimeout(() => {
         Animated.timing(focusOpacity, {
           toValue: 0,
           duration: 300,
           useNativeDriver: true,
-        }),
-      ]).start(() => setFocusPoint(null))
+        }).start(() => {
+          setFocusPoint(null)
+          setExposurePoint(null)
+        })
+      }, 1500)
 
-      try {
-        await cameraRef.current.focus({ x: locationX, y: locationY })
-      } catch (error) {
-        console.log('Focus not supported or failed:', error)
+      if (cameraRef.current && activeDevice?.supportsFocus) {
+        try {
+          await cameraRef.current.focus({ x: touchX, y: touchY })
+        } catch {
+          // Ignore focus canceled
+        }
       }
     },
-    [activeDevice, focusOpacity],
+    [manualCamera, isSeparated, screenW, screenH, clearFadeTimer, focusOpacity, activeDevice, cameraRef],
   )
+
+  const handleCycleLock = useCallback(() => {
+    manualCamera.cycleLockMode()
+    Haptics.selectionAsync()
+  }, [manualCamera])
+
+  const handleToggleSeparate = useCallback(() => {
+    setIsSeparated((prev) => {
+      const next = !prev
+      if (next && focusPoint) {
+        setHasPlacedAe(false)
+        if (manualCamera.lockMode === 'none') {
+          manualCamera.lock(
+            'AF/AE',
+            { x: focusPoint.x / screenW, y: focusPoint.y / screenH },
+            { x: focusPoint.x / screenW, y: focusPoint.y / screenH },
+          )
+        }
+        setExposurePoint(focusPoint)
+        manualCamera.setExposurePoint({ x: focusPoint.x / screenW, y: focusPoint.y / screenH })
+      } else if (!next && focusPoint) {
+        setExposurePoint(focusPoint)
+        manualCamera.setExposurePoint(null)
+        setHasPlacedAe(false)
+      }
+      return next
+    })
+    Haptics.selectionAsync()
+  }, [focusPoint, screenW, screenH, manualCamera])
+
+  const handleFocusPointChange = useCallback(
+    (pt: { x: number; y: number }) => {
+      setFocusPoint(pt)
+      manualCamera.setLockPoint({ x: pt.x / screenW, y: pt.y / screenH })
+      if (!isSeparated) {
+        setExposurePoint(pt)
+        manualCamera.setExposurePoint(null)
+      }
+      clearFadeTimer()
+      focusOpacity.setValue(1)
+    },
+    [manualCamera, screenW, screenH, isSeparated, clearFadeTimer, focusOpacity],
+  )
+
+  const handleExposurePointChange = useCallback(
+    (pt: { x: number; y: number }) => {
+      setExposurePoint(pt)
+      manualCamera.setExposurePoint({ x: pt.x / screenW, y: pt.y / screenH })
+      setHasPlacedAe(true)
+      clearFadeTimer()
+      focusOpacity.setValue(1)
+    },
+    [manualCamera, screenW, screenH, clearFadeTimer, focusOpacity],
+  )
+
+  const handleUnlock = useCallback(() => {
+    manualCamera.unlock()
+    setIsSeparated(false)
+    setHasPlacedAe(false)
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)
+    clearFadeTimer()
+    Animated.timing(focusOpacity, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+    }).start(() => {
+      setFocusPoint(null)
+      setExposurePoint(null)
+    })
+  }, [manualCamera, clearFadeTimer, focusOpacity])
 
   const pinchGesture = Gesture.Pinch()
     .onStart(() => {
@@ -351,10 +723,28 @@ export default function CameraScreen() {
   const handleConnectWallet = useCallback(async () => {
     try {
       await connect()
+      if (__DEV__) console.log('[wallet] authorization completed; awaiting stable account state')
     } catch (error) {
       console.error('Failed to connect wallet:', error)
     }
   }, [connect])
+
+  // Opening the dropdown is the acknowledgement: the feature is visible in
+  // the menu at that point, so the ambient dot clears immediately and forever.
+  const handleOpenWalletMenu = useCallback(() => {
+    setWalletMenuVisible(true)
+    acknowledgeContactSheet()
+  }, [acknowledgeContactSheet])
+
+  const handleOpenHistory = useCallback(() => {
+    setWalletMenuVisible(false)
+    router.push('/past-mints')
+  }, [router])
+
+  const handleOpenContactSheet = useCallback(() => {
+    setWalletMenuVisible(false)
+    router.push('/contact-sheet')
+  }, [router])
 
   const handleDisconnect = useCallback(async () => {
     setWalletMenuVisible(false)
@@ -439,57 +829,112 @@ export default function CameraScreen() {
     )
   }
 
+  if (!captureFormat) {
+    return (
+      <View
+        style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', padding: 28 }}
+      >
+        <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 18, color: colors.text, textAlign: 'center' }}>
+          This camera has no photo format inside the supported 12 MP processing envelope.
+        </Text>
+      </View>
+    )
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <GestureDetector gesture={pinchGesture}>
-        <Pressable style={StyleSheet.absoluteFill} onPress={handleFocus}>
+        <View style={StyleSheet.absoluteFill}>
           <Camera
-            ref={cameraRef}
+            ref={cameraReadiness.ref}
             style={StyleSheet.absoluteFill}
             device={activeDevice}
+            format={captureFormat}
             isActive={isFocused && appActive}
+            onInitialized={cameraReadiness.onInitialized}
+            onStarted={cameraReadiness.onStarted}
+            onStopped={cameraReadiness.onStopped}
+            onError={cameraReadiness.onError}
             photo={true}
+            photoHdr={false}
             zoom={zoom}
+            exposure={ev}
+            torch={torchActive ? 'on' : 'off'}
           />
 
           {/* Aspect-ratio framing guide */}
           <AspectFramingOverlay aspect={effectiveAspect} width={screenW} height={screenH} />
 
-          {/* Legibility scrims — controls float above these */}
-          <LinearGradient
-            pointerEvents="none"
-            colors={['rgba(0,0,0,0.6)', 'rgba(0,0,0,0)']}
-            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 150 }}
-          />
-          <LinearGradient
-            pointerEvents="none"
-            colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.72)']}
-            style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 190 }}
-          />
+          {/* Composition grid overlay */}
+          <CompositionGridOverlay mode={gridMode} aspect={effectiveAspect} width={screenW} height={screenH} />
 
-          {/* Shutter Flash Overlay */}
-          <Animated.View
-            pointerEvents="none"
-            style={[StyleSheet.absoluteFill, { backgroundColor: '#000', opacity: shutterFlashAnim }]}
-          />
+          {/* Viewfinder touch target for focus / lock */}
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPressIn={handleViewfinderPressIn}
+            onPressOut={handleViewfinderPressOut}
+            onPress={handleViewfinderPress}
+          >
+            {/* Legibility scrims — controls float above these */}
+            <LinearGradient
+              pointerEvents="none"
+              colors={['rgba(0,0,0,0.6)', 'rgba(0,0,0,0)']}
+              style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 150 }}
+            />
+            <LinearGradient
+              pointerEvents="none"
+              colors={['rgba(0,0,0,0)', 'rgba(0,0,0,0.72)']}
+              style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 190 }}
+            />
 
-          {/* Focus Indicator */}
-          {focusPoint && (
+            {/* Shutter Flash Overlay */}
             <Animated.View
-              style={{
-                position: 'absolute',
-                left: focusPoint.x - 40,
-                top: focusPoint.y - 40,
-                width: 80,
-                height: 80,
-                borderWidth: 1.5,
-                borderColor: colors.accentSoft,
-                borderRadius: 10,
-                opacity: focusOpacity,
+              pointerEvents="none"
+              style={[StyleSheet.absoluteFill, { backgroundColor: '#000', opacity: shutterFlashAnim }]}
+            />
+          </Pressable>
+
+          {/* Focus and Separated Exposure Reticles */}
+          {focusPoint && (
+            <FocusReticle
+              focusPoint={focusPoint}
+              exposurePoint={exposurePoint}
+              isSeparated={isSeparated}
+              isAePlaced={hasPlacedAe}
+              lockMode={manualCamera.lockMode}
+              isHolding={isHoldingFocus}
+              holdProgress={holdProgress}
+              ev={ev}
+              minExposure={minExposure}
+              maxExposure={maxExposure}
+              onEvChange={(newEv) => {
+                setEv(newEv)
+                clearFadeTimer()
+                focusOpacity.setValue(1)
+                if (manualCamera.lockMode === 'none') {
+                  fadeTimeoutRef.current = setTimeout(() => {
+                    Animated.timing(focusOpacity, {
+                      toValue: 0,
+                      duration: 300,
+                      useNativeDriver: true,
+                    }).start(() => {
+                      setFocusPoint(null)
+                      setExposurePoint(null)
+                    })
+                  }, 2000)
+                }
               }}
+              onCycleLock={handleCycleLock}
+              onToggleSeparate={handleToggleSeparate}
+              onUnlock={handleUnlock}
+              onFocusPointChange={handleFocusPointChange}
+              onExposurePointChange={handleExposurePointChange}
+              opacity={focusOpacity}
+              screenW={screenW}
+              screenH={screenH}
             />
           )}
-        </Pressable>
+        </View>
       </GestureDetector>
 
       {/* Zoom Indicator */}
@@ -542,11 +987,55 @@ export default function CameraScreen() {
           >
             <IconPin size={19} color={locationGranularity === 'off' ? colors.text : colors.accent} />
           </Pressable>
+
+          <Pressable
+            onPress={toggleGrid}
+            accessibilityRole="button"
+            accessibilityLabel={`Composition Grid: ${gridMode}`}
+            style={[
+              roundChip(42),
+              {
+                borderColor: gridMode !== 'off' ? colors.accent : colors.chipBorder,
+                backgroundColor: gridMode !== 'off' ? colors.accentTint : colors.chipBg,
+              },
+            ]}
+          >
+            <IconGrid size={18} color={gridMode !== 'off' ? colors.accentSoft : colors.text} />
+          </Pressable>
+
+          <Pressable
+            onPress={() => setProOpen((o) => !o)}
+            style={[
+              chip,
+              {
+                height: 42,
+                paddingHorizontal: 14,
+                borderRadius: 21,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderColor: proOpen ? colors.accent : colors.chipBorder,
+                backgroundColor: proOpen ? colors.accentTint : colors.chipBg,
+              },
+            ]}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.sansBold,
+                fontSize: 11,
+                letterSpacing: tracking(0.1, 11),
+                color: proOpen ? colors.accentSoft : colors.text,
+              }}
+            >
+              PRO
+            </Text>
+          </Pressable>
         </View>
 
         {account && walletAddress ? (
           <Pressable
-            onPress={() => setWalletMenuVisible(true)}
+            onPress={handleOpenWalletMenu}
+            accessibilityRole="button"
+            accessibilityLabel={showContactSheetNudge ? 'Wallet menu, new contact sheet feature' : 'Wallet menu'}
             style={[
               chip,
               {
@@ -563,6 +1052,23 @@ export default function CameraScreen() {
             <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.text }}>
               {formatWalletDisplay(walletAddress, domain)}
             </Text>
+            <Text style={{ fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft, marginLeft: 2 }}>▼</Text>
+            {showContactSheetNudge && (
+              <View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  top: -3,
+                  right: -3,
+                  width: 11,
+                  height: 11,
+                  borderRadius: 6,
+                  backgroundColor: colors.yellow,
+                  borderWidth: 2,
+                  borderColor: colors.bg,
+                }}
+              />
+            )}
           </Pressable>
         ) : (
           <Pressable
@@ -620,15 +1126,20 @@ export default function CameraScreen() {
         {activeMode === 'roll' && activeRoll !== null && (
           <>
             <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-            {activeRoll.film.mode === 'bw' && (
-              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>B&W</Text>
-            )}
+            <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
+              {effectiveFilmName.toUpperCase()}
+            </Text>
             {activeRoll.aspect !== 'full' && (
               <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>{activeRoll.aspect}</Text>
             )}
-            {activeRoll.film.mode !== 'bw' && activeRoll.aspect === 'full' && (
-              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>COLOR</Text>
-            )}
+          </>
+        )}
+        {activeMode === 'quick' && (
+          <>
+            <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
+            <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
+              {effectiveFilmName.toUpperCase()}
+            </Text>
           </>
         )}
       </Pressable>
@@ -657,10 +1168,7 @@ export default function CameraScreen() {
 
       {/* Quick-mode aspect dropdown — collapsed shows the current ratio */}
       {activeMode === 'quick' && (
-        <View
-          pointerEvents="box-none"
-          style={{ position: 'absolute', top: 74, left: 0, right: 0, alignItems: 'center' }}
-        >
+        <View pointerEvents="box-none" style={{ position: 'absolute', top: 74, right: 18, alignItems: 'flex-end' }}>
           <Pressable
             onPress={() => setAspectMenuOpen((o) => !o)}
             style={[
@@ -717,6 +1225,22 @@ export default function CameraScreen() {
         </View>
       )}
 
+      {/* Pro mode strip — persistent M · ISO · S · EV · WB · AF value strip
+          pinned above the shutter row, one parameter expanded at a time.
+          See ManualControls.tsx for the design source and the adjustments
+          made from it for this camera's real (coupled) exposure model. */}
+      {proOpen && TIER2_ENABLED && (
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 150 }}>
+          <ManualControls
+            controls={manualCamera}
+            ev={ev}
+            setEv={setEv}
+            minExposure={minExposure}
+            maxExposure={maxExposure}
+          />
+        </View>
+      )}
+
       {/* Bottom row — flip · shutter · mint */}
       <View
         style={{
@@ -731,13 +1255,41 @@ export default function CameraScreen() {
           paddingHorizontal: 26,
         }}
       >
+        {isCapturing && manualCamera.shutterMode === 'manual' && manualCamera.manualShutterNs >= 500_000_000 && (
+          <View
+            pointerEvents="none"
+            style={{
+              position: 'absolute',
+              top: 8,
+              left: 0,
+              right: 0,
+              alignItems: 'center',
+            }}
+          >
+            <View
+              style={{
+                backgroundColor: 'rgba(15,15,20,0.88)',
+                paddingHorizontal: 12,
+                paddingVertical: 5,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: colors.accentSoft,
+              }}
+            >
+              <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.accentSoft, letterSpacing: 0.8 }}>
+                {`HOLD STILL · EXPOSING ${(manualCamera.manualShutterNs / 1e9).toFixed(1)}s`}
+              </Text>
+            </View>
+          </View>
+        )}
+
         <Pressable onPress={toggleCamera} style={roundChip(44)}>
           <IconFlip size={20} color={colors.text} />
         </Pressable>
 
         <Pressable
           onPress={handleCapture}
-          disabled={isCapturing}
+          disabled={isCapturing || !controlsReady}
           style={{
             width: 80,
             height: 80,
@@ -746,7 +1298,7 @@ export default function CameraScreen() {
             borderColor: colors.accent,
             alignItems: 'center',
             justifyContent: 'center',
-            opacity: isCapturing || rollIsFull || activeRoll?.developed ? 0.5 : 1,
+            opacity: isCapturing || !controlsReady || rollIsFull || activeRoll?.developed ? 0.5 : 1,
           }}
         >
           <View
@@ -761,9 +1313,56 @@ export default function CameraScreen() {
           />
         </Pressable>
 
-        {/* Quick mode only — a roll's frames mint as a whole roll, not here */}
+        {/* Quick mode shows MINT; Roll mode shows DARKROOM / Gallery */}
         {activeMode === 'roll' ? (
-          <View style={{ width: 44, height: 44 }} />
+          <View style={{ alignItems: 'center', gap: 5 }}>
+            <Pressable
+              onPress={() => router.push('/gallery')}
+              accessibilityRole="button"
+              accessibilityLabel="Open Darkroom"
+              style={roundChip(44)}
+            >
+              <IconGallery size={20} color={colors.text} strokeWidth={1.5} />
+              {activeRoll && activeRoll.frameIds.length > 0 && (
+                <View
+                  style={{
+                    position: 'absolute',
+                    top: -4,
+                    right: -4,
+                    minWidth: 18,
+                    height: 18,
+                    borderRadius: 9,
+                    paddingHorizontal: 4,
+                    backgroundColor: activeRoll.developed ? colors.accent : colors.surface,
+                    borderWidth: 1,
+                    borderColor: colors.border,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <Text
+                    style={{
+                      fontFamily: fonts.monoBold,
+                      fontSize: 10,
+                      color: activeRoll.developed ? colors.white : colors.textSoft,
+                    }}
+                  >
+                    {activeRoll.frameIds.length}
+                  </Text>
+                </View>
+              )}
+            </Pressable>
+            <Text
+              style={{
+                fontFamily: fonts.mono,
+                fontSize: 9,
+                letterSpacing: tracking(0.14, 9),
+                color: colors.textSoft,
+              }}
+            >
+              DARKROOM
+            </Text>
+          </View>
         ) : (
           <View style={{ alignItems: 'center', gap: 5 }}>
             <Pressable onPress={handleReview} style={roundChip(44)}>
@@ -848,9 +1447,84 @@ export default function CameraScreen() {
               CONNECTED WALLET
             </Text>
             <Text numberOfLines={1} style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.text }}>
-              {walletAddress}
+              {walletAddress ? formatWalletDisplay(walletAddress, domain) : ''}
             </Text>
           </View>
+
+          <Pressable
+            onPress={() => {
+              setWalletMenuVisible(false)
+              router.push('/gallery')
+            }}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              minHeight: 56,
+              paddingHorizontal: 20,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              backgroundColor: pressed ? colors.accentTint : colors.surface,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            })}
+          >
+            <IconFilm size={18} color={colors.textSecondary} />
+            <Text style={{ flex: 1, fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>Darkroom / Gallery</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleOpenHistory}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              minHeight: 56,
+              paddingHorizontal: 20,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              backgroundColor: pressed ? colors.accentTint : colors.surface,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            })}
+          >
+            <IconGallery size={18} color={colors.textSecondary} />
+            <Text style={{ flex: 1, fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>History</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={handleOpenContactSheet}
+            accessibilityRole="button"
+            style={({ pressed }) => ({
+              minHeight: 62,
+              paddingHorizontal: 20,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 12,
+              backgroundColor: pressed ? colors.accentTint : colors.surface,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            })}
+          >
+            <View
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 9,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: colors.accentTint,
+              }}
+            >
+              <IconFilm size={18} color={colors.accentSoft} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>
+                Create Contact Sheet
+              </Text>
+              <Text style={{ fontFamily: fonts.sans, fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+                Export minted frames as an image
+              </Text>
+            </View>
+          </Pressable>
 
           {/* Disconnect */}
           <Pressable
@@ -948,9 +1622,7 @@ export default function CameraScreen() {
               }}
             >
               <View>
-                <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>
-                  {option.label}
-                </Text>
+                <Text style={{ fontFamily: fonts.sansSemiBold, fontSize: 14, color: colors.text }}>{option.label}</Text>
                 <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
                   {option.description}
                 </Text>

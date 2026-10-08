@@ -7,6 +7,9 @@ import { useSessionStore } from '../store/session'
 import { useMintQueue } from '../store/mintQueue'
 import { useRollRegistry } from '../store/rollRegistry'
 import { useWalletDomain } from './useWalletDomain'
+import { acknowledgeVerifiedRollCompletion, verifyAndDiscardCompletedRollVault } from '../services/rollVault'
+import { useFilmStockStore } from '../store/filmstocks'
+import { ensureWorkerRollAuthorization } from '../services/rollApi'
 
 /**
  * Mint the active (developed) roll: auto-queue every remaining frame with
@@ -18,11 +21,11 @@ import { useWalletDomain } from './useWalletDomain'
  */
 export function useMintRoll() {
   const router = useRouter()
-  const { account, connect } = useMobileWallet()
+  const { account, connect, signMessage } = useMobileWallet()
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
 
-  const mintRoll = useCallback((): boolean => {
+  const mintRoll = useCallback(async (): Promise<boolean> => {
     const { activeRoll } = useSessionStore.getState()
     if (!activeRoll || activeRoll.frameIds.length === 0) {
       Alert.alert('Empty Roll', 'Shoot at least one frame before minting.')
@@ -35,6 +38,46 @@ export function useMintRoll() {
         { text: 'Connect', onPress: () => connect() },
       ])
       return false
+    }
+
+    if (activeRoll.collectionAddress) {
+      const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/
+      if (!SOLANA_ADDRESS_PATTERN.test(activeRoll.collectionAddress)) {
+        Alert.alert(
+          'Invalid Roll Collection',
+          'This roll has an invalid collection address and cannot be minted on-chain. Would you like to discard it?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Discard Roll',
+              style: 'destructive',
+              onPress: () => {
+                useSessionStore.getState().abandonRoll()
+              },
+            },
+          ],
+        )
+        return false
+      }
+      try {
+        await ensureWorkerRollAuthorization(activeRoll.collectionAddress, walletAddress, signMessage)
+      } catch (error) {
+        Alert.alert(
+          'Roll Authorization Required',
+          error instanceof Error ? error.message : 'This roll could not be authorized safely.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Discard Roll',
+              style: 'destructive',
+              onPress: () => {
+                useSessionStore.getState().abandonRoll()
+              },
+            },
+          ],
+        )
+        return false
+      }
     }
 
     const { photos, setAction } = usePhotoStore.getState()
@@ -58,18 +101,26 @@ export function useMintRoll() {
 
     if (framesToMint.length === 0) {
       const { completeRoll } = useSessionStore.getState()
-      if (activeRoll.collectionAddress) {
-        useRollRegistry.getState().closeRoll(activeRoll.collectionAddress)
+      try {
+        await verifyAndDiscardCompletedRollVault(activeRoll, walletAddress)
+        useFilmStockStore.getState().unlockLocally(walletAddress, activeRoll.film.filmStockId)
+        if (activeRoll.collectionAddress) {
+          useRollRegistry.getState().closeRoll(activeRoll.collectionAddress)
+        }
+        completeRoll()
+        acknowledgeVerifiedRollCompletion()
+        Alert.alert('Roll Verified', 'Every frame is permanent and the encrypted recovery copy has been removed.')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Independent verification is not complete yet.'
+        Alert.alert('Roll Safely Retained', `${message} The encrypted roll will remain on this device.`)
       }
-      completeRoll()
-      Alert.alert('Roll Minted', 'Every frame on this roll is already minted — the roll is complete.')
       return false
     }
 
     // Frame numbers reflect the reviewed roll — a culled 8-frame roll reads
     // "Frame 3 of 8", not "3 of 36". Numbered over ALL surviving frames (minted
     // ones included) so a partial re-mint keeps its original numbering.
-    const totalFrames = frames.length
+    const totalFrames = activeRoll.size
 
     // Prepaid rolls carry their creation-time artist name; older rolls fall
     // back to the resolved domain / truncated address.
@@ -77,10 +128,13 @@ export function useMintRoll() {
       ? useRollRegistry.getState().getRoll(activeRoll.collectionAddress)
       : undefined
     const artist = registryRecord?.artist ?? domain ?? `${walletAddress.slice(0, 4)}...${walletAddress.slice(-4)}`
+    const filmUsed =
+      useFilmStockStore.getState().catalogue.find((stock) => stock.filmStockId === activeRoll.film.filmStockId)
+        ?.displayName ?? (activeRoll.film.mode === 'bw' ? 'B&W' : 'Color')
 
-    frames.forEach((photo, i) => {
+    frames.forEach((photo) => {
       if (isMinted(photo)) return
-      const frameNumber = i + 1
+      const frameNumber = photo.rollFrameNumber ?? activeRoll.frameIds.indexOf(photo.id) + 1
       addToQueue({
         photoId: photo.id,
         photoUri: photo.uri,
@@ -88,6 +142,9 @@ export function useMintRoll() {
         artist,
         capturedAt: photo.capturedAt,
         captureMeta: photo.meta,
+        filmUsed,
+        aspect: activeRoll.aspect,
+        artifact: photo.artifact,
         rollContext: {
           rollId: activeRoll.id,
           rollName: activeRoll.name,
@@ -101,7 +158,7 @@ export function useMintRoll() {
 
     router.push('/mint/progress')
     return true
-  }, [account, walletAddress, domain, connect, router])
+  }, [account, walletAddress, domain, connect, signMessage, router])
 
   return { mintRoll }
 }

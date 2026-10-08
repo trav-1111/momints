@@ -12,10 +12,11 @@ export type RollSize = 12 | 24 | 36
 export type FilmMode = 'color' | 'bw'
 export interface FilmSettings {
   mode: FilmMode
-  // future: iso?: number; stock?: string
+  /** Immutable, versioned recipe identity pinned for the life of a roll. */
+  filmStockId: string
 }
 
-export const DEFAULT_FILM: FilmSettings = { mode: 'color' }
+export const DEFAULT_FILM: FilmSettings = { mode: 'color', filmStockId: 'momints-color-v1' }
 
 // Capture aspect ratio. 'full' keeps the sensor's native frame (no crop);
 // the others center-crop the photo. In roll mode this is fixed at creation.
@@ -35,6 +36,8 @@ export interface ActiveRoll {
   // roll is shot to the end before it develops, like real film.
   developed: boolean
   collectionAddress?: string
+  /** First/most recent time the user started or resumed frame minting. */
+  mintStartedAt?: number
 }
 
 interface PersistedSession {
@@ -52,6 +55,8 @@ interface SessionStore extends PersistedSession {
   abandonRoll: () => void
   completeRoll: () => void
   setCollectionAddress: (address: string) => void
+  markRollMintStarted: () => void
+  restoreRollFrames: (frameIds: string[]) => void
 }
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
@@ -89,6 +94,7 @@ function parseActiveRoll(raw: unknown): ActiveRoll | null {
     startedAt: r.startedAt,
     developed: r.developed === true,
     collectionAddress: typeof r.collectionAddress === 'string' ? r.collectionAddress : undefined,
+    mintStartedAt: typeof r.mintStartedAt === 'number' ? r.mintStartedAt : undefined,
   }
 }
 
@@ -97,7 +103,12 @@ function parseActiveRoll(raw: unknown): ActiveRoll | null {
 function parseFilmSettings(raw: unknown): FilmSettings {
   if (raw === null || typeof raw !== 'object') return { ...DEFAULT_FILM }
   const f = raw as Record<string, unknown>
-  return { mode: f.mode === 'bw' ? 'bw' : 'color' }
+  const mode: FilmMode = f.mode === 'bw' ? 'bw' : 'color'
+  return {
+    mode,
+    filmStockId:
+      typeof f.filmStockId === 'string' ? f.filmStockId : mode === 'bw' ? 'momints-bw-v1' : 'momints-color-v1',
+  }
 }
 
 // Defaults to full-frame for rolls persisted before aspect ratios existed.
@@ -221,10 +232,35 @@ export const useSessionStore = create<SessionStore>()((set, get) => {
       if (!activeRoll) return
       commit({ hasSetMode: true, activeMode, activeRoll: { ...activeRoll, collectionAddress: address } })
     },
+
+    markRollMintStarted: () => {
+      const { hasSetMode, activeMode, activeRoll } = get()
+      if (!activeRoll) return
+      commit({
+        hasSetMode,
+        activeMode,
+        activeRoll: { ...activeRoll, mintStartedAt: Date.now() },
+      })
+    },
+
+    restoreRollFrames: (frameIds) => {
+      const { hasSetMode, activeMode, activeRoll } = get()
+      if (!activeRoll) return
+      const restored = frameIds.slice(0, activeRoll.size)
+      commit({
+        hasSetMode,
+        activeMode,
+        activeRoll: {
+          ...activeRoll,
+          frameIds: restored,
+          developed: activeRoll.developed || restored.length >= activeRoll.size,
+        },
+      })
+    },
   }
 })
 
 // Async hydration on startup — same pattern as network.ts and mintQueue.ts
-readPersistedSession().then((session) => {
+export const sessionHydrated = readPersistedSession().then((session) => {
   useSessionStore.setState(session)
 })

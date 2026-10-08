@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { Paths, File } from 'expo-file-system'
 import type { PrepaidRollSize } from '../config/roll'
+import type { AspectRatio, FilmMode } from './session'
 
 /**
  * Every prepaid roll this device has created, keyed by its on-chain
@@ -19,6 +20,12 @@ export interface RollRecord {
   artist: string
   /** Verified SKR handle or wallet address — immutable provenance. */
   skrIdentity: string
+  /** App-side display metadata for contact sheets; never affects the mint. */
+  film: FilmMode
+  /** Exact immutable processing recipe; inferred for legacy Color/B&W rolls. */
+  filmStockId: string
+  /** Capture crop applied to every frame; absent on legacy records. */
+  aspect?: AspectRatio
   framesMinted: number
   status: 'open' | 'closed'
   createdAt: number
@@ -27,12 +34,16 @@ export interface RollRecord {
 interface RollRegistryStore {
   rolls: RollRecord[]
   addRoll: (record: RollRecord) => void
-  incrementFramesMinted: (collectionAddress: string, by?: number) => void
+  setFramesMinted: (collectionAddress: string, count: number) => void
   closeRoll: (collectionAddress: string) => void
   getRoll: (collectionAddress: string) => RollRecord | undefined
 }
 
 const STORAGE_KEY = 'roll-registry'
+
+function boundedFrameCount(count: number, size: PrepaidRollSize): number {
+  return Number.isFinite(count) ? Math.max(0, Math.min(size, Math.floor(count))) : 0
+}
 
 function parseRecord(raw: unknown): RollRecord | null {
   if (raw === null || typeof raw !== 'object') return null
@@ -55,7 +66,12 @@ function parseRecord(raw: unknown): RollRecord | null {
     size: r.size as PrepaidRollSize,
     artist: r.artist,
     skrIdentity: r.skrIdentity,
-    framesMinted: typeof r.framesMinted === 'number' ? r.framesMinted : 0,
+    film: r.film === 'bw' ? 'bw' : 'color',
+    filmStockId:
+      typeof r.filmStockId === 'string' ? r.filmStockId : r.film === 'bw' ? 'momints-bw-v1' : 'momints-color-v1',
+    aspect:
+      r.aspect === '1:1' || r.aspect === '4:3' || r.aspect === '16:9' || r.aspect === 'full' ? r.aspect : undefined,
+    framesMinted: boundedFrameCount(typeof r.framesMinted === 'number' ? r.framesMinted : 0, r.size),
     status: r.status === 'closed' ? 'closed' : 'open',
     createdAt: r.createdAt,
   }
@@ -87,16 +103,27 @@ export const useRollRegistry = create<RollRegistryStore>((set, get) => ({
 
   addRoll: (record) => {
     set((state) => {
-      const rolls = [...state.rolls.filter((r) => r.collectionAddress !== record.collectionAddress), record]
+      const rolls = [
+        ...state.rolls.filter((r) => r.collectionAddress !== record.collectionAddress),
+        { ...record, framesMinted: boundedFrameCount(record.framesMinted, record.size) },
+      ]
       persistRolls(rolls)
       return { rolls }
     })
   },
 
-  incrementFramesMinted: (collectionAddress, by = 1) => {
+  setFramesMinted: (collectionAddress, count) => {
     set((state) => {
-      const rolls = state.rolls.map((r) =>
-        r.collectionAddress === collectionAddress ? { ...r, framesMinted: r.framesMinted + by } : r,
+      const rolls = state.rolls.map((roll) =>
+        roll.collectionAddress === collectionAddress
+          ? {
+              ...roll,
+              framesMinted: Math.max(
+                boundedFrameCount(roll.framesMinted, roll.size),
+                boundedFrameCount(count, roll.size),
+              ),
+            }
+          : roll,
       )
       persistRolls(rolls)
       return { rolls }
@@ -119,6 +146,10 @@ export const useRollRegistry = create<RollRegistryStore>((set, get) => ({
 }))
 
 // Async hydration on startup — same pattern as session.ts and mintQueue.ts
-readPersistedRolls().then((rolls) => {
-  if (rolls.length > 0) useRollRegistry.setState({ rolls })
+export const rollRegistryHydrated = readPersistedRolls().then((rolls) => {
+  if (rolls.length > 0) {
+    useRollRegistry.setState({ rolls })
+    // Repair saved overcounts as well as the in-memory display on startup.
+    persistRolls(rolls)
+  }
 })

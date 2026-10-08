@@ -49,7 +49,9 @@ async function solUsd() {
     if (p) return { price: Number(p), source: 'Jupiter' }
   } catch {}
   const j = await (
-    await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd', { signal: timeout(20000) })
+    await fetch('https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd', {
+      signal: timeout(20000),
+    })
   ).json()
   return { price: Number(j.solana.usd), source: 'CoinGecko' }
 }
@@ -57,7 +59,9 @@ async function solUsd() {
 async function arUsd() {
   try {
     const j = await (
-      await fetch('https://api.coingecko.com/api/v3/simple/price?ids=arweave&vs_currencies=usd', { signal: timeout(20000) })
+      await fetch('https://api.coingecko.com/api/v3/simple/price?ids=arweave&vs_currencies=usd', {
+        signal: timeout(20000),
+      })
     ).json()
     return Number(j.arweave.usd)
   } catch {

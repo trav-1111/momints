@@ -1,11 +1,12 @@
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator'
-import { Paths, File, Directory } from 'expo-file-system'
+import { ImageManipulator, SaveFormat, type ImageManipulatorContext, type ImageRef } from 'expo-image-manipulator'
+import { File } from 'expo-file-system'
+import { PERMANENT_IMAGE_TARGET_BYTES } from '../config/imageArtifact'
 
 // Sits deliberately under the Worker's quick-mint ceiling of 3,145,728 bytes
 // (MAX_QUICK_IMAGE_BYTES in worker/src/quick/config.ts). The gap is margin: a
 // client result that squeaked in at 2.99 MB would still be at the mercy of the
 // server's exact comparison. KEEP IN SYNC with that constant.
-const TARGET_BYTES = 2_900_000
+const TARGET_BYTES = PERMANENT_IMAGE_TARGET_BYTES
 
 // An explicit ladder rather than a decrementing float — stepping 0.85 by 0.1
 // lands on 0.55 and skips the floor entirely. Same idiom as JPEG_QUALITIES in
@@ -29,7 +30,7 @@ function discard(uri: string): void {
 }
 
 /**
- * Shrink a captured JPEG to fit under the quick-mint upload ceiling, and only
+ * Shrink a developed JPEG to fit under the permanent-image ceiling, and only
  * if it is actually over. Returns the URI to store: the original `uri`
  * untouched when it already fits, otherwise a new file in the photos dir (the
  * original is deleted — "replace", same contract as cropToAspect/applyFilm).
@@ -41,11 +42,12 @@ function discard(uri: string): void {
  * Quality first, resolution only as a backstop — dropping detail is a worse
  * trade than dropping compression ratio for a photograph.
  *
- * Defensive: any failure returns the original `uri`. A photo that fails to
- * compress may be rejected at mint, which the user can retry; a photo lost to a
- * processing error cannot be recovered. Never throws.
+ * Fails closed. A caller must not register the photo or advance a prepaid
+ * exposure unless this returns a verified artifact inside the byte budget.
  */
 export async function ensureUnderCeiling(uri: string): Promise<string> {
+  let baseContext: ImageManipulatorContext | null = null
+  let base: ImageRef | null = null
   try {
     const originalBytes = new File(uri).size
     if (originalBytes <= TARGET_BYTES) {
@@ -55,7 +57,8 @@ export async function ensureUnderCeiling(uri: string): Promise<string> {
 
     // Decoded once and reused: ImageRef.saveAsync can be called repeatedly, so
     // walking the quality ladder costs one decode total, not one per step.
-    const base = await ImageManipulator.manipulate(uri).renderAsync()
+    baseContext = ImageManipulator.manipulate(uri)
+    base = await baseContext.renderAsync()
     const portrait = base.height >= base.width
 
     let fitted: string | null = null
@@ -77,15 +80,22 @@ export async function ensureUnderCeiling(uri: string): Promise<string> {
         if (edge >= longEdge) continue
         // Cap the LONGER edge and let resize derive the other, so the aspect
         // ratio the shooter framed survives.
-        const resized = await ImageManipulator.manipulate(base)
-          .resize(portrait ? { height: edge } : { width: edge })
-          .renderAsync()
-        const saved = await resized.saveAsync({ format: SaveFormat.JPEG, compress: QUALITY_FLOOR })
-        if (new File(saved.uri).size <= TARGET_BYTES) {
-          fitted = saved.uri
-          break
+        let resizeContext: ImageManipulatorContext | null = null
+        let resized: ImageRef | null = null
+        try {
+          resizeContext = ImageManipulator.manipulate(base)
+          resizeContext.resize(portrait ? { height: edge } : { width: edge })
+          resized = await resizeContext.renderAsync()
+          const saved = await resized.saveAsync({ format: SaveFormat.JPEG, compress: QUALITY_FLOOR })
+          if (new File(saved.uri).size <= TARGET_BYTES) {
+            fitted = saved.uri
+            break
+          }
+          discard(saved.uri)
+        } finally {
+          resizeContext?.release()
+          resized?.release()
         }
-        discard(saved.uri)
       }
     }
 
@@ -94,13 +104,13 @@ export async function ensureUnderCeiling(uri: string): Promise<string> {
         `ensureUnderCeiling: ${originalBytes}B would not fit under ${TARGET_BYTES}B ` +
           'even at the smallest size — keeping the original.',
       )
-      return uri
+      throw new Error(
+        `Image is ${originalBytes} bytes and could not be fitted below the ${TARGET_BYTES}-byte permanent limit`,
+      )
     }
 
-    // saveAsync writes to the cache dir — move it into the persistent photos dir.
-    const photosDir = new Directory(Paths.document, 'photos')
-    if (!photosDir.exists) photosDir.create()
-    const dest = new File(photosDir, `photo_${Date.now()}_fit.jpg`)
+    // Keep every replacement beside its temporary input.
+    const dest = new File(new File(uri).parentDirectory, `photo_${Date.now()}_fit.jpg`)
     new File(fitted).move(dest)
 
     if (__DEV__) console.log(`[compress] ${originalBytes}B -> ${dest.size}B`)
@@ -110,7 +120,12 @@ export async function ensureUnderCeiling(uri: string): Promise<string> {
 
     return dest.uri
   } catch (error) {
-    console.error('ensureUnderCeiling failed, keeping original:', error)
-    return uri
+    console.error('ensureUnderCeiling failed:', error)
+    throw new Error('Could not fit the developed image inside the permanent-image limit', {
+      cause: error instanceof Error ? error : undefined,
+    })
+  } finally {
+    baseContext?.release()
+    base?.release()
   }
 }

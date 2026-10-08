@@ -207,3 +207,164 @@ export function IconCheck(p: IconProps) {
     </IconBase>
   )
 }
+
+// ---- Pro-mode metering (M strip parameter) ----
+
+/** Metering: matrix (whole-frame evaluative). */
+export function IconMeteringMatrix(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="2.5" y="5" width="19" height="14" rx="2" />
+      <Rect x="9.5" y="9.5" width="5" height="5" rx="1" />
+    </IconBase>
+  )
+}
+
+/** Metering: center-weighted. */
+export function IconMeteringCenter(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="2.5" y="5" width="19" height="14" rx="2" />
+      <Circle cx="12" cy="12" r="4.4" />
+      <Circle cx="12" cy="12" r="1.5" fill={p.color ?? colors.text} stroke="none" />
+    </IconBase>
+  )
+}
+
+/** Metering: spot. */
+export function IconMeteringSpot(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="2.5" y="5" width="19" height="14" rx="2" />
+      <Line x1="9" y1="5" x2="9" y2="19" />
+      <Line x1="15" y1="5" x2="15" y2="19" />
+      <Line x1="2.5" y1="12" x2="21.5" y2="12" />
+    </IconBase>
+  )
+}
+
+// ---- White balance presets (WB strip parameter) ----
+
+/** WB: incandescent — bulb. */
+export function IconWbIncandescent(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Path d="M8.5 14.5a5 5 0 1 1 7 0c-.9.9-1 1.6-1 2.5h-5c0-.9-.1-1.6-1-2.5z" />
+      <Line x1="10" y1="20" x2="14" y2="20" />
+    </IconBase>
+  )
+}
+
+/** WB: fluorescent — tube. */
+export function IconWbFluorescent(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="4" y="10" width="16" height="4.5" rx="2.2" />
+      <Line x1="7" y1="6.5" x2="8.5" y2="8.5" />
+      <Line x1="17" y1="6.5" x2="15.5" y2="8.5" />
+    </IconBase>
+  )
+}
+
+/** WB: cloudy daylight. */
+export function IconWbCloudy(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Path d="M7 18h10a3.5 3.5 0 0 0 .2-7A5 5 0 0 0 7.6 10.6 3.7 3.7 0 0 0 7 18z" />
+    </IconBase>
+  )
+}
+
+/** WB: daylight — sun. */
+export function IconWbDaylight(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Circle cx="12" cy="12" r="4" />
+      <Line x1="12" y1="3" x2="12" y2="5.5" />
+      <Line x1="12" y1="18.5" x2="12" y2="21" />
+      <Line x1="3" y1="12" x2="5.5" y2="12" />
+      <Line x1="18.5" y1="12" x2="21" y2="12" />
+      <Line x1="5.9" y1="5.9" x2="7.6" y2="7.6" />
+      <Line x1="16.4" y1="16.4" x2="18.1" y2="18.1" />
+      <Line x1="5.9" y1="18.1" x2="7.6" y2="16.4" />
+      <Line x1="16.4" y1="7.6" x2="18.1" y2="5.9" />
+    </IconBase>
+  )
+}
+
+// ---- Manual focus ruler end-marks ----
+
+/** Focus ruler, near end — macro (clover). */
+export function IconFocusNear(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Path d="M12 11.5c-2-2.6-1.6-5.6.4-7 1.5 1.9 1.4 4.6-.4 7z" />
+      <Path d="M12 11.5c-3.2-.4-5-2.8-4.3-5.2 2.3.4 4 2.4 4.3 5.2z" />
+      <Path d="M12 11.5c3.2-.4 5-2.8 4.3-5.2-2.3.4-4 2.4-4.3 5.2z" />
+      <Path d="M12 11.5v9" />
+    </IconBase>
+  )
+}
+
+/** Focus ruler, far end — infinity (mountains, filled). */
+export function IconFocusFar(p: IconProps) {
+  const color = p.color ?? colors.text
+  return (
+    <IconBase {...p}>
+      <Path d="M12 7.5 18.5 18h-13z" fill={color} stroke="none" />
+      <Path d="M6.5 11 10 18H3z" fill={color} stroke="none" />
+    </IconBase>
+  )
+}
+
+/** Lock — AF/AE lock indicator. */
+export function IconLock(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="5" y="11" width="14" height="10" rx="2" />
+      <Path d="M8 11V7a4 4 0 0 1 8 0v4" />
+      <Circle cx="12" cy="16" r="1.2" fill={p.color ?? colors.text} stroke="none" />
+    </IconBase>
+  )
+}
+
+/** Unlock — unlocked AF/AE. */
+export function IconUnlock(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="5" y="11" width="14" height="10" rx="2" />
+      <Path d="M8 11V7a4 4 0 0 1 8 0" />
+      <Circle cx="12" cy="16" r="1.2" fill={p.color ?? colors.text} stroke="none" />
+    </IconBase>
+  )
+}
+
+/** Sun / EV brightness bias. */
+export function IconSun(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Circle cx="12" cy="12" r="4.2" />
+      <Line x1="12" y1="2.5" x2="12" y2="4.8" />
+      <Line x1="12" y1="19.2" x2="12" y2="21.5" />
+      <Line x1="2.5" y1="12" x2="4.8" y2="12" />
+      <Line x1="19.2" y1="12" x2="21.5" y2="12" />
+      <Line x1="5.3" y1="5.3" x2="7" y2="7" />
+      <Line x1="17" y1="17" x2="18.7" y2="18.7" />
+      <Line x1="5.3" y1="18.7" x2="7" y2="17" />
+      <Line x1="17" y1="7" x2="18.7" y2="5.3" />
+    </IconBase>
+  )
+}
+
+/** Grid — 3x3 composition framing guide. */
+export function IconGrid(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Rect x="3" y="3" width="18" height="18" rx="2" />
+      <Line x1="9" y1="3" x2="9" y2="21" />
+      <Line x1="15" y1="3" x2="15" y2="21" />
+      <Line x1="3" y1="9" x2="21" y2="9" />
+      <Line x1="3" y1="15" x2="21" y2="15" />
+    </IconBase>
+  )
+}

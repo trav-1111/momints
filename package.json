@@ -16,10 +16,20 @@
   "main": "./index.js",
   "version": "1.0.0",
   "scripts": {
+    "test:privacy": "node --test tests/privacy.test.cjs",
+    "test:roll-vault": "node --test tests/roll-vault.test.cjs",
+    "test:wallet-domain": "node --test tests/wallet-domain.test.cjs",
+    "test:filmstocks": "node --test tests/filmstock-policy.test.cjs",
+    "test:film-processing": "node --test tests/film-processing.test.cjs",
+    "test:image-artifact": "node --test tests/image-artifact.test.cjs",
+    "test:camera-readiness": "node --test tests/camera-readiness.test.cjs",
+    "test:roll-reconciliation": "node --test tests/roll-reconciliation.test.cjs",
+    "test:roll-registry": "node --test tests/roll-registry.test.cjs",
+    "test:portfolio": "node --test tests/on-chain-portfolio.test.cjs",
     "android": "expo run:android",
     "android:build": "expo prebuild -p android",
     "build": "tsc --noEmit && npm run android:build",
-    "ci": "tsc --noEmit && npm run lint:check && npm run fmt:check && npm run android:build",
+    "ci": "tsc --noEmit && npm run lint:check && npm run test:privacy && npm run test:roll-vault && npm run test:filmstocks && npm run test:film-processing && npm run test:image-artifact && npm run test:camera-readiness && npm run test:roll-reconciliation && npm run test:roll-registry && npm run fmt:check && npm run android:build",
     "dev": "expo start --clear --dev-client --reset-cache",
     "doctor": "npx -y expo-doctor@latest",
     "fmt": "prettier --write .",
@@ -31,6 +41,7 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@craftzdog/react-native-buffer": "^6.1.0",
     "@expo-google-fonts/space-grotesk": "^0.4.1",
     "@expo-google-fonts/space-mono": "^0.4.2",
     "@metaplex-foundation/mpl-core": "^1.10.0",
@@ -44,21 +55,27 @@
     "@solana/web3.js": "^1.98.4",
     "@wallet-ui/react-native-kit": "^3.2.0",
     "expo": "~54.0.22",
+    "expo-asset": "~12.0.13",
     "expo-constants": "~18.0.13",
     "expo-dev-client": "^6.0.20",
     "expo-file-system": "~19.0.21",
     "expo-font": "~14.0.12",
+    "expo-haptics": "~15.0.8",
+    "expo-image": "~3.0.11",
     "expo-image-manipulator": "~14.0.8",
     "expo-linear-gradient": "~15.0.8",
     "expo-linking": "~8.0.11",
     "expo-location": "~19.0.8",
     "expo-media-library": "~18.2.1",
     "expo-router": "~6.0.14",
+    "expo-secure-store": "~15.0.8",
+    "expo-sharing": "~14.0.8",
     "expo-status-bar": "~3.0.8",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "react-native": "0.81.5",
     "react-native-gesture-handler": "~2.28.0",
+    "react-native-quick-base64": "2.2.2",
     "react-native-quick-crypto": "^1.0.7",
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.2",
@@ -77,7 +94,13 @@
     "eslint": "^9.25.0",
     "eslint-config-expo": "~10.0.0",
     "prettier": "^3.8.1",
+    "react-test-renderer": "19.1.0",
     "typescript": "~5.9.2"
   },
-  "private": true
+  "private": true,
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "./modules"
+    }
+  }
 }

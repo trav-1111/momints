@@ -1,9 +1,12 @@
 import { useCallback } from 'react'
-import { File } from 'expo-file-system'
+import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore } from '../store/photos'
 import { useSessionStore } from '../store/session'
-import { completeWorkerRoll } from '../services/rollApi'
+import { completeWorkerRoll, ensureWorkerRollAuthorization } from '../services/rollApi'
 import { isWorkerRollEnabled } from '../config/rollApi'
+import { deleteCapture } from '../services/imagePrivacy'
+import { discardRollVault } from '../services/rollVault'
+import { deleteRollCapability } from '../services/rollCapability'
 
 /**
  * Discarding a roll touches the session store, the photo store / filesystem,
@@ -15,6 +18,7 @@ import { isWorkerRollEnabled } from '../config/rollApi'
  */
 export function useRollActions() {
   const abandonRoll = useSessionStore((s) => s.abandonRoll)
+  const { account, signMessage } = useMobileWallet()
 
   const discardRoll = useCallback(async () => {
     const roll = useSessionStore.getState().activeRoll
@@ -27,16 +31,21 @@ export function useRollActions() {
       // forever unless it is closed explicitly.
       if (isWorkerRollEnabled() && roll.collectionAddress) {
         try {
+          const wallet = account?.address.toString()
+          if (!wallet) throw new Error('Connect the roll wallet to close this roll on the backend.')
+          await ensureWorkerRollAuthorization(roll.collectionAddress, wallet, signMessage)
           await completeWorkerRoll(roll.collectionAddress)
+          await deleteRollCapability(roll.collectionAddress)
         } catch (err) {
           // Never block the local discard on a backend hiccup — the roll can
           // still be closed later from the unfinished-roll card.
           console.warn('[roll] discard: failed to close roll on the backend', err)
         }
       }
+      await discardRollVault(roll.id)
     }
     abandonRoll()
-  }, [abandonRoll])
+  }, [abandonRoll, account, signMessage])
 
   return { discardRoll }
 }
@@ -45,13 +54,6 @@ export function useRollActions() {
 function deletePhotoWithFile(photoId: string): void {
   const { photos, removePhoto } = usePhotoStore.getState()
   const photo = photos.find((p) => p.id === photoId)
-  if (photo) {
-    try {
-      const file = new File(photo.uri)
-      if (file.exists) file.delete()
-    } catch {
-      // A stray file is harmless — still drop the record
-    }
-  }
+  if (photo) deleteCapture(photo.uri)
   removePhoto(photoId)
 }

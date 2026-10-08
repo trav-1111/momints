@@ -17,6 +17,12 @@ import { FeeCache } from './fees/cache'
 import { runFeeRecompute } from './fees/compute'
 import { isBase58Address } from './lib/address'
 import { HttpError, json } from './lib/http'
+import {
+  isHttpRouteBlockedByMaintenance,
+  isMaintenanceMode,
+  MAINTENANCE_QUEUE_RETRY_SECONDS,
+  MAINTENANCE_RETRY_AFTER_SECONDS,
+} from './maintenance'
 import { sanitizeAttributes } from './lib/sanitize'
 import { getHealthSnapshot, getMetricsSnapshot, getWalletsSnapshot, type MetricsWindow } from './ops/dashboard'
 import { postDiscordAlert, type AlertSeverity } from './ops/discord'
@@ -39,11 +45,22 @@ import { finalizeQuickMint, type FinalizeQuickMintRequest } from './quick/finali
 import { releaseQuickStage, stageQuickMint } from './quick/stage'
 import { redriveDeferredFinalizes, sweepQuickMints } from './quick/sweep'
 import { createRoll, type CreateRollRequest } from './rolls/create'
+import { completeAuthorizedRoll } from './rolls/complete'
 import { isRollSize } from './rolls/config'
 import { mintFrame, summarizeFrames } from './rolls/frames'
 import { revokeRollDelegate, revokeRollDelegateSafely } from './rolls/handoff'
+import {
+  assertRollCapability,
+  authorizeRollRequest,
+  hashRollCapability,
+  verifyLegacyClaimSignature,
+} from './rolls/auth'
+import { verifyFrameArtifact } from './rolls/imageArtifact'
 import { issueSkrQuote, type SkrQuoteRequest } from './skr/quote'
 import { createWorkerUmi, getWorkerPublicKey } from './solana/client'
+import { resolveSkrNames } from './skr/resolve'
+import { FILMSTOCK_CATALOGUE, FILMSTOCK_CATALOGUE_UPDATED_AT, catalogueItem } from './filmstocks/catalogue'
+import { deriveUnlockedFilmStocks } from './filmstocks/das'
 
 // Must equal one of the strings in wrangler.toml [triggers] crons exactly —
 // scheduled() below uses it to tell the two registered cron schedules apart.
@@ -51,11 +68,16 @@ import { createWorkerUmi, getWorkerPublicKey } from './solana/client'
 // its own: it is simply "not this one" in scheduled()'s dispatch.
 const FEE_RECOMPUTE_CRON = '0 */3 * * *'
 
+function connectingIp(request: Request): string {
+  return request.headers.get('cf-connecting-ip') ?? 'unknown'
+}
+
 const USAGE = `Momints roll backend.
   GET  /health                          config + D1 reachability
-  GET  /funding/status                  Turbo credit balance sufficiency (operator)
-  GET  /treasury/status                 accrued fees pending manual conversion (operator)
+  GET  /funding/status                  Turbo credit balance sufficiency (operator; bearer token required)
+  GET  /treasury/status                 accrued fees pending manual conversion (operator; bearer token required)
   GET  /fees                            current cost-plus mint fees (quick, roll 12/24)
+  GET  /identity/skr?wallet=<address>  read-only reverse skr display identity
   GET  /ops/status                      treasury monitor: current level, roll headroom, last alert
                                          requires: Authorization: Bearer <OPS_AUTH_TOKEN>
   GET  /ops/test-alert?severity=low     post a dummy Discord alert (low|critical|healthy)
@@ -68,12 +90,16 @@ const USAGE = `Momints roll backend.
   GET  /rolls/open?wallet=<address>     the wallet's open roll, if any
   GET  /rolls/<collection>              roll + per-frame checkpoint status
   POST /rolls/<collection>/frames       mint one frame (multipart form)
+  POST /rolls/<collection>/authorize    wallet-signed recovery for a pre-contract roll
   POST /rolls/<collection>/complete     close a roll early (frees the wallet's slot)
   POST /quick/stage                     park a quick-mint image, get its mint params (multipart form)
   POST /quick/finalize                  prove the fee landed on-chain, queue the Arweave upload (JSON body)
   DEL  /quick/stage/<stagingKey>        give back an unminted stage (user declined the wallet prompt)
   GET  /quick/<asset>                   quick-mint finalize status
   POST /skr/quote                       Worker-issued $SKR fee quote (JSON: {context:'quick',stagingKey} or {context:'roll',wallet,size})
+  GET  /v1/filmstocks                   public filmstock catalogue (server-time availability)
+  POST /v1/filmstocks/unlocked          stateless developed-roll unlock scan ({creatorAddress})
+  GET  /v1/filmstocks/assets/<path>     immutable recipe/preview/texture asset from R2
   GET  /ops/dashboard/wallets           signer + treasury balances (SOL, $SKR, Turbo credits) — operator dashboard
                                          requires: Authorization: Bearer <OPS_AUTH_TOKEN>
   GET  /ops/dashboard/health            cron last-run, stuck/DEAD counts, current fees — operator dashboard
@@ -134,7 +160,7 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
   } catch {
     throw new HttpError(
       400,
-      'Body must be JSON: { wallet, size, feeSignature, artist?, skrIdentity?, localDate?, payment? }',
+      'Body must be JSON: { wallet, size, filmStockId, feeSignature, rollCapability, artist?, skrIdentity?, localDate?, payment? }',
     )
   }
   // Not folded into validateEnv: a half-configured quick flow (missing
@@ -161,6 +187,11 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
 }
 
 async function handleMintFrame(ctx: WorkerContext, request: Request, collectionAddress: string): Promise<Response> {
+  // This D1 read and capability comparison must happen before formData(),
+  // which consumes and buffers the multipart image body.
+  const roll = await authorizeRollRequest(ctx.db, request, collectionAddress)
+  const limit = await ctx.env.ROLL_MUTATION_LIMITER.limit({ key: collectionAddress })
+  if (!limit.success) throw new HttpError(429, 'Roll frame rate limit exceeded')
   let form: FormData
   try {
     form = await request.formData()
@@ -178,6 +209,8 @@ async function handleMintFrame(ctx: WorkerContext, request: Request, collectionA
   if (!(image instanceof File)) {
     throw new HttpError(400, 'Missing "image" file field')
   }
+  const imageBytes = new Uint8Array(await image.arrayBuffer())
+  const artifact = await verifyFrameArtifact(imageBytes, roll.protocol_version)
   let attributes: Array<{ trait_type: string; value: string }> | undefined
   if (typeof attributesRaw === 'string' && attributesRaw.length > 0) {
     try {
@@ -199,8 +232,9 @@ async function handleMintFrame(ctx: WorkerContext, request: Request, collectionA
     {
       collectionAddress,
       frameIndex,
-      imageBytes: new Uint8Array(await image.arrayBuffer()),
-      mime: image.type || 'image/jpeg',
+      imageBytes,
+      artifact,
+      mime: artifact.mime,
       description: typeof description === 'string' && description ? description : undefined,
       attributes,
     },
@@ -208,9 +242,8 @@ async function handleMintFrame(ctx: WorkerContext, request: Request, collectionA
   return json(result, result.alreadyMinted ? 200 : 201)
 }
 
-async function handleGetRoll(ctx: WorkerContext, collectionAddress: string): Promise<Response> {
-  const roll = await ctx.db.getRoll(collectionAddress)
-  if (!roll) throw new HttpError(404, `No roll with collection address ${collectionAddress}`)
+async function handleGetRoll(ctx: WorkerContext, request: Request, collectionAddress: string): Promise<Response> {
+  const roll = await authorizeRollRequest(ctx.db, request, collectionAddress)
   const frames = await ctx.db.listFrames(collectionAddress)
   return json({
     collectionAddress: roll.collection_address,
@@ -223,9 +256,54 @@ async function handleGetRoll(ctx: WorkerContext, collectionAddress: string): Pro
     metadataUri: roll.metadata_uri,
     mintedCount: roll.minted_count,
     status: roll.status,
+    developedOnChain: roll.minted_count === roll.size && roll.handoff_signature !== null,
     createdAt: roll.created_at,
     frames: summarizeFrames(frames),
   })
+}
+
+async function handleAuthorizeLegacyRoll(
+  ctx: WorkerContext,
+  request: Request,
+  collectionAddress: string,
+): Promise<Response> {
+  const limit = await ctx.env.ROLL_MUTATION_LIMITER.limit({ key: `authorize:${collectionAddress}` })
+  if (!limit.success) throw new HttpError(429, 'Roll authorization rate limit exceeded')
+  let body: { wallet?: unknown; rollCapability?: unknown; issuedAt?: unknown; signature?: unknown }
+  try {
+    body = (await request.json()) as typeof body
+  } catch {
+    throw new HttpError(400, 'Body must be JSON: { wallet, rollCapability, issuedAt, signature }')
+  }
+  const roll = await ctx.db.getRoll(collectionAddress)
+  if (!roll) throw new HttpError(404, `No roll with collection address ${collectionAddress}`)
+  if (typeof body.wallet !== 'string' || body.wallet !== roll.wallet) {
+    throw new HttpError(403, 'Only the roll wallet can recover its authorization')
+  }
+  assertRollCapability(body.rollCapability)
+  const capabilityHash = await hashRollCapability(body.rollCapability)
+  if (roll.auth_hash) {
+    if (roll.auth_hash !== capabilityHash) throw new HttpError(409, 'This roll already has different authorization')
+    return json({ collectionAddress, protocolVersion: roll.protocol_version, alreadyAuthorized: true })
+  }
+  if (roll.protocol_version !== 1) throw new HttpError(409, 'Only a pre-contract roll can use authorization recovery')
+  if (typeof body.issuedAt !== 'string' || typeof body.signature !== 'string') {
+    throw new HttpError(400, 'issuedAt and signature are required')
+  }
+  const verified = await verifyLegacyClaimSignature({
+    collectionAddress,
+    wallet: body.wallet,
+    capabilityHash,
+    issuedAt: body.issuedAt,
+    signature: body.signature,
+  })
+  if (!verified) throw new HttpError(403, 'Wallet signature did not authorize this roll')
+  const claimed = await ctx.db.claimLegacyRollCapability(collectionAddress, body.wallet, capabilityHash)
+  if (!claimed) {
+    const current = await ctx.db.getRoll(collectionAddress)
+    if (current?.auth_hash !== capabilityHash) throw new HttpError(409, 'This roll was authorized by another request')
+  }
+  return json({ collectionAddress, protocolVersion: 1, alreadyAuthorized: false })
 }
 
 /**
@@ -233,35 +311,32 @@ async function handleGetRoll(ctx: WorkerContext, collectionAddress: string): Pro
  * success, so a client that retries (or races its own auto-completion when the
  * last frame lands) never sees a spurious failure.
  */
-async function handleCompleteRoll(ctx: WorkerContext, collectionAddress: string): Promise<Response> {
-  const roll = await ctx.db.getRoll(collectionAddress)
-  if (!roll) throw new HttpError(404, `No roll with collection address ${collectionAddress}`)
-
-  const alreadyComplete = roll.status === 'COMPLETE'
-  if (!alreadyComplete) {
-    await ctx.db.closeRoll(collectionAddress)
-  }
-  // Non-fatal and safe to call unconditionally: a no-op if already handed off,
-  // and a free extra retry attempt if a previous try (this request or the
-  // frame that completed the roll) failed silently before the sweep got to it.
-  await revokeRollDelegateSafely(
-    { db: ctx.db, rpcUrl: ctx.env.SOLANA_RPC_URL, getUmi: () => createWorkerUmi(ctx.env) },
-    collectionAddress,
+async function handleCompleteRoll(ctx: WorkerContext, request: Request, collectionAddress: string): Promise<Response> {
+  const roll = await authorizeRollRequest(ctx.db, request, collectionAddress)
+  const limit = await ctx.env.ROLL_MUTATION_LIMITER.limit({ key: collectionAddress })
+  if (!limit.success) throw new HttpError(429, 'Roll completion rate limit exceeded')
+  const result = await completeAuthorizedRoll(
+    {
+      closeRoll: (address) => ctx.db.closeRoll(address),
+      // Non-fatal and safe to call unconditionally: a no-op if already handed
+      // off, and another attempt if an earlier response was lost mid-handoff.
+      retryHandoff: (address) =>
+        revokeRollDelegateSafely(
+          { db: ctx.db, rpcUrl: ctx.env.SOLANA_RPC_URL, getUmi: () => createWorkerUmi(ctx.env) },
+          address,
+        ),
+    },
+    roll,
   )
-  return json({
-    collectionAddress: roll.collection_address,
-    name: roll.name,
-    size: roll.size,
-    mintedCount: roll.minted_count,
-    status: 'COMPLETE' as const,
-    alreadyComplete,
-  })
+  return json(result)
 }
 
 // ─── Quick mints ──────────────────────────────────────────────────────────────
 
 async function handleStageQuickMint(ctx: WorkerContext, request: Request): Promise<Response> {
   const env = validateQuickEnv(ctx.env)
+  const limit = await ctx.env.QUICK_MINT_LIMITER.limit({ key: `stage:${connectingIp(request)}` })
+  if (!limit.success) throw new HttpError(429, 'Quick mint staging rate limit exceeded')
 
   let form: FormData
   try {
@@ -276,9 +351,11 @@ async function handleStageQuickMint(ctx: WorkerContext, request: Request): Promi
   if (!(image instanceof File)) {
     throw new HttpError(400, 'Missing "image" file field')
   }
-  if (typeof wallet !== 'string') {
-    throw new HttpError(400, 'Missing "wallet" field')
+  if (typeof wallet !== 'string' || !isBase58Address(wallet)) {
+    throw new HttpError(400, 'wallet must be a valid Solana public key')
   }
+  const imageBytes = new Uint8Array(await image.arrayBuffer())
+  const artifact = await verifyFrameArtifact(imageBytes, 2)
   let metadata: unknown
   try {
     metadata = typeof metadataRaw === 'string' && metadataRaw ? JSON.parse(metadataRaw) : {}
@@ -297,8 +374,9 @@ async function handleStageQuickMint(ctx: WorkerContext, request: Request): Promi
     },
     {
       wallet,
-      imageBytes: new Uint8Array(await image.arrayBuffer()),
-      mime: image.type || 'image/jpeg',
+      imageBytes,
+      mime: artifact.mime,
+      artifact,
       metadata,
     },
   )
@@ -307,6 +385,8 @@ async function handleStageQuickMint(ctx: WorkerContext, request: Request): Promi
 
 async function handleFinalizeQuickMint(ctx: WorkerContext, request: Request): Promise<Response> {
   const env = validateQuickEnv(ctx.env)
+  const limit = await ctx.env.QUICK_MINT_LIMITER.limit({ key: `finalize:${connectingIp(request)}` })
+  if (!limit.success) throw new HttpError(429, 'Quick mint finalize rate limit exceeded')
 
   let body: FinalizeQuickMintRequest
   try {
@@ -348,9 +428,25 @@ async function handleGetQuickMint(ctx: WorkerContext, assetAddress: string): Pro
     signature: row.signature,
     createdAt: row.created_at,
     finalizedAt: row.finalized_at,
+    mime: row.mime,
+    byteLength: row.byte_length,
+    width: row.width,
+    height: row.height,
+    imageHash: row.image_hash,
   })
 }
 
+async function handleIdentitySkr(ctx: WorkerContext, url: URL): Promise<Response> {
+  const wallet = url.searchParams.get('wallet')
+  if (!wallet || !isBase58Address(wallet)) throw new HttpError(400, 'wallet must be a valid Solana public key')
+  try {
+    const names = await resolveSkrNames(ctx.env.SOLANA_RPC_URL, wallet)
+    return json({ domain: names[0] ?? null }, 200, { 'cache-control': 'public, max-age=300' })
+  } catch (error) {
+    console.warn('[identity/skr] lookup failed', error instanceof Error ? error.message : 'unknown')
+    throw new HttpError(503, 'Wallet name lookup temporarily unavailable')
+  }
+}
 async function handleGetOpenRoll(ctx: WorkerContext, url: URL): Promise<Response> {
   const wallet = url.searchParams.get('wallet')
   if (!wallet) throw new HttpError(400, 'Missing ?wallet= query parameter')
@@ -369,6 +465,8 @@ async function handleGetOpenRoll(ctx: WorkerContext, url: URL): Promise<Response
 
 async function handleHealth(env: Env): Promise<Response> {
   const checks: Record<string, boolean | string> = {
+    deployment: env.DEPLOYMENT_ENV ?? 'unspecified',
+    maintenance: isMaintenanceMode(env),
     rpcConfigured: Boolean(env.SOLANA_RPC_URL),
     fundingKeyConfigured: Boolean(env.IRYS_FUNDING_KEY),
     // Informational only — alerting is optional and deliberately not part of `ok`.
@@ -642,6 +740,9 @@ async function handleOpsDashboardMetrics(ctx: WorkerContext, url: URL): Promise<
 }
 
 type Route =
+  | { kind: 'filmstock-catalogue' }
+  | { kind: 'filmstock-unlocked' }
+  | { kind: 'filmstock-asset'; key: string }
   | { kind: 'funding-status' }
   | { kind: 'treasury-status' }
   | { kind: 'fees' }
@@ -653,18 +754,24 @@ type Route =
   | { kind: 'open-roll' }
   | { kind: 'get-roll'; collection: string }
   | { kind: 'mint-frame'; collection: string }
+  | { kind: 'authorize-roll'; collection: string }
   | { kind: 'complete-roll'; collection: string }
   | { kind: 'stage-quick' }
   | { kind: 'finalize-quick' }
   | { kind: 'release-quick'; stagingKey: string }
   | { kind: 'get-quick'; asset: string }
   | { kind: 'skr-quote' }
+  | { kind: 'identity-skr' }
   | { kind: 'ops-dashboard-wallets' }
   | { kind: 'ops-dashboard-health' }
   | { kind: 'ops-dashboard-metrics' }
 
 /** Match secret-requiring routes. Unknown paths 404 before env validation. */
 function matchRoute(method: string, path: string): Route | null {
+  if (method === 'GET' && path === '/v1/filmstocks') return { kind: 'filmstock-catalogue' }
+  if (method === 'POST' && path === '/v1/filmstocks/unlocked') return { kind: 'filmstock-unlocked' }
+  const filmstockAssetMatch = path.match(/^\/v1\/filmstocks\/assets\/(.+)$/)
+  if (filmstockAssetMatch && method === 'GET') return { kind: 'filmstock-asset', key: filmstockAssetMatch[1] }
   if (method === 'GET' && path === '/funding/status') return { kind: 'funding-status' }
   if (method === 'GET' && path === '/treasury/status') return { kind: 'treasury-status' }
   if (method === 'GET' && path === '/fees') return { kind: 'fees' }
@@ -677,17 +784,19 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'POST' && path === '/quick/stage') return { kind: 'stage-quick' }
   if (method === 'POST' && path === '/quick/finalize') return { kind: 'finalize-quick' }
   if (method === 'POST' && path === '/skr/quote') return { kind: 'skr-quote' }
+  if (method === 'GET' && path === '/identity/skr') return { kind: 'identity-skr' }
   if (method === 'GET' && path === '/ops/dashboard/wallets') return { kind: 'ops-dashboard-wallets' }
   if (method === 'GET' && path === '/ops/dashboard/health') return { kind: 'ops-dashboard-health' }
   if (method === 'GET' && path === '/ops/dashboard/metrics') return { kind: 'ops-dashboard-metrics' }
   // stagingKey is a uuid, not an address — matched before the base58 rule below.
   const releaseMatch = path.match(/^\/quick\/stage\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i)
   if (releaseMatch && method === 'DELETE') return { kind: 'release-quick', stagingKey: releaseMatch[1] }
-  const rollMatch = path.match(/^\/rolls\/([1-9A-HJ-NP-Za-km-z]{32,44})(\/frames|\/complete)?$/)
+  const rollMatch = path.match(/^\/rolls\/([1-9A-HJ-NP-Za-km-z]{32,44})(\/frames|\/authorize|\/complete)?$/)
   if (rollMatch) {
     const [, collection, suffix] = rollMatch
     if (!suffix && method === 'GET') return { kind: 'get-roll', collection }
     if (suffix === '/frames' && method === 'POST') return { kind: 'mint-frame', collection }
+    if (suffix === '/authorize' && method === 'POST') return { kind: 'authorize-roll', collection }
     if (suffix === '/complete' && method === 'POST') return { kind: 'complete-roll', collection }
   }
   // Checked after the literals above; "stage"/"finalize" are too short to be
@@ -724,12 +833,72 @@ export default {
           return json({ error: `No route: ${request.method} ${path}. GET / for usage.` }, 404)
         }
 
+        // This guard runs before secret validation, request-body parsing,
+        // storage, D1 mutation, queue sends or signer construction. It remains
+        // effective even after valid production credentials are installed.
+        if (isMaintenanceMode(env) && isHttpRouteBlockedByMaintenance(route.kind)) {
+          return json(
+            {
+              error: 'Momints minting is temporarily paused for maintenance. No payment or image was accepted.',
+              maintenance: true,
+            },
+            503,
+            { 'cache-control': 'no-store', 'retry-after': String(MAINTENANCE_RETRY_AFTER_SECONDS) },
+          )
+        }
+
+        if (route.kind === 'filmstock-catalogue') {
+          const serverTime = new Date()
+          return json(
+            {
+              serverTime: serverTime.toISOString(),
+              catalogueUpdatedAt: FILMSTOCK_CATALOGUE_UPDATED_AT,
+              filmstocks: FILMSTOCK_CATALOGUE.map((stock) => catalogueItem(stock, url)),
+            },
+            200,
+            { 'cache-control': 'public, max-age=300, s-maxage=300, stale-while-revalidate=86400' },
+          )
+        }
+        if (route.kind === 'filmstock-asset') {
+          const key = decodeURIComponent(route.key)
+          if (key.includes('..') || key.startsWith('/')) throw new HttpError(400, 'Invalid filmstock asset path')
+          const object = await env.FILMSTOCK_ASSETS.get(key)
+          if (!object) throw new HttpError(404, 'Filmstock asset not found')
+          const headers = new Headers()
+          object.writeHttpMetadata(headers)
+          headers.set('etag', object.httpEtag)
+          headers.set('cache-control', 'public, max-age=31536000, immutable')
+          return new Response(object.body, { headers })
+        }
+
         // Fail fast, operator-facing, before any work: required secrets present
         // and not pointing at a public RPC (no public fallback exists).
         const ctx = new WorkerContext(validateEnv(env))
 
         switch (route.kind) {
+          case 'filmstock-unlocked': {
+            let body: { creatorAddress?: unknown }
+            try {
+              body = (await request.json()) as { creatorAddress?: unknown }
+            } catch {
+              throw new HttpError(400, 'Body must be JSON: { creatorAddress }')
+            }
+            if (typeof body.creatorAddress !== 'string') {
+              throw new HttpError(400, 'creatorAddress must be a Solana wallet address')
+            }
+            const limit = await ctx.env.FILMSTOCK_UNLOCK_LIMITER.limit({ key: body.creatorAddress })
+            if (!limit.success) throw new HttpError(429, 'Film cabinet refresh rate limit exceeded')
+            const ids = await deriveUnlockedFilmStocks(
+              ctx.env.SOLANA_RPC_URL,
+              body.creatorAddress,
+              getWorkerPublicKey(ctx.env),
+            )
+            return json({ creatorAddress: body.creatorAddress, unlockedFilmStockIds: ids }, 200, {
+              'cache-control': 'private, no-store',
+            })
+          }
           case 'funding-status': {
+            requireOpsAuth(ctx, request)
             const { funding } = await ctx.storageSeams()
             // Same single balance read the cron uses (ops/monitor.ts). Response
             // is the original FundingStatus plus the derived roll headroom.
@@ -743,6 +912,7 @@ export default {
             })
           }
           case 'treasury-status':
+            requireOpsAuth(ctx, request)
             return json(await ctx.treasury.status())
           case 'fees':
             return await handleGetFees(ctx)
@@ -763,11 +933,13 @@ export default {
           case 'open-roll':
             return await handleGetOpenRoll(ctx, url)
           case 'get-roll':
-            return await handleGetRoll(ctx, route.collection)
+            return await handleGetRoll(ctx, request, route.collection)
           case 'mint-frame':
             return await handleMintFrame(ctx, request, route.collection)
+          case 'authorize-roll':
+            return await handleAuthorizeLegacyRoll(ctx, request, route.collection)
           case 'complete-roll':
-            return await handleCompleteRoll(ctx, route.collection)
+            return await handleCompleteRoll(ctx, request, route.collection)
           case 'stage-quick':
             return await handleStageQuickMint(ctx, request)
           case 'finalize-quick':
@@ -778,6 +950,8 @@ export default {
             return await handleGetQuickMint(ctx, route.asset)
           case 'skr-quote':
             return await handleSkrQuote(ctx, request)
+          case 'identity-skr':
+            return await handleIdentitySkr(ctx, url)
           case 'ops-dashboard-wallets':
             requireOpsAuth(ctx, request)
             return await handleOpsDashboardWallets(ctx)
@@ -823,6 +997,16 @@ export default {
    * moves it to the DLQ — where it becomes an operator alert, not a silent loss.
    */
   async queue(batch: MessageBatch<QuickFinalizeMessage>, env: Env, _ctx: ExecutionContext): Promise<void> {
+    if (isMaintenanceMode(env)) {
+      // Never acknowledge paid work while paused. Delivery is also paused and
+      // consumers are detached during cutover; this is defense in depth for a
+      // stale/in-flight invocation.
+      for (const message of batch.messages) {
+        message.retry({ delaySeconds: MAINTENANCE_QUEUE_RETRY_SECONDS })
+      }
+      console.warn(`[maintenance] deferred ${batch.messages.length} queue message(s) from ${batch.queue}`)
+      return
+    }
     const ctx = new WorkerContext(validateEnv(env))
     const alert = discordAlerts(env)
 
@@ -885,6 +1069,10 @@ export default {
    * roll-handoff sweep retries revokes that failed at completion time.
    */
   async scheduled(controller: ScheduledController, env: Env, _ctx: ExecutionContext): Promise<void> {
+    if (isMaintenanceMode(env)) {
+      console.warn(`[maintenance] skipped scheduled run ${controller.cron}`)
+      return
+    }
     let ctx: WorkerContext
     try {
       ctx = new WorkerContext(validateEnv(env))

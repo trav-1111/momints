@@ -83,7 +83,11 @@ async function runSpike(env: Env, doUpload: boolean): Promise<Response> {
   // Import arbundles and construct the signer from the real key. The
   // investigation proved the classes import; this proves one CONSTRUCTS.
   let signer: { publicKey: Uint8Array } & Record<string, unknown>
-  let createData: (data: string | Uint8Array, signer: unknown, opts?: unknown) => {
+  let createData: (
+    data: string | Uint8Array,
+    signer: unknown,
+    opts?: unknown,
+  ) => {
     sign: (s: unknown) => Promise<unknown>
     isValid: () => Promise<boolean>
     getRaw: () => Uint8Array
@@ -261,7 +265,8 @@ function finish(stages: StageResult[], startedAt: string, attemptedUpload: boole
     headline = `Keyed ANS-104 signing does NOT work in workerd — failed at stage ${failed?.stage}. The lean-arbundles recommendation must be revisited.`
   } else if (uploadOk) {
     verdict = 'PASS'
-    headline = 'Keyed signing AND a real Turbo upload both work inside a Cloudflare Worker. Genuine Arweave path is clear.'
+    headline =
+      'Keyed signing AND a real Turbo upload both work inside a Cloudflare Worker. Genuine Arweave path is clear.'
   } else if (uploadFailed) {
     verdict = 'PARTIAL'
     headline =

@@ -65,7 +65,9 @@ export async function quoteSolToSkr(lamports: bigint): Promise<bigint> {
   }
   const priceImpact = body.priceImpactPct ? Number(body.priceImpactPct) : 0
   if (Number.isFinite(priceImpact) && Math.abs(priceImpact) > MAX_PRICE_IMPACT_PCT) {
-    throw new SkrQuoteUnavailableError(`Jupiter quote price impact too high (${body.priceImpactPct}) — route may be too thin`)
+    throw new SkrQuoteUnavailableError(
+      `Jupiter quote price impact too high (${body.priceImpactPct}) — route may be too thin`,
+    )
   }
 
   return outAmount

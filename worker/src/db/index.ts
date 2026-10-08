@@ -30,6 +30,10 @@ export interface RollRow {
   fee_currency: 'SOL' | 'SKR'
   /** Atomic $SKR units verified, when fee_currency = 'SKR' — audit trail only (see providers/treasury/manual.ts's doc comment on why $SKR has no treasury_entries row). */
   skr_fee_atomic: number | null
+  /** v1 rows predate the authenticated frame-artifact contract. */
+  protocol_version: number
+  /** SHA-256 of the per-roll bearer capability; the plaintext is device-only. */
+  auth_hash: string | null
 }
 
 export interface OpsAlertStateRow {
@@ -47,6 +51,11 @@ export interface FrameRow {
   metadata_uri: string | null
   asset_address: string | null
   mint_signature: string | null
+  mime: string | null
+  byte_length: number | null
+  width: number | null
+  height: number | null
+  image_hash: string | null
   updated_at: string
 }
 
@@ -70,6 +79,10 @@ export interface QuickMintRow {
   /** Set together with fee_currency='SKR' — the exact amount finalize verifies against. Null until a quote is issued. */
   skr_quote_atomic: number | null
   skr_quote_expires_at: string | null
+  byte_length: number | null
+  width: number | null
+  height: number | null
+  image_hash: string | null
 }
 
 export interface SkrQuoteRow {
@@ -100,6 +113,18 @@ export class RollDb {
       .prepare('SELECT * FROM rolls WHERE collection_address = ?')
       .bind(collectionAddress)
       .first<RollRow>()
+  }
+
+  /** One-time wallet-signed recovery for a protocol-v1 roll. */
+  async claimLegacyRollCapability(collectionAddress: string, wallet: string, authHash: string): Promise<boolean> {
+    const result = await this.db
+      .prepare(
+        `UPDATE rolls SET auth_hash = ?
+         WHERE collection_address = ? AND wallet = ? AND protocol_version = 1 AND auth_hash IS NULL`,
+      )
+      .bind(authHash, collectionAddress, wallet)
+      .run()
+    return (result.meta.changes ?? 0) > 0
   }
 
   /**
@@ -161,10 +186,7 @@ export class RollDb {
    * rejects a replayed signature under a race — same pattern as getOpenRoll.
    */
   async getRollByFeeSignature(feeSignature: string): Promise<RollRow | null> {
-    return await this.db
-      .prepare('SELECT * FROM rolls WHERE fee_signature = ?')
-      .bind(feeSignature)
-      .first<RollRow>()
+    return await this.db.prepare('SELECT * FROM rolls WHERE fee_signature = ?').bind(feeSignature).first<RollRow>()
   }
 
   async insertRoll(roll: {
@@ -181,12 +203,14 @@ export class RollDb {
     /** Defaults 'SOL' — pass 'SKR' only from the $SKR branch of rolls/create.ts. */
     feeCurrency?: 'SOL' | 'SKR'
     skrFeeAtomic?: number
+    protocolVersion: number
+    authHash: string
   }): Promise<void> {
     await this.db
       .prepare(
         `INSERT INTO rolls
-           (collection_address, wallet, name, size, artist, skr_identity, cover_uri, metadata_uri, create_signature, fee_signature, fee_currency, skr_fee_atomic)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (collection_address, wallet, name, size, artist, skr_identity, cover_uri, metadata_uri, create_signature, fee_signature, fee_currency, skr_fee_atomic, protocol_version, auth_hash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         roll.collectionAddress,
@@ -201,6 +225,8 @@ export class RollDb {
         roll.feeSignature,
         roll.feeCurrency ?? 'SOL',
         roll.skrFeeAtomic ?? null,
+        roll.protocolVersion,
+        roll.authHash,
       )
       .run()
   }
@@ -310,17 +336,29 @@ export class RollDb {
     metadataUri?: string | null
     assetAddress?: string | null
     mintSignature?: string | null
+    mime?: string | null
+    byteLength?: number | null
+    width?: number | null
+    height?: number | null
+    imageHash?: string | null
   }): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO frames (collection_address, frame_index, status, image_uri, metadata_uri, asset_address, mint_signature, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        `INSERT INTO frames
+           (collection_address, frame_index, status, image_uri, metadata_uri, asset_address, mint_signature,
+            mime, byte_length, width, height, image_hash, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
          ON CONFLICT (collection_address, frame_index) DO UPDATE SET
            status = excluded.status,
            image_uri = COALESCE(excluded.image_uri, frames.image_uri),
            metadata_uri = COALESCE(excluded.metadata_uri, frames.metadata_uri),
            asset_address = COALESCE(excluded.asset_address, frames.asset_address),
            mint_signature = COALESCE(excluded.mint_signature, frames.mint_signature),
+           mime = COALESCE(excluded.mime, frames.mime),
+           byte_length = COALESCE(excluded.byte_length, frames.byte_length),
+           width = COALESCE(excluded.width, frames.width),
+           height = COALESCE(excluded.height, frames.height),
+           image_hash = COALESCE(excluded.image_hash, frames.image_hash),
            updated_at = excluded.updated_at`,
       )
       .bind(
@@ -331,6 +369,11 @@ export class RollDb {
         frame.metadataUri ?? null,
         frame.assetAddress ?? null,
         frame.mintSignature ?? null,
+        frame.mime ?? null,
+        frame.byteLength ?? null,
+        frame.width ?? null,
+        frame.height ?? null,
+        frame.imageHash ?? null,
       )
       .run()
   }
@@ -368,13 +411,30 @@ export class RollDb {
     mime: string
     /** Fee quoted from fee_cache at stage time — see quick/stage.ts. */
     feeLamportsRequired: number
+    byteLength: number
+    width: number
+    height: number
+    imageHash: string
   }): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO quick_mints (id, wallet, metadata_json, staging_key, mime, status, fee_lamports_required)
-         VALUES (?, ?, ?, ?, ?, 'STAGED', ?)`,
+        `INSERT INTO quick_mints
+           (id, wallet, metadata_json, staging_key, mime, status, fee_lamports_required,
+            byte_length, width, height, image_hash)
+         VALUES (?, ?, ?, ?, ?, 'STAGED', ?, ?, ?, ?, ?)`,
       )
-      .bind(quick.id, quick.wallet, quick.metadataJson, quick.stagingKey, quick.mime, quick.feeLamportsRequired)
+      .bind(
+        quick.id,
+        quick.wallet,
+        quick.metadataJson,
+        quick.stagingKey,
+        quick.mime,
+        quick.feeLamportsRequired,
+        quick.byteLength,
+        quick.width,
+        quick.height,
+        quick.imageHash,
+      )
       .run()
   }
 
@@ -409,11 +469,7 @@ export class RollDb {
    *   transfer cannot be replayed against a second staged image — that attempt
    *   surfaces as DuplicateSignatureError.
    */
-  async claimQuickMintForFinalize(
-    id: string,
-    assetAddress: string,
-    signature: string,
-  ): Promise<boolean> {
+  async claimQuickMintForFinalize(id: string, assetAddress: string, signature: string): Promise<boolean> {
     try {
       const result = await this.db
         .prepare(
@@ -491,7 +547,9 @@ export class RollDb {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         if (!message.includes('UNIQUE constraint failed')) throw err
-        console.warn(`[quick] markQuickMintDead(${id}): could not link ${link.assetAddress} (UNIQUE conflict) — marking dead unlinked`)
+        console.warn(
+          `[quick] markQuickMintDead(${id}): could not link ${link.assetAddress} (UNIQUE conflict) — marking dead unlinked`,
+        )
       }
     }
     await this.db.prepare("UPDATE quick_mints SET status = 'DEAD' WHERE id = ?").bind(id).run()
@@ -631,7 +689,12 @@ export class RollDb {
       )
       .bind(sinceIso)
       .all<{ status: RollStatus; fee_currency: 'SOL' | 'SKR'; n: number; frames: number }>()
-    return result.results.map((r) => ({ status: r.status, feeCurrency: r.fee_currency, count: r.n, framesMinted: r.frames }))
+    return result.results.map((r) => ({
+      status: r.status,
+      feeCurrency: r.fee_currency,
+      count: r.n,
+      framesMinted: r.frames,
+    }))
   }
 
   /** COMPLETE rolls whose delegate revoke never landed — the same population "Re-driving a stuck roll handoff" (README) covers. Current-state, no window. */
@@ -649,7 +712,9 @@ export class RollDb {
    * table (see providers/treasury/manual.ts's doc comment: no conversion
    * needed, so nothing is recorded) — see getSkrFeeTotals for those.
    */
-  async getTreasuryFeeTotals(sinceIso: string | null): Promise<{ kind: string; totalLamports: number; count: number }[]> {
+  async getTreasuryFeeTotals(
+    sinceIso: string | null,
+  ): Promise<{ kind: string; totalLamports: number; count: number }[]> {
     const result = await this.db
       .prepare(
         `SELECT json_extract(context, '$.kind') as kind, COALESCE(SUM(amount_lamports), 0) as total, COUNT(*) as n

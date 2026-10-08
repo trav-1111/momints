@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "filmStockId": "martha-v1",
+  "displayName": "Martha",
+  "shortDescription": "Lush saturation, rich colors, lifted blacks, vintage tone.",
+  "characteristics": ["lush saturation", "rich colors", "lifted blacks", "vintage tone", "subtle grain"],
+  "inputColorSpace": "sRGB",
+  "outputColorSpace": "sRGB",
+  "baseMode": "color",
+  "lut": {
+    "format": "momints-lut",
+    "size": 33,
+    "intensity": 1
+  },
+  "exposure": { "ev": 0 },
+  "grain": { "amount": 0.12, "size": 0.3, "roughness": 0.34 },
+  "halation": { "amount": 0, "radius": 0 },
+  "bloom": { "amount": 0, "radius": 0 },
+  "sharpness": { "amount": 0 },
+  "vignette": { "amount": 0 },
+  "minimumEngineVersion": 2
+}

@@ -1,92 +1,56 @@
 import { useState, useEffect } from 'react'
-import { Connection } from '@solana/web3.js'
-import { TldParser } from '@onsol/tldparser'
-import { getClusterRpc } from '../store/network'
+import { getCachedWalletDomain, resolveWalletDomain, WalletDomainError } from '../services/walletDomain'
 
-// TLD preference order — .skr first for Seeker users
-const TLD_PRIORITY = ['.skr', '.sol', '.abc', '.bonk', '.poor', '.gm']
-
-// Only cache successful lookups — failures retry on next render
-const domainCache = new Map<string, string>()
-
-let _parser: TldParser | null = null
-function getParser(): TldParser {
-  if (!_parser) {
-    const rpc = getClusterRpc()
-    _parser = new TldParser(new Connection(rpc, 'confirmed'))
-  }
-  return _parser
+interface DomainState {
+  address: string | null
+  domain: string | null
+  status: 'idle' | 'loading' | 'resolved' | 'not-found' | 'error'
+  error: WalletDomainError | null
 }
-
-async function fetchBestDomain(walletAddress: string): Promise<string | null> {
-  try {
-    const parser = getParser()
-    // getParsedAllUserDomains accepts a string address directly
-    const domains = await parser.getParsedAllUserDomains(walletAddress)
-    if (!Array.isArray(domains) || domains.length === 0) return null
-
-    // Pick the highest-priority TLD
-    for (const priority of TLD_PRIORITY) {
-      const match = domains.find((d) => d.domain.endsWith(priority))
-      if (match) return match.domain
-    }
-
-    // Fall back to whichever domain exists
-    return domains[0].domain ?? null
-  } catch {
-    return null
+function initialState(address: string | null): DomainState {
+  const cached = address ? getCachedWalletDomain(address) : undefined
+  return {
+    address,
+    domain: cached?.domain ?? null,
+    status: cached?.status ?? (address ? 'loading' : 'idle'),
+    error: null,
   }
 }
 
 export function useWalletDomain(walletAddress: string | null) {
-  const [domain, setDomain] = useState<string | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-
+  const [state, setState] = useState<DomainState>(() => initialState(walletAddress))
   useEffect(() => {
-    if (!walletAddress) {
-      setDomain(null)
-      return
-    }
-
-    if (domainCache.has(walletAddress)) {
-      setDomain(domainCache.get(walletAddress)!)
-      return
-    }
-
     let cancelled = false
-
-    const fetchDomain = async () => {
-      setIsLoading(true)
+    setState(initialState(walletAddress))
+    if (!walletAddress) return
+    const resolve = async () => {
       try {
-        const best = await fetchBestDomain(walletAddress)
+        const result = await resolveWalletDomain(walletAddress)
         if (cancelled) return
-        if (best) {
-          domainCache.set(walletAddress, best)
-          setDomain(best)
-        } else {
-          setDomain(null)
-        }
-      } catch {
-        if (!cancelled) setDomain(null)
-      } finally {
-        if (!cancelled) setIsLoading(false)
+        setState({ address: walletAddress, domain: result.domain, status: result.status, error: null })
+        if (__DEV__) console.log('[wallet-domain] UI identity state updated', result.domain ?? 'address fallback')
+      } catch (error) {
+        if (cancelled) return
+        const safeError = error instanceof WalletDomainError ? error : new WalletDomainError('rpc')
+        if (__DEV__) console.log('[wallet-domain] lookup error', safeError.code)
+        setState({ address: walletAddress, domain: null, status: 'error', error: safeError })
       }
     }
-
-    fetchDomain()
+    void resolve()
     return () => {
       cancelled = true
     }
   }, [walletAddress])
-
-  return { domain, isLoading }
+  const current = state.address === walletAddress ? state : initialState(walletAddress)
+  return {
+    domain: current.domain,
+    isLoading: current.status === 'loading',
+    status: current.status,
+    error: current.error,
+  }
 }
 
-export function formatWalletDisplay(
-  address: string,
-  domain: string | null,
-  maxLength: number = 12
-): string {
+export function formatWalletDisplay(address: string, domain: string | null, maxLength: number = 12): string {
   if (domain) {
     if (domain.length <= maxLength) return domain
     const extension = domain.includes('.') ? domain.slice(domain.lastIndexOf('.')) : ''

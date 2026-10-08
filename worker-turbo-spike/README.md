@@ -1,4 +1,6 @@
-# Turbo / Arweave Workers spike — THROWAWAY
+# Turbo / Arweave Workers spike — historical architecture evidence
+
+Retained for hackathon provenance. This experiment answered the signing/upload feasibility question; current production uses `worker/`. The commands, hostnames, costs and results below describe the original experiment, not current reviewer setup. Do not deploy it or invoke its upload routes as part of setup. If deliberately reproducing the experiment separately, use independently named resources and your own dedicated identity/credits; never reuse Momints production credentials.
 
 One question:
 
@@ -6,8 +8,7 @@ One question:
 > item with the funding key and upload it to Turbo, landing on genuine Arweave?
 
 `ARWEAVE_PATH_OPTIONS.md` recommended Turbo via lean `@dha-team/arbundles` and
-proved everything except this. **This is the last gate before the provider swap
-is safe to build.** Delete this whole directory once `RESULT.md` is filled in.
+proved everything except this at that point in development. The completed result is retained in `RESULT.md`; no deletion is needed.
 
 **Deployed:** https://momints-turbo-spike.traviskeir.workers.dev
 
@@ -43,8 +44,7 @@ seed and `32..64` as the public key. So it wants:
 > **a base58-encoded 64-byte Solana secret key** — the standard
 > `solana-keygen` / Phantom "export private key" string.
 
-**This is the same format as the production `IRYS_FUNDING_KEY`**, so you can
-paste the same value and reuse the same wallet.
+This is the same encoding format as `IRYS_FUNDING_KEY`, **not** a reason to reuse a production key. Any independent reproduction must supply its own dedicated key.
 
 It is **not** a JSON byte array (`[12,45,...]`), **not** hex, and **not** a
 32-byte seed on its own. A format mismatch surfaces as a signing error that
@@ -63,11 +63,11 @@ answers the core question. Do this before anything that costs money.
 
 Look at `coreQuestion.answer`:
 
-| `verdict` | Means |
-|---|---|
-| `NOT_RUN` | Key not set. Nothing proven either way — go back to step 1. |
-| `PARTIAL` + `"answer": "YES"` | **Signing works in workerd.** The gate is cleared. |
-| `FAIL` + `"answer": "NO"` | Signing does not work. Read `stages[].errorName` / `stack` — it names the missing primitive. **Stop; do not work around it here.** |
+| `verdict`                     | Means                                                                                                                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `NOT_RUN`                     | Key not set. Nothing proven either way — go back to step 1.                                                                        |
+| `PARTIAL` + `"answer": "YES"` | **Signing works in workerd.** The gate is cleared.                                                                                 |
+| `FAIL` + `"answer": "NO"`     | Signing does not work. Read `stages[].errorName` / `stack` — it names the missing primitive. **Stop; do not work around it here.** |
 
 ## Step 3 — check the credit balance (read-only)
 
@@ -109,7 +109,7 @@ not-yet-resolvable URL is expected; re-check it by hand a little later:
 curl -I https://arweave.net/<id>       # expect 200 and content-type: application/json
 ```
 
-`verdict: "PASS"` with an id means keyed signing *and* a genuine Arweave upload
+`verdict: "PASS"` with an id means keyed signing _and_ a genuine Arweave upload
 both work from inside a Cloudflare Worker.
 
 ## Step 5 — record and tear down

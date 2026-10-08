@@ -1,5 +1,15 @@
 # Momints roll backend — Cloudflare Worker + D1 + Turbo/Arweave
 
+## Reviewer safety and independent setup
+
+This is an operator runbook for the existing mainnet service, not permission to use its resources. Reviewers should use [independent setup](../docs/REVIEWER-SETUP.md) and `.dev.vars.example` with their own credentials. The checked-in default Wrangler config binds Momints production D1, R2 and rate-limit namespaces; deployment, remote migration, activation, recovery and secret commands below are **owner/operator-only**. Never run the deployed synthetic staging suite against production. Ordinary local tests, catalogue validation, isolated local migration-upgrade tests and `bundle-size` dry-run are non-spending; they do not prove paid mint readiness.
+
+Filmstock catalogue, immutable recipe delivery, and stateless developed-roll unlock reconstruction are documented in [`../docs/FILMSTOCKS.md`](../docs/FILMSTOCKS.md). The filmstock subsystem adds no D1 user or entitlement records.
+
+Filmstock operators should start from `filmstock-package-template/`. `npm run publish:filmstock` validates and compiles a 33-point sRGB `.cube`; `npm run schedule:filmstock` changes a returning stock's availability; and `npm run deploy` performs immutable R2 preflight, a maintenance-mode Worker deployment, and production asset smoke tests. See the linked contract before using the lower-level `deploy:worker` command.
+
+Production deployment and rollback are documented in [`../docs/STAGING-WORKER-RUNBOOK.md`](../docs/STAGING-WORKER-RUNBOOK.md). The default configuration targets the promoted service at `api.momints.xyz` with production resources and **maintenance enabled**. Activation requires its separately guarded command. Historical staging tools cannot target the promoted service.
+
 Single Cloudflare Worker backing the Momints roll feature: prepaid rolls of 12
 or 24 exposures, each roll an immutable Metaplex Core collection, each frame a
 Core asset minted into it, all media on permanent Arweave storage via Turbo.
@@ -29,12 +39,13 @@ headroom) — smaller than the old Irys-based bundle, not bigger.
 ## The flow
 
 **Create a roll** (`POST /rolls`)
+
 1. Validate: size 12 or 24 only; artist display name sanitized (trim, 48-char
    cap, control/bidi chars stripped); at most ONE roll with status `OPEN` per
    wallet (enforced by check + partial unique index — quick-shoot single mints
    are a separate path and never count toward the roll).
 2. **Fee verification** — the client pays the roll fee in its own
-   wallet-signed transfer to `QUICK_TREASURY_ADDRESS` *before* calling this
+   wallet-signed transfer to `QUICK_TREASURY_ADDRESS` _before_ calling this
    endpoint (`payRollFee` in the app) and sends back the landed `feeSignature`.
    `feeSignature` is REQUIRED; the Worker fetches that transaction and checks
    it paid at least the current cost-plus fee for `size` — read once from
@@ -106,18 +117,18 @@ uploads).
 
 Roll/mint/cover logic calls only these interfaces (`src/providers/types.ts`):
 
-| Seam | Now | Later (stub + TODO only) |
-|---|---|---|
-| `StorageProvider` | **TurboProvider** — Turbo → genuine Arweave, permanent (the real one; lean `@dha-team/arbundles`, no `@ardrive/turbo-sdk` — see `../ARWEAVE_PATH_OPTIONS.md`). `PinataProvider` exists as a clearly-marked TEST-ONLY fallback; IPFS pinning is not permanent and must not back any permanence claim. | — |
-| `TreasurySink` | **ManualSink** — records accrued SOL to D1 as conversion-pending; operator-readable summary at `/treasury/status`. No auto-swap. | `AutomatedSink` — SOL→$SKR Jupiter keeper |
-| `FundingProvider` | **TurboFunding** — checks the Turbo credit (winc) balance, reports sufficiency, warns when low. Never funds inline. The scheduled [treasury monitor](#treasury-monitor--discord-alerts) reads it on a cron and alerts Discord — notify only, never funds. | `AutomatedFunding` — top-up keeper |
+| Seam              | Now                                                                                                                                                                                                                                                                                                  | Later (stub + TODO only)                  |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `StorageProvider` | **TurboProvider** — Turbo → genuine Arweave, permanent (the real one; lean `@dha-team/arbundles`, no `@ardrive/turbo-sdk` — see `../ARWEAVE_PATH_OPTIONS.md`). `PinataProvider` exists as a clearly-marked TEST-ONLY fallback; IPFS pinning is not permanent and must not back any permanence claim. | —                                         |
+| `TreasurySink`    | **ManualSink** — records accrued SOL to D1 as conversion-pending; operator-readable summary at `/treasury/status`. No auto-swap.                                                                                                                                                                     | `AutomatedSink` — SOL→$SKR Jupiter keeper |
+| `FundingProvider` | **TurboFunding** — checks the Turbo credit (winc) balance, reports sufficiency, warns when low. Never funds inline. The scheduled [treasury monitor](#treasury-monitor--discord-alerts) reads it on a cron and alerts Discord — notify only, never funds.                                            | `AutomatedFunding` — top-up keeper        |
 
 ## Endpoints
 
 ```
 GET  /health                       config + D1 reachability
-GET  /funding/status               Turbo credit balance vs one typical frame + roll headroom (operator)
-GET  /treasury/status              accrued fees pending manual conversion (operator)
+GET  /funding/status               Turbo credit balance + roll headroom (needs OPS_AUTH_TOKEN)
+GET  /treasury/status              accrued fees pending conversion (needs OPS_AUTH_TOKEN)
 GET  /fees                         current cost-plus mint fees (quick, roll 12/24) — app fetches this at confirm time
 GET  /ops/status                   monitor's current level, roll headroom, last-alerted state (needs OPS_AUTH_TOKEN)
 GET  /ops/test-alert?severity=…    post a dummy Discord alert: low | critical | healthy (needs OPS_AUTH_TOKEN)
@@ -181,7 +192,7 @@ transaction is verified. So the asset is minted against a permanent, static
 so a bogus stage costs only an R2 object — bounded by the 3 MiB image ceiling,
 `MAX_STAGES_PER_WALLET_PER_DAY`, and the bucket's 24h lifecycle rule.
 
-Staging happens *before* the wallet prompt, so declining leaves an orphan that
+Staging happens _before_ the wallet prompt, so declining leaves an orphan that
 would otherwise hold one of those daily slots until the sweep. The app calls
 `DELETE /quick/stage/<stagingKey>` to give it back immediately. That endpoint
 **refuses anything past STAGED** (409): once a row is claimed the fee is
@@ -242,40 +253,25 @@ that way by decision, not oversight — no migration is planned for them.
 
 ## Setup
 
+The production resources already exist. Do not recreate them or paste new IDs
+into configuration. The authoritative paused configuration is `wrangler.toml`;
+`wrangler.production-active.toml` is the reviewed activation configuration,
+and `wrangler.rollback.toml` preserves the retired service as a maintenance-only
+rollback target. Follow `../docs/STAGING-WORKER-RUNBOOK.md` for the current
+resource inventory, migration procedure, secret entry and rollback sequence.
+
 ```sh
 npm install
-wrangler d1 create momints-rolls        # paste the id into wrangler.toml (TODO marker)
-npm run db:migrate:remote               # or db:migrate:local for wrangler dev --local
-
-wrangler secret put IRYS_FUNDING_KEY    # funding wallet, base58 secret key — MAINNET, real funds.
-                                         # Also the Turbo/Arweave signing key (name kept for
-                                         # continuity; no longer Irys-specific)
-wrangler secret put SOLANA_RPC_URL      # dedicated mainnet RPC (e.g. Helius mainnet)
-
-wrangler secret put DISCORD_WEBHOOK_URL # optional: treasury-monitor + fee-recompute alert channel
-wrangler secret put OPERATOR_DISCORD_ID # optional: your Discord user ID (@-mention on critical)
-wrangler secret put OPS_AUTH_TOKEN      # gates /ops/status, /ops/test-alert, /ops/recompute-fees,
-                                         # /ops/sweep-quick-mints
-wrangler secret put SOLANA_RPC_URL_MAINNET  # optional: use a DIFFERENT mainnet RPC than
-                                         # SOLANA_RPC_URL just for the cost-plus fee recompute's
-                                         # rent read (see "Cost-plus fee pricing") — falls back to
-                                         # SOLANA_RPC_URL itself if unset
-
-# Quick-mint infrastructure (Workers PAID plan — Queues is not on Free)
-wrangler queues create momints-quick-finalize
-wrangler queues create momints-quick-finalize-dlq
-wrangler r2 bucket create momints-quick-staging
-wrangler r2 bucket lifecycle add momints-quick-staging \
-  --name expire-staging --prefix quick-staging/ --expire-days 1
-
-# Fund the signing wallet's Turbo credit balance BEFORE uploading the
-# placeholder (see "Top up the Turbo credit balance" below) — the upload will
-# 402 otherwise. Then upload the placeholder ONCE and paste the URI into
-# wrangler.toml [vars], replacing the old gateway.irys.xyz value:
-IRYS_FUNDING_KEY=<base58> node scripts/upload-placeholder.mjs ../CollectionPlaceholder.png
-
 npm run typecheck
-npm run deploy
+npm run test:maintenance
+npm run test:production-tooling
+npm run validate:filmstocks
+
+# Safe default: deploy/update the promoted Worker while maintenance remains on.
+npm run deploy:worker
+
+# Only after the owner has entered and verified the existing production secrets:
+npm run deploy:production:activate -- --confirm-owner-secrets-and-production-activation
 ```
 
 `QUICK_TREASURY_ADDRESS` in `wrangler.toml [vars]` **must match the app's
@@ -290,14 +286,13 @@ on-chain payer/authority for collection creation and frame mints, and as the
 `SolanaSigner` key that signs every Turbo/Arweave upload; no code generates,
 prints, or logs key material.
 
-Pending TODOs in code: mint fees are now cost-plus (see [Cost-plus fee
-pricing](#cost-plus-fee-pricing)) rather than a TODO, but
-`SOLANA_RPC_URL_MAINNET` should point at a dedicated mainnet RPC (Helius or
-similar) before trusting the recompute in production — the public fallback is
-known to block at least some cloud egress IPs. Also still pending:
-`QUICK_TREASURY_ADDRESS`, the D1 `database_id`, the final base cover artwork
-(`assets/base-cover.jpg` is a placeholder), `AutomatedSink`,
-`AutomatedFunding`, and the
+Pending TODOs in code: mint fees are cost-plus (see [Cost-plus fee
+pricing](#cost-plus-fee-pricing)). `SOLANA_RPC_URL_MAINNET` should point at a
+dedicated mainnet RPC (Helius or similar) before trusting the recompute in
+production — the public fallback is known to block at least some cloud egress
+IPs. The production treasury and D1 IDs are configured. Still pending are the
+final base cover artwork (`assets/base-cover.jpg` is a placeholder),
+`AutomatedSink`, `AutomatedFunding`, and the
 [Turbo credit withdrawability](#open-question-turbo-credit-withdrawability)
 question below.
 
@@ -312,7 +307,7 @@ response to failures.
 
 **When:** the [treasury monitor](#treasury-monitor--discord-alerts) tells you —
 it posts to Discord the moment the balance crosses into `low`, days of runway
-ahead. Otherwise: check `GET /funding/status` before any demo/session and
+ahead. Otherwise: check authenticated `GET /funding/status` before any demo/session and
 whenever a response carries a `fundingWarning` (it warns while balance is below
 2× the anticipated work — i.e. before requests start failing). Low-balance
 warnings also appear in `wrangler tail` as `[funding] …`.
@@ -335,7 +330,7 @@ curl -s "https://payment.ardrive.io/v1/account/balance/solana?address=<funding-w
 ```
 
 Size the top-up to anticipated work: a 24-frame roll is ~24 × 3 MiB + cover;
-`GET /funding/status` reports the winc price of a typical frame (via
+Authenticated `GET /funding/status` reports the winc price of a typical frame (via
 `GET https://payment.ardrive.io/v1/price/bytes/<n>`) — multiply out and keep
 comfortable headroom. Verify afterwards with `/funding/status` (`sufficient:
 true`, no warning). Unlike Irys's ~2-minute `.fund()`, Turbo crediting time
@@ -375,6 +370,7 @@ cost is rent + storage. Both margins live in `src/fees/config.ts`, separate
 constants even though both start at 1.7× so they can diverge later.
 
 **Live inputs, read once per recompute (never per-mint):**
+
 - **Rent** — a read-only mainnet rent-sysvar read (`src/fees/rent.ts`, the
   same approach as `scripts/mainnet-rent-quote.mjs`), sized against a real
   Core-asset byte model (`src/fees/coreSize.ts`, ported from that same
@@ -405,12 +401,12 @@ display rule already minimizes.
 
 **Guards** (all in `src/fees/compute.ts`):
 
-| Guard | What | On failure |
-|---|---|---|
-| 1. Absolute bounds | Each fee clamped to a USD-intent floor/ceiling (`src/fees/config.ts`: quick $0.05–$1.50, roll 12 $0.50–$25, roll 24 $1–$40), converted to lamports via that cycle's SOL/USD | Clamped to the bound + Discord alert |
-| 2. Input validation | Rent must equal a KNOWN SIMD-0437 value (the baseline or one of the five steps) — a value outside that set is a bad read, not a real step. Storage quote must be in a sane range for the byte size | Whole recompute rejected, last-good kept + Discord alert |
-| 3. Last-good on failure | Any read failure (RPC, Turbo, Jupiter) or a Guard-2 rejection | fee_cache's SERVED columns are never touched — only `last_attempt_*` — so a mint always has a valid cached fee |
-| 4. Large valid move | A fee that passes Guards 1–2 but differs from the last served value by >50% | APPLIED (it's valid) + Discord alert — informational, e.g. "roll fee dropped 47% — SIMD-0437 step likely activated" |
+| Guard                   | What                                                                                                                                                                                               | On failure                                                                                                          |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 1. Absolute bounds      | Each fee clamped to a USD-intent floor/ceiling (`src/fees/config.ts`: quick $0.05–$1.50, roll 12 $0.50–$25, roll 24 $1–$40), converted to lamports via that cycle's SOL/USD                        | Clamped to the bound + Discord alert                                                                                |
+| 2. Input validation     | Rent must equal a KNOWN SIMD-0437 value (the baseline or one of the five steps) — a value outside that set is a bad read, not a real step. Storage quote must be in a sane range for the byte size | Whole recompute rejected, last-good kept + Discord alert                                                            |
+| 3. Last-good on failure | Any read failure (RPC, Turbo, Jupiter) or a Guard-2 rejection                                                                                                                                      | fee*cache's SERVED columns are never touched — only `last_attempt*\*` — so a mint always has a valid cached fee     |
+| 4. Large valid move     | A fee that passes Guards 1–2 but differs from the last served value by >50%                                                                                                                        | APPLIED (it's valid) + Discord alert — informational, e.g. "roll fee dropped 47% — SIMD-0437 step likely activated" |
 
 The floor/ceiling bounds are deliberately WIDE: roll fees will fall
 substantially as rent drops (a 24-roll fee could go from ~$15 today toward ~$6
@@ -444,12 +440,12 @@ discount (`SKR_DISCOUNT`, `src/fees/config.ts`). Rent is unaffected — it is
 always paid in SOL, by whoever already pays it today (the user for a quick
 mint, the Worker for a roll frame).
 
-| Path | Rent | Fee |
-|---|---|---|
-| Quick + SOL | user SOL | user SOL |
-| Quick + $SKR | user SOL | user $SKR (one signature) |
-| Roll + SOL | Worker SOL | user SOL |
-| Roll + $SKR | Worker SOL | user $SKR (fee transaction only) |
+| Path         | Rent       | Fee                              |
+| ------------ | ---------- | -------------------------------- |
+| Quick + SOL  | user SOL   | user SOL                         |
+| Quick + $SKR | user SOL   | user $SKR (one signature)        |
+| Roll + SOL   | Worker SOL | user SOL                         |
+| Roll + $SKR  | Worker SOL | user $SKR (fee transaction only) |
 
 **The Worker issues and stores the quote — never the client.** The same
 "never trust the client" invariant the SOL fee check already enforces applies
@@ -576,11 +572,11 @@ Headroom is `balance ÷ (price of one typical frame × 24)` — a worst-case
 24-frame roll priced off the conservative 3 MiB/frame basis `/funding/status`
 already uses, rounded **down**. Thresholds are in `src/ops/monitor.ts`:
 
-| Level | Condition | Post | Ping |
-|---|---|---|---|
-| `healthy` | ≥ `ALERT_THRESHOLD_LOW_ROLLS` (**20**) rolls | green, on recovery only | no |
-| `low` | 5–19 rolls | amber "top up soon" | no |
-| `critical` | < `ALERT_THRESHOLD_CRITICAL_ROLLS` (**5**) rolls | red "top up today" | **@operator** |
+| Level      | Condition                                        | Post                    | Ping          |
+| ---------- | ------------------------------------------------ | ----------------------- | ------------- |
+| `healthy`  | ≥ `ALERT_THRESHOLD_LOW_ROLLS` (**20**) rolls     | green, on recovery only | no            |
+| `low`      | 5–19 rolls                                       | amber "top up soon"     | no            |
+| `critical` | < `ALERT_THRESHOLD_CRITICAL_ROLLS` (**5**) rolls | red "top up today"      | **@operator** |
 
 Both thresholds are deliberately generous (`TODO` markers to tune). A top-up
 takes 120+ seconds to confirm and you check in roughly daily, so the first
@@ -647,11 +643,12 @@ is bumped on every run, so a stale timestamp means the cron itself stopped.
 Accrued roll fees are recorded in D1 as `CONVERSION_PENDING` (ManualSink —
 nothing auto-swaps).
 
-**When:** on a calendar cadence (e.g. weekly) or when `GET /treasury/status`
+**When:** on a calendar cadence (e.g. weekly) or when authenticated `GET /treasury/status`
 shows `pendingLamports` above your threshold.
 
 **How:**
-1. `GET /treasury/status` → note `pendingLamports` / `pendingCount`.
+
+1. Authenticated `GET /treasury/status` → note `pendingLamports` / `pendingCount`.
 2. Swap that SOL → $SKR manually from the treasury wallet (e.g. Jupiter).
    The treasury address itself is still TODO/pending configuration.
 3. Mark the rows converted:
@@ -675,7 +672,7 @@ still fails the checkpoint holds for the next attempt.
 `DEAD` rows come from two different alerts — check which one fired, because
 the correct next step differs:
 
-**"Quick mint stuck on placeholder"** — a finalize *job* (already claimed,
+**"Quick mint stuck on placeholder"** — a finalize _job_ (already claimed,
 already past verify) exhausted its consumer retries. Read it as recoverable,
 not lost: the fee is banked and the asset exists on-chain, just still showing
 the "Developing…" placeholder.
@@ -708,7 +705,7 @@ placeholder URI mismatch — the alert's "Rejection reason" field says exactly
 which). `image_uri`/`arweave_uri` are both `NULL` on these — nothing was ever
 uploaded. **Do not blindly re-drive this one** the way you would the case
 above: the rejection reason is a fact about the landed transaction, not a
-transient fault, so resuming without understanding *why* it was rejected can
+transient fault, so resuming without understanding _why_ it was rejected can
 mean spending Arweave to finalize a mint that was never actually paid for
 correctly. Read the reason, confirm on Solscan what actually happened, and
 only then decide: fix and finalize manually — `scripts/recover-quick-mint.mjs`
@@ -741,7 +738,7 @@ leave `asset_address`/`signature` `NULL` forever if the calling client never
 came back, e.g. the app was closed or killed mid-flow. The mint had landed and
 was paid for; nothing server-side knew what transaction to even look for). As
 of this fix, `finalizeQuickMint` calls `recordFinalizeAttempt` and persists
-the signature/asset *before* verify runs, so a deferred row is discoverable
+the signature/asset _before_ verify runs, so a deferred row is discoverable
 immediately via `GET /quick/<asset>` even while still `STAGED`. A separate
 scheduled sweep, `redriveDeferredFinalizes`, re-attempts every such row every
 6h independent of the client — 2 minutes after the attempt (so it never races

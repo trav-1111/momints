@@ -80,7 +80,9 @@ export async function finalizeQuickMintJob(deps: FinalizeConsumerDeps, quickMint
     if (!object) {
       throw new Error(
         `Quick mint ${row.id} has no image_uri and its staged object (${row.staging_key}) is gone — ` +
-          'the image cannot be recovered. Asset ' + (row.asset_address ?? '?') + ' is stuck on the placeholder.',
+          'the image cannot be recovered. Asset ' +
+          (row.asset_address ?? '?') +
+          ' is stuck on the placeholder.',
       )
     }
     imageBytes = new Uint8Array(await object.arrayBuffer())

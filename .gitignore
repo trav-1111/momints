@@ -34,6 +34,10 @@ yarn-error.*
 # local env files
 .env*.local
 .env
+.env.*
+!.env*.example
+.dev.vars*
+!.dev.vars*.example
 
 # typescript
 *.tsbuildinfo
@@ -43,6 +47,12 @@ app-example
 # generated native folders
 /ios
 /android
+/worker/filmstock-validation/
+/worker/.staging-secrets/
+/worker/.staging-evidence/
+/worker/.production-evidence/
+modules/*/android/build
+modules/*/android/.cxx
 
 # installed agent skills — vendored third-party content, re-created by
 # `npx skills add <source>`. .claude/skills holds symlinks into .agents.
@@ -56,3 +66,14 @@ skills-lock.json
 # Agent worktrees — scratch checkouts, never part of the repo. Three of these
 # were once committed as accidental gitlinks; this stops that recurring.
 /.claude/worktrees
+
+# Private, retained authoring material (not submission content)
+/.claude/settings.local.json
+/worker/filmstock-drafts/
+/worker/scripts/make-bali-starter-contact.mjs
+
+# Generated native/module and package outputs
+modules/*/android/.gradle/
+*.apk
+*.aab
+/worker/wrangler.review.local.toml

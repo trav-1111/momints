@@ -1,8 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
-import { View, Text, Pressable, FlatList, Image, Dimensions, Alert } from 'react-native'
+import { View, Text, Pressable, FlatList, Dimensions, Alert } from 'react-native'
 import { useRouter } from 'expo-router'
 import * as MediaLibrary from 'expo-media-library'
-import { File } from 'expo-file-system'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore, Photo } from '../store/photos'
 import { useSessionStore } from '../store/session'
@@ -10,9 +9,11 @@ import { useMintQueue } from '../store/mintQueue'
 import { useRollActions } from '../hooks/useRollActions'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { RollCard } from '../components/RollCard'
+import { deleteCapture } from '../services/imagePrivacy'
 import { FinishedRollCard } from '../components/FinishedRollCard'
 import { colors, fonts } from '../theme'
 import { IconBack, IconCheck, IconMint, IconSave, IconTrash } from '../components/icons'
+import { PrivatePhotoImage } from '../components/PrivatePhotoImage'
 
 const { width } = Dimensions.get('window')
 const ITEM_SIZE = (width - 36 - 12) / 3
@@ -21,7 +22,6 @@ export default function GalleryScreen() {
   const router = useRouter()
   const { account, connect } = useMobileWallet()
   const photos = usePhotoStore((state) => state.photos)
-  const setAction = usePhotoStore((state) => state.setAction)
   const setBulkAction = usePhotoStore((state) => state.setBulkAction)
   const removeBulkPhotos = usePhotoStore((state) => state.removeBulkPhotos)
 
@@ -66,9 +66,7 @@ export default function GalleryScreen() {
       group.frames.push(p)
       groups.set(p.rollId, group)
     }
-    return [...groups.values()].sort(
-      (a, b) => (b.frames[0]?.capturedAt ?? 0) - (a.frames[0]?.capturedAt ?? 0),
-    )
+    return [...groups.values()].sort((a, b) => (b.frames[0]?.capturedAt ?? 0) - (a.frames[0]?.capturedAt ?? 0))
   }, [photos, activeRoll])
 
   const photosForMint = useMemo(() => quickPhotos.filter((p) => p.action === 'mint'), [quickPhotos])
@@ -123,12 +121,7 @@ export default function GalleryScreen() {
         if (action === 'delete') {
           for (const id of ids) {
             const photo = photos.find((p) => p.id === id)
-            if (photo) {
-              const photoFile = new File(photo.uri)
-              if (photoFile.exists) {
-                photoFile.delete()
-              }
-            }
+            if (photo) deleteCapture(photo.uri)
           }
           removeBulkPhotos(ids)
           Alert.alert('Deleted', `${ids.length} photo(s) deleted`)
@@ -139,7 +132,8 @@ export default function GalleryScreen() {
             if (photo) {
               const saved = await saveToGallery(photo.uri)
               if (saved) {
-                setAction(id, 'save')
+                deleteCapture(photo.uri)
+                removeBulkPhotos([id])
                 savedCount++
               }
             }
@@ -169,7 +163,7 @@ export default function GalleryScreen() {
         exitSelectMode()
       }
     },
-    [selectedIds, photos, setBulkAction, removeBulkPhotos, setAction, saveToGallery, exitSelectMode],
+    [selectedIds, photos, setBulkAction, removeBulkPhotos, saveToGallery, exitSelectMode],
   )
 
   const handlePhotoPress = useCallback(
@@ -200,7 +194,6 @@ export default function GalleryScreen() {
     router.push('/mint/progress')
   }, [photosForMint.length, router, account, connect])
 
-
   const handleBack = useCallback(() => {
     if (selectMode) {
       exitSelectMode()
@@ -224,7 +217,14 @@ export default function GalleryScreen() {
           }}
           style={{ margin: 2, borderRadius: 8, overflow: 'hidden', width: ITEM_SIZE, height: ITEM_SIZE }}
         >
-          <Image source={{ uri: item.uri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+          <PrivatePhotoImage
+            uri={item.uri}
+            photoId={item.id}
+            displayWidth={ITEM_SIZE}
+            displayHeight={ITEM_SIZE}
+            style={{ width: '100%', height: '100%' }}
+            contentFit="cover"
+          />
 
           {selectMode && (
             <View
@@ -335,6 +335,10 @@ export default function GalleryScreen() {
           renderItem={renderPhoto}
           keyExtractor={(item) => item.id}
           numColumns={3}
+          initialNumToRender={12}
+          maxToRenderPerBatch={9}
+          windowSize={5}
+          removeClippedSubviews
           contentContainerStyle={{ paddingHorizontal: 16, paddingBottom: 12 }}
           showsVerticalScrollIndicator={false}
           ListHeaderComponent={

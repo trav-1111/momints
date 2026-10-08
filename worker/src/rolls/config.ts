@@ -16,11 +16,18 @@ export function isRollSize(size: number): size is RollSize {
 /** Image types accepted for permanent storage — frames and quick mints alike. */
 export const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
+/** New roll-frame artifact contract. Quick uses the same hard byte ceiling. */
+export const PERMANENT_IMAGE_MIME = 'image/jpeg'
+export const PERMANENT_IMAGE_MAX_BYTES = 3 * 1024 * 1024
+export const PERMANENT_IMAGE_TARGET_BYTES = 2_900_000
+export const PERMANENT_IMAGE_MAX_PIXELS = 12_000_000
+export const PERMANENT_IMAGE_MAX_LONG_EDGE = 4_000
+
 // Funding pre-check sizing. Spike data (docs/spikes/irys/RESULT2.md): 1–6 MB
 // payloads all upload fine, ~2.5s server total pre-funded; app frames land
 // around 1–3 MB. 3 MiB/frame is a deliberately conservative planning figure —
 // used ONLY to size the ensureFunded() pre-check, never as an upload cap.
-export const ESTIMATED_FRAME_BYTES = 3 * 1024 * 1024
+export const ESTIMATED_FRAME_BYTES = PERMANENT_IMAGE_MAX_BYTES
 export const COVER_MAX_BYTES = 200 * 1024
 export const ESTIMATED_METADATA_BYTES = 4 * 1024
 

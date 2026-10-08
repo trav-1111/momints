@@ -3,18 +3,28 @@ import { View, Text, Pressable, TextInput, ScrollView, ActivityIndicator, Alert 
 import { useRouter } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useSessionStore } from '../store/session'
-import type { AppMode, FilmMode, AspectRatio } from '../store/session'
+import type { AppMode, AspectRatio } from '../store/session'
 import { useWalletDomain } from '../hooks/useWalletDomain'
 import { useCreateRoll, SKR_UNAVAILABLE_MESSAGE, type CreateRollPhase } from '../hooks/useCreateRoll'
 import { useMintRoll } from '../hooks/useMintRoll'
+import { useRollActions } from '../hooks/useRollActions'
 import { PREPAID_ROLL_SIZES, getRollFeeLamports, formatSol, type PrepaidRollSize } from '../config/roll'
 import { formatSkr } from '../config/skr'
 import { isWorkerRollEnabled } from '../config/rollApi'
-import { completeWorkerRoll, getOpenWorkerRoll, getWorkerFees, type OpenRollSummary } from '../services/rollApi'
+import {
+  completeWorkerRoll,
+  ensureWorkerRollAuthorization,
+  getOpenWorkerRoll,
+  getWorkerFees,
+  type OpenRollSummary,
+} from '../services/rollApi'
 import { isSkrQuoteUnavailable, quoteSkrFee } from '../services/skrApi'
 import { ARTIST_NAME_MAX_LENGTH } from '../services/rollIdentity'
 import { colors, fonts, tracking } from '../theme'
 import { IconCamera, IconFilm } from '../components/icons'
+import { FilmStockPicker } from '../components/FilmStockPicker'
+import { DEFAULT_COLOR_FILM_ID, ensureFilmStockRecipe, type FilmStockCatalogueItem } from '../services/filmstocks'
+import { quickEligible, useFilmStockStore } from '../store/filmstocks'
 
 const CREATE_PHASE_LABEL: Record<CreateRollPhase, string> = {
   cover: 'Rendering cover…',
@@ -23,10 +33,6 @@ const CREATE_PHASE_LABEL: Record<CreateRollPhase, string> = {
   confirming: 'Confirming on-chain…',
   creating: 'Creating roll…',
 }
-const FILM_MODES: { value: FilmMode; label: string }[] = [
-  { value: 'color', label: 'Color' },
-  { value: 'bw', label: 'B&W' },
-]
 const ASPECTS: { value: AspectRatio; label: string }[] = [
   { value: 'full', label: 'Full' },
   { value: '1:1', label: '1:1' },
@@ -90,17 +96,29 @@ export default function ModeSelectScreen() {
   const resumeRoll = useSessionStore((s) => s.resumeRoll)
   const activeRoll = useSessionStore((s) => s.activeRoll)
 
-  const { account, connect } = useMobileWallet()
+  const { account, connect, signMessage } = useMobileWallet()
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
   const { createRoll, phase, error: createError, isCreating } = useCreateRoll()
   const { mintRoll } = useMintRoll()
+  const { discardRoll } = useRollActions()
 
   const [selectedMode, setSelectedMode] = useState<AppMode>('quick')
   const [artist, setArtist] = useState('')
   const [rollSize, setRollSize] = useState<PrepaidRollSize>(12)
-  const [filmMode, setFilmMode] = useState<FilmMode>('color')
+  const [rollFilmStockId, setRollFilmStockId] = useState(DEFAULT_COLOR_FILM_ID)
   const [aspect, setAspect] = useState<AspectRatio>('full')
+  const filmState = useFilmStockStore()
+
+  const selectFilm = useCallback(async (stock: FilmStockCatalogueItem, purpose: 'roll' | 'quick') => {
+    try {
+      await ensureFilmStockRecipe(stock)
+      if (purpose === 'roll') setRollFilmStockId(stock.filmStockId)
+      else useFilmStockStore.getState().selectQuickFilm(stock.filmStockId)
+    } catch (err) {
+      Alert.alert('Film unavailable', err instanceof Error ? err.message : String(err))
+    }
+  }, [])
 
   // Prefill artist from the resolved SKR handle as soon as it lands — the
   // field stays editable (vanity name); provenance uses the handle itself.
@@ -124,6 +142,24 @@ export default function ModeSelectScreen() {
     }
     router.replace('/camera')
   }, [activeRoll, resumeRoll, mintRoll, router])
+
+  const handleDiscardRoll = useCallback(() => {
+    if (!activeRoll) return
+    Alert.alert(
+      'Discard roll',
+      `Delete "${activeRoll.name}" and its ${activeRoll.frameIds.length} frame(s) without minting?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Discard',
+          style: 'destructive',
+          onPress: () => {
+            void discardRoll()
+          },
+        },
+      ],
+    )
+  }, [activeRoll, discardRoll])
 
   // A roll the backend still has open that this device knows nothing about —
   // e.g. its frames were minted but the roll never reached its purchased size,
@@ -217,6 +253,8 @@ export default function ModeSelectScreen() {
     if (!strandedRoll || isClosingStranded) return
     setIsClosingStranded(true)
     try {
+      if (!walletAddress) throw new Error('Connect the roll wallet first.')
+      await ensureWorkerRollAuthorization(strandedRoll.collectionAddress, walletAddress, signMessage)
       await completeWorkerRoll(strandedRoll.collectionAddress)
       setStrandedRoll(null)
     } catch (err) {
@@ -224,10 +262,22 @@ export default function ModeSelectScreen() {
     } finally {
       setIsClosingStranded(false)
     }
-  }, [strandedRoll, isClosingStranded])
+  }, [strandedRoll, isClosingStranded, walletAddress, signMessage])
 
   const handleLoadCamera = useCallback(async () => {
     if (selectedMode === 'quick') {
+      const currentFilmState = useFilmStockStore.getState()
+      const stock = currentFilmState.catalogue.find((item) => item.filmStockId === currentFilmState.quickFilmStockId)
+      if (!stock || !quickEligible(stock, currentFilmState)) {
+        Alert.alert('Choose a film', 'Choose a House film or an unlocked film from your cabinet.')
+        return
+      }
+      try {
+        await ensureFilmStockRecipe(stock)
+      } catch (err) {
+        Alert.alert('Film unavailable', err instanceof Error ? err.message : String(err))
+        return
+      }
       selectQuickMode()
       router.replace('/camera')
       return
@@ -242,11 +292,16 @@ export default function ModeSelectScreen() {
       return
     }
 
+    const stock = useFilmStockStore.getState().catalogue.find((item) => item.filmStockId === rollFilmStockId)
+    if (!stock) {
+      Alert.alert('Choose a film', 'Refresh the Film Shelf and choose a stock before loading this roll.')
+      return
+    }
     const created = await createRoll({
       size: rollSize,
       artist,
       skrHandle: domain,
-      film: { mode: filmMode },
+      film: { mode: stock.baseMode, filmStockId: stock.filmStockId },
       aspect,
       payment: payWithSkr && skrQuoteAmount !== null ? 'SKR' : 'SOL',
     })
@@ -260,7 +315,7 @@ export default function ModeSelectScreen() {
     rollSize,
     artist,
     domain,
-    filmMode,
+    rollFilmStockId,
     aspect,
     payWithSkr,
     skrQuoteAmount,
@@ -302,45 +357,57 @@ export default function ModeSelectScreen() {
 
       {/* Roll in progress — resume it (one roll at a time) */}
       {hasRoll && activeRoll && (
-        <Pressable
-          onPress={handleResumeRoll}
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 12,
-            paddingVertical: 12,
-            paddingHorizontal: 14,
-            borderRadius: 12,
-            backgroundColor: colors.surface,
-            borderWidth: 1,
-            borderColor: colors.border,
-            marginBottom: 16,
-          }}
-        >
-          <View
+        <View style={{ marginBottom: 16 }}>
+          <Pressable
+            onPress={handleResumeRoll}
             style={{
-              width: 34,
-              height: 34,
-              borderRadius: 8,
-              backgroundColor: colors.accentTint,
+              flexDirection: 'row',
               alignItems: 'center',
-              justifyContent: 'center',
+              gap: 12,
+              paddingVertical: 12,
+              paddingHorizontal: 14,
+              borderRadius: 12,
+              backgroundColor: colors.surface,
+              borderWidth: 1,
+              borderColor: colors.border,
             }}
           >
-            <IconFilm size={17} color={colors.accent} />
-          </View>
-          <View style={{ flex: 1, minWidth: 0 }}>
-            <Text numberOfLines={1} style={{ fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.text }}>
-              {activeRoll.name}
+            <View
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 8,
+                backgroundColor: colors.accentTint,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <IconFilm size={17} color={colors.accent} />
+            </View>
+            <View style={{ flex: 1, minWidth: 0 }}>
+              <Text numberOfLines={1} style={{ fontFamily: fonts.sansSemiBold, fontSize: 13, color: colors.text }}>
+                {activeRoll.name}
+              </Text>
+              <Text style={{ fontFamily: fonts.mono, fontSize: 10.5, color: colors.textSecondary }}>
+                {activeRoll.frameIds.length} / {activeRoll.size} exposures
+              </Text>
+            </View>
+            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accent }}>
+              {activeRoll.developed ? 'MINT →' : 'RESUME →'}
             </Text>
-            <Text style={{ fontFamily: fonts.mono, fontSize: 10.5, color: colors.textSecondary }}>
-              {activeRoll.frameIds.length} / {activeRoll.size} exposures
-            </Text>
+          </Pressable>
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 6 }}>
+            <Pressable
+              onPress={handleDiscardRoll}
+              hitSlop={8}
+              style={{ paddingVertical: 4, paddingHorizontal: 10 }}
+            >
+              <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.redSoft }}>
+                Discard roll
+              </Text>
+            </Pressable>
           </View>
-          <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.accent }}>
-            {activeRoll.developed ? 'MINT →' : 'RESUME →'}
-          </Text>
-        </Pressable>
+        </View>
       )}
 
       {/* Unfinished roll held open by the backend but absent from this device —
@@ -499,6 +566,17 @@ export default function ModeSelectScreen() {
       </View>
 
       {/* Roll options — revealed when New Roll is selected */}
+      {selectedMode === 'quick' && (
+        <View style={{ marginTop: 20 }}>
+          <FieldLabel>QUICK SHOOT FILM</FieldLabel>
+          <FilmStockPicker
+            purpose="quick"
+            selectedId={filmState.quickFilmStockId}
+            onSelect={(stock) => void selectFilm(stock, 'quick')}
+          />
+        </View>
+      )}
+
       {selectedMode === 'roll' && !hasRoll && (
         <View>
           <FieldLabel>EXPOSURES</FieldLabel>
@@ -537,11 +615,11 @@ export default function ModeSelectScreen() {
           />
 
           <FieldLabel>FILM</FieldLabel>
-          <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>
-            {FILM_MODES.map(({ value, label }) => (
-              <Pill key={value} label={label} selected={filmMode === value} onPress={() => setFilmMode(value)} />
-            ))}
-          </View>
+          <FilmStockPicker
+            purpose="roll"
+            selectedId={rollFilmStockId}
+            onSelect={(stock) => void selectFilm(stock, 'roll')}
+          />
 
           <FieldLabel>ASPECT RATIO</FieldLabel>
           <View style={{ flexDirection: 'row', gap: 8, marginBottom: 16 }}>

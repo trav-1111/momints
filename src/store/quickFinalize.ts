@@ -1,6 +1,10 @@
 import { Paths, File } from 'expo-file-system'
 import { finalizeQuickMint } from '../services/quickMintApi'
 import { RollApiError } from '../services/rollApi'
+import { tryPermanentQuickImage } from '../services/permanentAsset'
+import { historyHydrated, useMintQueue, type MintFilmUsed } from './mintQueue'
+import type { AspectRatio } from './session'
+import { mergePendingDrain } from './pendingFinalizeGuard.cjs'
 
 /**
  * Pending quick-mint finalizes, persisted across app launches.
@@ -33,6 +37,14 @@ export interface PendingFinalize {
    * checkPriorAttempt, which only helps for mints signed after this update.
    */
   photoId?: string
+  history?: {
+    title: string
+    artist: string
+    capturedAt: number
+    filmUsed?: MintFilmUsed
+    aspect?: AspectRatio
+    artifact?: { imageHash: string; width: number; height: number }
+  }
   createdAt: number
   attempts: number
 }
@@ -42,9 +54,12 @@ export interface PendingFinalize {
  * indefinite/transient failures, so this cap is a backstop, not a normal path.
  */
 const MAX_PENDING = 200
+const POLL_INTERVAL_MS = 15_000
+const POLL_WINDOW_MS = 15 * 60 * 1_000
 
 let cache: PendingFinalize[] | null = null
 let writing: Promise<void> = Promise.resolve()
+let activePoll: Promise<DrainResult> | null = null
 
 function file(): File {
   return new File(Paths.document, `${STORAGE_KEY}.json`)
@@ -61,7 +76,13 @@ function parse(raw: unknown): PendingFinalize[] {
       typeof e.assetAddress === 'string' &&
       // photoId is optional (see the interface doc) — entries from before it
       // existed are kept, just unreachable by checkPriorAttempt.
-      (e.photoId === undefined || typeof e.photoId === 'string'),
+      (e.photoId === undefined || typeof e.photoId === 'string') &&
+      (e.history === undefined ||
+        (e.history !== null &&
+          typeof e.history === 'object' &&
+          typeof e.history.title === 'string' &&
+          typeof e.history.artist === 'string' &&
+          typeof e.history.capturedAt === 'number')),
   )
 }
 
@@ -105,9 +126,7 @@ function persist(next: PendingFinalize[]): Promise<void> {
  * crash-safety net for this one mint — but it must not also break the mint
  * that is currently succeeding.
  */
-export async function recordPendingFinalize(
-  entry: Omit<PendingFinalize, 'createdAt' | 'attempts'>,
-): Promise<void> {
+export async function recordPendingFinalize(entry: Omit<PendingFinalize, 'createdAt' | 'attempts'>): Promise<void> {
   try {
     const pending = await load()
     if (pending.some((e) => e.stagingKey === entry.stagingKey)) return
@@ -164,11 +183,41 @@ export async function drainPendingFinalizes(): Promise<DrainResult> {
 
   for (const entry of pending) {
     try {
-      await finalizeQuickMint({
+      const result = await finalizeQuickMint({
         stagingKey: entry.stagingKey,
         signature: entry.signature,
         assetAddress: entry.assetAddress,
       })
+      const imageUri = await tryPermanentQuickImage(entry.assetAddress, result.imageUri)
+      if (!imageUri) {
+        survivors.push({ ...entry, attempts: entry.attempts + 1 })
+        continue
+      }
+      if (entry.photoId && entry.history) {
+        await historyHydrated
+        const exists = useMintQueue.getState().mintHistory.some((item) => item.mintAddress === entry.assetAddress)
+        if (!exists) {
+          const artifact =
+            result.imageHash && result.width && result.height
+              ? { imageHash: result.imageHash, width: result.width, height: result.height }
+              : entry.history.artifact
+          useMintQueue.getState().addToHistory({
+            id: entry.photoId,
+            imageUri,
+            title: entry.history.title,
+            artist: entry.history.artist,
+            transactionSignature: entry.signature,
+            mintAddress: entry.assetAddress,
+            mintedAt: new Date().toISOString(),
+            capturedAt: entry.history.capturedAt,
+            filmUsed: entry.history.filmUsed,
+            aspect: entry.history.aspect,
+            imageHash: artifact?.imageHash,
+            width: artifact?.width,
+            height: artifact?.height,
+          })
+        }
+      }
       finalized++
     } catch (err) {
       if (isDefinitive(err)) {
@@ -180,8 +229,35 @@ export async function drainPendingFinalizes(): Promise<DrainResult> {
     }
   }
 
-  await persist(survivors)
-  return { finalized, stillPending: survivors.length }
+  // A wallet round-trip can foreground the app while the next signed item is
+  // being recorded. Preserve anything added after this drain took its
+  // snapshot instead of overwriting it with the snapshot's survivors.
+  const current = await load()
+  const merged = mergePendingDrain(current, pending, survivors)
+  await persist(merged)
+  return { finalized, stillPending: merged.length }
+}
+
+/**
+ * Poll paid quick mints without holding the mint screen open. Arweave commonly
+ * needs 8–12 minutes to propagate, so an unavailable image remains pending
+ * and is reconciled into history automatically. Calls share one poll loop.
+ */
+export function startPendingFinalizePolling(): Promise<DrainResult> {
+  if (activePoll) return activePoll
+  activePoll = (async () => {
+    const deadline = Date.now() + POLL_WINDOW_MS
+    let result: DrainResult = { finalized: 0, stillPending: 0 }
+    do {
+      result = await drainPendingFinalizes()
+      if (result.stillPending === 0) return result
+      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS))
+    } while (Date.now() < deadline)
+    return result
+  })().finally(() => {
+    activePoll = null
+  })
+  return activePoll
 }
 
 /**
@@ -194,8 +270,15 @@ const RECOVERY_WINDOW_MS = 3 * 60 * 1000
 
 export type PriorAttemptCheck =
   | { action: 'none' }
-  | { action: 'resolved'; signature: string; assetAddress: string }
-  | { action: 'wait' }
+  | {
+      action: 'resolved'
+      stagingKey: string
+      signature: string
+      assetAddress: string
+      imageUri: string
+      artifact?: { imageHash: string; width: number; height: number }
+    }
+  | { action: 'wait'; signature: string; assetAddress: string }
   | { action: 'clear' }
 
 /**
@@ -223,18 +306,31 @@ export async function checkPriorAttempt(photoId: string): Promise<PriorAttemptCh
   if (!entry) return { action: 'none' }
 
   try {
-    await finalizeQuickMint({
+    const result = await finalizeQuickMint({
       stagingKey: entry.stagingKey,
       signature: entry.signature,
       assetAddress: entry.assetAddress,
     })
-    await clearPendingFinalize(entry.stagingKey)
-    return { action: 'resolved', signature: entry.signature, assetAddress: entry.assetAddress }
+    const imageUri = await tryPermanentQuickImage(entry.assetAddress, result.imageUri)
+    if (!imageUri) {
+      return { action: 'wait', signature: entry.signature, assetAddress: entry.assetAddress }
+    }
+    return {
+      action: 'resolved',
+      stagingKey: entry.stagingKey,
+      signature: entry.signature,
+      assetAddress: entry.assetAddress,
+      imageUri,
+      artifact:
+        result.imageHash && result.width && result.height
+          ? { imageHash: result.imageHash, width: result.width, height: result.height }
+          : entry.history?.artifact,
+    }
   } catch (err) {
     if (isDefinitive(err) || Date.now() - entry.createdAt >= RECOVERY_WINDOW_MS) {
       await clearPendingFinalize(entry.stagingKey)
       return { action: 'clear' }
     }
-    return { action: 'wait' }
+    return { action: 'wait', signature: entry.signature, assetAddress: entry.assetAddress }
   }
 }

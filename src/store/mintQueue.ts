@@ -1,7 +1,10 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
 import { Paths, File } from 'expo-file-system'
-import type { CaptureMeta } from './photos'
+import type { CaptureMeta, PhotoArtifact } from './photos'
+import type { AspectRatio } from './session'
+import { resolvePermanentImageUri } from '../services/permanentAsset'
+import { isPermanentArweaveUri, normalizeArweaveUri } from '../services/imagePrivacy'
 
 export interface RollContext {
   rollId: string
@@ -11,6 +14,9 @@ export interface RollContext {
   /** Prepaid roll's Core collection — frames mint into it as Core assets. */
   collectionAddress?: string
 }
+
+/** Display name of the exact immutable film recipe applied to the capture. */
+export type MintFilmUsed = string
 
 export interface MintQueueItem {
   id: string
@@ -26,18 +32,30 @@ export interface MintQueueItem {
   createdAt: number
   rollContext?: RollContext
   captureMeta?: CaptureMeta
+  /** App-side display metadata for contact sheets; not sent to mint rails. */
+  filmUsed?: MintFilmUsed
+  aspect?: AspectRatio
+  /** Verified local artifact receipt; Worker independently derives its own. */
+  artifact?: PhotoArtifact
   /** Quick mint only — which currency should pay the fee. Defaults 'SOL'. A Worker quote failure falls back to SOL. */
   paymentCurrency?: 'SOL' | 'SKR'
 }
 
 export interface MintHistoryItem {
   id: string
-  photoUri: string
+  imageUri: string
+  imageHash?: string
+  width?: number
+  height?: number
   title: string
   artist: string
-  txSignature: string
-  mintAddress?: string
-  mintedAt: number
+  transactionSignature: string
+  mintAddress: string
+  mintedAt: string
+  capturedAt?: number
+  rollContext?: RollContext
+  filmUsed?: MintFilmUsed
+  aspect?: AspectRatio
 }
 
 interface MintQueueStore {
@@ -49,7 +67,7 @@ interface MintQueueStore {
     status: MintQueueItem['status'],
     txSignature?: string,
     error?: string,
-    mintAddress?: string
+    mintAddress?: string,
   ) => void
   removeFromQueue: (photoId: string) => void
   getNextPending: () => MintQueueItem | undefined
@@ -60,33 +78,129 @@ interface MintQueueStore {
 }
 
 const HISTORY_FILE = 'mint-history'
+const MIGRATION_PENDING_FILE = 'mint-history-migration-pending'
+
+function historyFile(name: string): File {
+  return new File(Paths.document, name + '.json')
+}
+
+async function readArray(file: File): Promise<unknown[]> {
+  if (!file.exists) return []
+  const parsed: unknown = JSON.parse(await file.text())
+  return Array.isArray(parsed) ? parsed : []
+}
+
+function safeMigrationRecord(raw: unknown): Record<string, unknown> | null {
+  if (raw === null || typeof raw !== 'object') return null
+  const h = raw as Record<string, unknown>
+  return {
+    id: h.id,
+    title: h.title,
+    artist: h.artist,
+    transactionSignature: h.transactionSignature,
+    txSignature: h.txSignature,
+    mintAddress: h.mintAddress,
+    mintedAt: h.mintedAt,
+    capturedAt: h.capturedAt,
+    rollContext: h.rollContext,
+    filmUsed: h.filmUsed,
+    aspect: h.aspect,
+    imageHash: h.imageHash,
+    width: h.width,
+    height: h.height,
+  }
+}
+
+function persistPendingMigration(items: Record<string, unknown>[]): void {
+  const file = historyFile(MIGRATION_PENDING_FILE)
+  if (items.length === 0) {
+    if (file.exists) file.delete()
+    return
+  }
+  file.write(JSON.stringify(items))
+}
 
 // Mint history is the app's only durable record of what is already on-chain —
 // the photo store reconciles against it on startup — so a malformed file must
 // degrade to "no history" per item rather than poisoning that check.
-function parseHistoryItem(raw: unknown): MintHistoryItem | null {
+async function parseHistoryItem(raw: unknown): Promise<MintHistoryItem | null> {
   if (raw === null || typeof raw !== 'object') return null
   const h = raw as Record<string, unknown>
-  if (typeof h.id !== 'string' || typeof h.txSignature !== 'string') return null
+  const transactionSignature =
+    typeof h.transactionSignature === 'string'
+      ? h.transactionSignature
+      : typeof h.txSignature === 'string'
+        ? h.txSignature
+        : null
+  const mintAddress = typeof h.mintAddress === 'string' ? h.mintAddress : null
+  if (typeof h.id !== 'string' || !transactionSignature || !mintAddress) return null
+  let rollContext: RollContext | undefined
+  if (h.rollContext !== null && typeof h.rollContext === 'object') {
+    const r = h.rollContext as Record<string, unknown>
+    if (
+      typeof r.rollId === 'string' &&
+      typeof r.rollName === 'string' &&
+      typeof r.frameNumber === 'number' &&
+      typeof r.totalFrames === 'number'
+    ) {
+      rollContext = {
+        rollId: r.rollId,
+        rollName: r.rollName,
+        frameNumber: r.frameNumber,
+        totalFrames: r.totalFrames,
+        collectionAddress: typeof r.collectionAddress === 'string' ? r.collectionAddress : undefined,
+      }
+    }
+  }
+  const directImage =
+    typeof h.imageUri === 'string'
+      ? h.imageUri
+      : typeof h.photoUri === 'string' && /^https?:\/\//i.test(h.photoUri)
+        ? h.photoUri
+        : undefined
+  const imageUri = await resolvePermanentImageUri({ imageUri: directImage, mintAddress, rollContext })
+  if (!imageUri || !isPermanentArweaveUri(normalizeArweaveUri(imageUri))) return null
+  const mintedAt =
+    typeof h.mintedAt === 'string'
+      ? h.mintedAt
+      : typeof h.mintedAt === 'number'
+        ? new Date(h.mintedAt).toISOString()
+        : new Date(0).toISOString()
   return {
     id: h.id,
-    photoUri: typeof h.photoUri === 'string' ? h.photoUri : '',
+    imageUri: normalizeArweaveUri(imageUri),
+    imageHash: typeof h.imageHash === 'string' ? h.imageHash : undefined,
+    width: typeof h.width === 'number' ? h.width : undefined,
+    height: typeof h.height === 'number' ? h.height : undefined,
     title: typeof h.title === 'string' ? h.title : 'Untitled',
     artist: typeof h.artist === 'string' ? h.artist : '',
-    txSignature: h.txSignature,
-    mintAddress: typeof h.mintAddress === 'string' ? h.mintAddress : undefined,
-    mintedAt: typeof h.mintedAt === 'number' ? h.mintedAt : 0,
+    transactionSignature,
+    mintAddress,
+    mintedAt,
+    capturedAt: typeof h.capturedAt === 'number' ? h.capturedAt : undefined,
+    rollContext,
+    filmUsed: typeof h.filmUsed === 'string' && h.filmUsed.trim() ? h.filmUsed : undefined,
+    aspect:
+      h.aspect === '1:1' || h.aspect === '4:3' || h.aspect === '16:9' || h.aspect === 'full' ? h.aspect : undefined,
   }
 }
 
 async function readHistory(): Promise<MintHistoryItem[]> {
   try {
-    const file = new File(Paths.document, `${HISTORY_FILE}.json`)
-    if (!file.exists) return []
-    const text = await file.text()
-    const data: unknown = JSON.parse(text)
-    if (!Array.isArray(data)) return []
-    return data.map(parseHistoryItem).filter((h): h is MintHistoryItem => h !== null)
+    const source = [
+      ...(await readArray(historyFile(HISTORY_FILE))),
+      ...(await readArray(historyFile(MIGRATION_PENDING_FILE))),
+    ]
+    const migrated = await Promise.all(source.map(parseHistoryItem))
+    const history = migrated.filter((item): item is MintHistoryItem => item !== null)
+    const pending = source.flatMap((raw, index) => {
+      if (migrated[index]) return []
+      const safe = safeMigrationRecord(raw)
+      return safe ? [safe] : []
+    })
+    persistHistory(history)
+    persistPendingMigration(pending)
+    return history
   } catch {
     return []
   }
@@ -94,7 +208,10 @@ async function readHistory(): Promise<MintHistoryItem[]> {
 
 function persistHistory(history: MintHistoryItem[]): void {
   try {
-    const file = new File(Paths.document, `${HISTORY_FILE}.json`)
+    if (history.some((item) => !isPermanentArweaveUri(item.imageUri))) {
+      throw new Error('Refusing to persist non-Arweave mint history.')
+    }
+    const file = historyFile(HISTORY_FILE)
     file.write(JSON.stringify(history))
   } catch {
     // non-critical
@@ -120,7 +237,7 @@ export const useMintQueue = create<MintQueueStore>((set, get) => ({
                 txSignature: undefined,
                 mintAddress: undefined,
               }
-            : q
+            : q,
         ),
       }))
     } else {
@@ -139,9 +256,7 @@ export const useMintQueue = create<MintQueueStore>((set, get) => ({
   updateStatus: (photoId, status, txSignature, error, mintAddress) => {
     set((state) => ({
       queue: state.queue.map((item) =>
-        item.photoId === photoId
-          ? { ...item, status, txSignature, error, mintAddress }
-          : item
+        item.photoId === photoId ? { ...item, status, txSignature, error, mintAddress } : item,
       ),
     }))
   },
@@ -168,7 +283,10 @@ export const useMintQueue = create<MintQueueStore>((set, get) => ({
 
   addToHistory: (item) => {
     set((state) => {
-      const next = [item, ...state.mintHistory].slice(0, 100)
+      const next = [
+        item,
+        ...state.mintHistory.filter((existing) => existing.id !== item.id && existing.mintAddress !== item.mintAddress),
+      ].slice(0, 100)
       persistHistory(next)
       return { mintHistory: next }
     })

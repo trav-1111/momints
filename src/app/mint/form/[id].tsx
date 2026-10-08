@@ -3,23 +3,27 @@ import {
   View,
   Text,
   Pressable,
-  Image,
   TextInput,
   ScrollView,
   KeyboardAvoidingView,
   Platform,
   Alert,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native'
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { usePhotoStore } from '../../../store/photos'
 import { useMintQueue } from '../../../store/mintQueue'
 import { useSessionStore } from '../../../store/session'
-import { useWalletDomain } from '../../../hooks/useWalletDomain'
+import { useWalletDomain, formatWalletDisplay } from '../../../hooks/useWalletDomain'
 import { resolveLocation } from '../../../services/captureMetadata'
 import { colors, fonts, tracking } from '../../../theme'
+import { useFilmStockStore } from '../../../store/filmstocks'
 import { IconBack, IconFilm, IconMint, IconPhone, IconPin } from '../../../components/icons'
+import { PrivatePhotoImage } from '../../../components/PrivatePhotoImage'
+
+const { width: screenWidth } = Dimensions.get('window')
 
 function FieldLabel({ children }: { children: string }) {
   return (
@@ -139,6 +143,9 @@ export default function MintFormScreen() {
 
     setIsSubmitting(true)
     try {
+      const filmUsed = photo.filmStockId
+        ? useFilmStockStore.getState().catalogue.find((stock) => stock.filmStockId === photo.filmStockId)?.displayName
+        : undefined
       addToQueue({
         photoId: photo.id,
         photoUri: photo.uri,
@@ -147,6 +154,9 @@ export default function MintFormScreen() {
         capturedAt: photo.capturedAt,
         rollContext: rollContext ?? undefined,
         captureMeta: photo.meta,
+        aspect: photo.aspect,
+        artifact: photo.artifact,
+        filmUsed,
         paymentCurrency: !rollContext && payWithSkr ? 'SKR' : 'SOL',
       })
 
@@ -211,10 +221,13 @@ export default function MintFormScreen() {
 
         {/* Image Preview */}
         <View style={{ paddingHorizontal: 22, marginBottom: 18 }}>
-          <Image
-            source={{ uri: photo.uri }}
+          <PrivatePhotoImage
+            uri={photo.uri}
+            photoId={photo.id}
+            displayWidth={screenWidth - 44}
+            displayHeight={screenWidth - 44}
             style={{ width: '100%', aspectRatio: 1, borderRadius: 16 }}
-            resizeMode="cover"
+            contentFit="cover"
           />
         </View>
 
@@ -284,7 +297,7 @@ export default function MintFormScreen() {
             />
             {account && walletAddress ? (
               <Text numberOfLines={1} style={{ flex: 1, fontFamily: fonts.mono, fontSize: 12, color: colors.text }}>
-                {walletAddress.slice(0, 4)}…{walletAddress.slice(-4)}
+                {formatWalletDisplay(walletAddress, domain)}
               </Text>
             ) : (
               <Pressable onPress={connect} style={{ flex: 1 }}>

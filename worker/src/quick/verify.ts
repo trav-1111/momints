@@ -99,7 +99,9 @@ export async function verifyQuickMintPayment(
   try {
     tx = await getTransaction(rpcUrl, req.signature)
   } catch (err) {
-    return retry(`RPC could not be reached to verify ${req.signature}: ${err instanceof Error ? err.message : String(err)}`)
+    return retry(
+      `RPC could not be reached to verify ${req.signature}: ${err instanceof Error ? err.message : String(err)}`,
+    )
   }
 
   // Absent is not invalid — a signature confirmed seconds ago may not be
@@ -114,7 +116,9 @@ export async function verifyQuickMintPayment(
 
   const feePayer = tx.transaction.message.accountKeys[0]?.pubkey
   if (feePayer !== req.wallet) {
-    return reject(`Transaction ${req.signature} was paid by ${feePayer ?? 'nobody'}, not by the staging wallet ${req.wallet}`)
+    return reject(
+      `Transaction ${req.signature} was paid by ${feePayer ?? 'nobody'}, not by the staging wallet ${req.wallet}`,
+    )
   }
 
   // Only meaningful for the SOL branch — see the success return below, where
@@ -128,7 +132,10 @@ export async function verifyQuickMintPayment(
     if (Date.parse(req.skr.quoteExpiresAt) < Date.now()) {
       return reject(`The $SKR quote for ${req.assetAddress} expired at ${req.skr.quoteExpiresAt} — re-quote and retry`)
     }
-    const skrVerdict = checkSkrTransfer(tx, { treasurySkrAta: req.skr.treasurySkrAta, requiredAtomic: req.skr.requiredAtomic })
+    const skrVerdict = checkSkrTransfer(tx, {
+      treasurySkrAta: req.skr.treasurySkrAta,
+      requiredAtomic: req.skr.requiredAtomic,
+    })
     if (!skrVerdict.ok) {
       return reject(`Transaction ${req.signature}: ${skrVerdict.reason}`)
     }
@@ -138,7 +145,9 @@ export async function verifyQuickMintPayment(
       return reject(`Transaction ${req.signature} does not touch the treasury account ${req.treasury}`)
     }
     if (received < req.requiredLamports) {
-      return reject(`Transaction ${req.signature} paid the treasury ${received} lamports, below the ${req.requiredLamports} required`)
+      return reject(
+        `Transaction ${req.signature} paid the treasury ${received} lamports, below the ${req.requiredLamports} required`,
+      )
     }
     feeLamports = received
   }
@@ -173,7 +182,9 @@ export async function verifyQuickMintPayment(
     return reject(`Asset ${req.assetAddress} was minted against ${asset.uri}, not the quick-mint placeholder`)
   }
   if (asset.owner.toString() !== req.wallet) {
-    return reject(`Asset ${req.assetAddress} is owned by ${asset.owner.toString()}, not the paying wallet ${req.wallet}`)
+    return reject(
+      `Asset ${req.assetAddress} is owned by ${asset.owner.toString()}, not the paying wallet ${req.wallet}`,
+    )
   }
   // Without update authority the Worker cannot swap the placeholder later, so
   // accepting the fee here would take money for work it can never do.

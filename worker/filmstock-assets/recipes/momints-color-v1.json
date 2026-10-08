@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "filmStockId": "momints-color-v1",
+  "colorMatrix": [1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0]
+}

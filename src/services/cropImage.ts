@@ -1,5 +1,5 @@
-import { ImageManipulator, SaveFormat } from 'expo-image-manipulator'
-import { Paths, File, Directory } from 'expo-file-system'
+import { ImageManipulator, SaveFormat, type ImageManipulatorContext, type ImageRef } from 'expo-image-manipulator'
+import { File } from 'expo-file-system'
 import type { AspectRatio } from '../store/session'
 
 // Long-edge : short-edge for each croppable ratio.
@@ -54,26 +54,32 @@ function computeCropRect(w: number, h: number, aspect: Exclude<AspectRatio, 'ful
  * store: the original `uri` for `full` (or if no crop is needed), otherwise a
  * new cropped file in the photos dir (the original is deleted — "replace").
  *
- * Defensive: any failure returns the original `uri` so a capture is never lost.
- * expo-image-manipulator loads the display-oriented image, so cropping and the
- * dimensions read from it share one coordinate space.
+ * Fails closed: recording the chosen ratio while silently substituting a full
+ * frame would make roll and contact-sheet metadata false. The camera leaves the
+ * exposure uncommitted when this throws. expo-image-manipulator loads the
+ * display-oriented image, so cropping and dimensions share one coordinate space.
  */
 export async function cropToAspect(uri: string, aspect: AspectRatio): Promise<string> {
   if (aspect === 'full') return uri
 
+  let baseContext: ImageManipulatorContext | null = null
+  let cropContext: ImageManipulatorContext | null = null
+  let base: ImageRef | null = null
+  let croppedRef: ImageRef | null = null
   try {
     // Load once to get orientation-normalized dimensions, then crop that same ref.
-    const base = await ImageManipulator.manipulate(uri).renderAsync()
+    baseContext = ImageManipulator.manipulate(uri)
+    base = await baseContext.renderAsync()
     const rect = computeCropRect(base.width, base.height, aspect)
     if (!rect) return uri
 
-    const croppedRef = await ImageManipulator.manipulate(base).crop(rect).renderAsync()
+    cropContext = ImageManipulator.manipulate(base)
+    cropContext.crop(rect)
+    croppedRef = await cropContext.renderAsync()
     const saved = await croppedRef.saveAsync({ format: SaveFormat.JPEG, compress: JPEG_QUALITY })
 
-    // saveAsync writes to the cache dir — move it into the persistent photos dir.
-    const photosDir = new Directory(Paths.document, 'photos')
-    if (!photosDir.exists) photosDir.create()
-    const dest = new File(photosDir, `photo_${Date.now()}_crop.jpg`)
+    // Keep every replacement beside its temporary input.
+    const dest = new File(new File(uri).parentDirectory, `photo_${Date.now()}_crop.jpg`)
     new File(saved.uri).move(dest)
 
     // Replace: discard the uncropped original now that the crop is saved.
@@ -86,7 +92,12 @@ export async function cropToAspect(uri: string, aspect: AspectRatio): Promise<st
 
     return dest.uri
   } catch (error) {
-    console.error('cropToAspect failed, keeping full frame:', error)
-    return uri
+    console.error('cropToAspect failed:', error)
+    throw new Error(`Could not crop the capture to ${aspect}`, { cause: error instanceof Error ? error : undefined })
+  } finally {
+    cropContext?.release()
+    baseContext?.release()
+    croppedRef?.release()
+    base?.release()
   }
 }

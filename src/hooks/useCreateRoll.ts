@@ -9,6 +9,9 @@ import { useSessionStore, type FilmSettings, type AspectRatio } from '../store/s
 import { getClusterRpc } from '../store/network'
 import { localDateLabel } from '../config/rollApi'
 import type { PrepaidRollSize } from '../config/roll'
+import { ensureFilmStockRecipe } from '../services/filmstocks'
+import { rollEligible, useFilmStockStore } from '../store/filmstocks'
+import { bindStagedRollCapability, createRollCapability, stageRollCapability } from '../services/rollCapability'
 
 export type CreateRollPhase = 'cover' | 'uploading' | 'signing' | 'confirming' | 'creating'
 
@@ -67,6 +70,17 @@ export function useCreateRoll() {
         const now = Date.now()
         let created: CreatedRoll
 
+        // Validate access and pin the recipe before any payment is requested.
+        // A failed/missing download must never happen after the prepaid fee
+        // has already moved.
+        const filmState = useFilmStockStore.getState()
+        const stock = filmState.catalogue.find((item) => item.filmStockId === opts.film.filmStockId)
+        if (!stock || !rollEligible(stock, filmState)) {
+          setError('That film is no longer available to load. Refresh the Film Shelf and choose another stock.')
+          return false
+        }
+        await ensureFilmStockRecipe(stock)
+
         // Check for an open roll BEFORE taking any money: the Worker allows
         // one open roll per wallet and would 409 after the fee had already
         // moved.
@@ -78,6 +92,12 @@ export function useCreateRoll() {
           )
           return false
         }
+
+        // Persist before payment/creation. If the Worker creates the roll but
+        // the response is lost, the one-open-roll lookup can bind this same
+        // secret to the recovered collection on the next launch.
+        const rollCapability = createRollCapability()
+        await stageRollCapability(walletAddress, rollCapability)
 
         const payment = opts.payment ?? 'SOL'
         let feeSignature: string
@@ -106,12 +126,15 @@ export function useCreateRoll() {
           const roll = await createWorkerRoll({
             wallet: walletAddress,
             size: opts.size,
+            filmStockId: opts.film.filmStockId,
             artist,
             skrIdentity,
             localDate: localDateLabel(now),
             feeSignature,
             payment,
+            rollCapability,
           })
+          await bindStagedRollCapability(walletAddress, roll.collectionAddress)
           created = { collectionAddress: roll.collectionAddress, name: roll.name }
         } catch (err) {
           // The fee already moved. Surface the signature so the charge is
@@ -129,6 +152,9 @@ export function useCreateRoll() {
           size: opts.size,
           artist,
           skrIdentity,
+          film: opts.film.mode,
+          filmStockId: opts.film.filmStockId,
+          aspect: opts.aspect,
           framesMinted: 0,
           status: 'open',
           createdAt: now,
@@ -137,6 +163,7 @@ export function useCreateRoll() {
         const session = useSessionStore.getState()
         const started = session.startRoll(created.name, opts.size, opts.film, opts.aspect)
         if (started) session.setCollectionAddress(created.collectionAddress)
+        if (started) useFilmStockStore.getState().recordUse(opts.film.filmStockId)
         return started
       } catch (err) {
         setError(categorizeError(err))

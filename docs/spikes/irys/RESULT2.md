@@ -9,15 +9,15 @@ deploy --dry-run` bundle measurements. Devnet only throughout.
 **All four sizes passed — 1, 3, 5, and 6 MB (over the stated ceiling).** No
 payload-size limit was hit anywhere in this range: no request-body rejection,
 no memory error, no CPU-time error. Every failure encountered was about
-*funding mechanics*, not size, and every one of those was resolved without
+_funding mechanics_, not size, and every one of those was resolved without
 touching the Worker's core logic.
 
-| Size | Status | Server ms | uploadMs | Notes |
-|---|---|---|---|---|
-| 1 MB | **pass** | 2327 | 1397 | Passed on 2nd attempt (1st needed funding, timed out client-side at 120s) |
-| 3 MB | **pass** | 2638 | 1764 | Same pattern — 1st attempt timed out at 180s, 2nd passed |
-| 5 MB | **pass** | 2556 | 1726 | Same pattern |
-| 6 MB | **pass** | 2522 | 1737 | Same pattern — over-ceiling size also fine |
+| Size | Status   | Server ms | uploadMs | Notes                                                                     |
+| ---- | -------- | --------- | -------- | ------------------------------------------------------------------------- |
+| 1 MB | **pass** | 2327      | 1397     | Passed on 2nd attempt (1st needed funding, timed out client-side at 120s) |
+| 3 MB | **pass** | 2638      | 1764     | Same pattern — 1st attempt timed out at 180s, 2nd passed                  |
+| 5 MB | **pass** | 2556      | 1726     | Same pattern                                                              |
+| 6 MB | **pass** | 2522      | 1737     | Same pattern — over-ceiling size also fine                                |
 
 Largest passing size tested: **6 MB (no failure found in the requested
 range)**. Failure mode above it: **not reached — the spec's four sizes never
@@ -29,9 +29,11 @@ would be.
 
 **1. The public devnet RPC blocks Cloudflare Workers.** The first funding
 attempt failed outright with:
+
 ```
 failed to get recent blockhash: Error: 403 Forbidden: {"jsonrpc":"2.0","error":{"code":403,"message":"Your IP or provider is blocked from this endpoint"} ...}
 ```
+
 `https://api.devnet.solana.com` rejects Workers' egress IPs for anything that
 sends a transaction (read-only calls in Spike 1 never hit this). Fixed by
 adding a `SOLANA_RPC_URL` Worker Secret override, pointed at Helius's devnet
@@ -45,7 +47,7 @@ The raw `@irys/upload-solana` SDK does not auto-fund from on-chain SOL during
 `.upload()`; it tracks a separate pre-funded balance on Irys's bundler node
 and throws `402 Not enough balance` if it's short. `/spike-large` calls
 `.fund()` explicitly when needed, which sends a real devnet transaction and
-waits for confirmation. In every one of the four size tests, the *first*
+waits for confirmation. In every one of the four size tests, the _first_
 request (funding required) exceeded a 120–180 second client timeout with
 zero bytes returned — but the funding transaction had actually succeeded in
 the background, confirmed by a retry moments later completing in ~2–3
@@ -74,13 +76,13 @@ path**.
 Measured via `wrangler deploy --dry-run --outdir=...` (build-only, no
 deploy). Real numbers.
 
-| Bundle | Raw | Gzip |
-|---|---|---|
-| Irys alone (`@irys/upload` + `@irys/upload-solana`) | 4724.58 KiB | 1018.14 KiB |
-| Metaplex Core alone (`@metaplex-foundation/mpl-core`) | 688.39 KiB | 79.26 KiB |
-| Solana kit alone (`@solana/kit`) | 408.99 KiB | 88.27 KiB |
-| Image lib alone (`@cf-wasm/photon`) | 1563.55 KiB | 617.96 KiB |
-| **Combined (all four together)** | **7388.52 KiB** | **1804.79 KiB** |
+| Bundle                                                | Raw             | Gzip            |
+| ----------------------------------------------------- | --------------- | --------------- |
+| Irys alone (`@irys/upload` + `@irys/upload-solana`)   | 4724.58 KiB     | 1018.14 KiB     |
+| Metaplex Core alone (`@metaplex-foundation/mpl-core`) | 688.39 KiB      | 79.26 KiB       |
+| Solana kit alone (`@solana/kit`)                      | 408.99 KiB      | 88.27 KiB       |
+| Image lib alone (`@cf-wasm/photon`)                   | 1563.55 KiB     | 617.96 KiB      |
+| **Combined (all four together)**                      | **7388.52 KiB** | **1804.79 KiB** |
 
 Cloudflare Workers compressed-bundle limit: **3 MB (3072 KiB) Free, 10 MB
 Paid**, as of this writing.

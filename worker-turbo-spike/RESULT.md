@@ -20,12 +20,12 @@ ANS-104 data item with the funding key and upload it to genuine Arweave?
 
 ## Stage results
 
-| Stage | Outcome | Notes |
-|---|---|---|
-| 1 LOAD — signer constructs from the secret | **PASS** | `signatureType: 2`, `ownerLength: 32` (ed25519) |
-| 2 SIGN — data item signed + self-verified | **PASS** | **the core question** — 359 B payload → 536 B signed item |
-| 3 UPLOAD — POSTed to Turbo | **PASS** | `winc: "0"` — free |
-| 4 VERIFY — resolves on arweave.net | **resolved** | 403 at upload time (unmined), 200 ~9 min later |
+| Stage                                      | Outcome      | Notes                                                     |
+| ------------------------------------------ | ------------ | --------------------------------------------------------- |
+| 1 LOAD — signer constructs from the secret | **PASS**     | `signatureType: 2`, `ownerLength: 32` (ed25519)           |
+| 2 SIGN — data item signed + self-verified  | **PASS**     | **the core question** — 359 B payload → 536 B signed item |
+| 3 UPLOAD — POSTed to Turbo                 | **PASS**     | `winc: "0"` — free                                        |
+| 4 VERIFY — resolves on arweave.net         | **resolved** | 403 at upload time (unmined), 200 ~9 min later            |
 
 The free run (stages 1–2, no spend) was executed first and already returned
 `coreQuestion.answer: "YES"` — so the runtime question was settled **before**

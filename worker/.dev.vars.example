@@ -1,0 +1,12 @@
+# Local ONLY: copy to ignored .dev.vars for your OWN isolated configuration.
+# Never use Momints production credentials. Never put these in EXPO_PUBLIC_*.
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=replace_with_your_backend_rpc_key
+IRYS_FUNDING_KEY=replace_with_your_own_base58_64_byte_signing_key
+OPS_AUTH_TOKEN=replace_with_your_own_operator_bearer_token
+# Turbo is the production storage provider. Pinata is not an equivalent testnet.
+STORAGE_PROVIDER=turbo
+# Optional: a separate mainnet RPC for rent reads.
+# SOLANA_RPC_URL_MAINNET=https://replace-with-your-private-mainnet-rpc
+# Optional browser operator UI origin; not authentication.
+# DASHBOARD_ORIGIN=https://your-own-dashboard.example
+# Leave Discord webhook/mention secrets absent for non-notifying tests.

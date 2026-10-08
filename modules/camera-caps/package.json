@@ -1,0 +1,8 @@
+{
+  "name": "camera-caps",
+  "version": "1.0.0",
+  "description": "SPIKE ONLY — reads raw Camera2 manual-capability characteristics (ISO range, exposure time range, MANUAL_SENSOR/RAW capability flags, AF/AWB OFF support) that a third-party app can see on this device. Not for production use.",
+  "main": "index.ts",
+  "license": "UNLICENSED",
+  "private": true
+}

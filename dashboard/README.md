@@ -1,5 +1,7 @@
 # Momints operator dashboard
 
+Operator-only setup, not required for app reviewers. Do not deploy to the named Momints Pages project or modify its Worker configuration. Independent operators must choose their own project/domain, Worker configuration and token; see [reviewer setup](../docs/REVIEWER-SETUP.md). The commands below describe the owner's deployment and require separate authorization. The default Worker config is maintenance-only; do not use a raw redeploy to update the active service.
+
 A static, read-only, operator-only view of wallet balances, system health,
 and aggregate usage. No build step, no npm dependencies — `index.html` +
 `app.js` deploy as-is to Cloudflare Pages. See `worker/README.md` "Operator
@@ -27,7 +29,7 @@ UI choice.
    email/Google login (free tier). This is what actually stops anyone but
    you from loading the page at all. Do this before treating the deploy as
    done — without it the page is publicly reachable (the `OPS_AUTH_TOKEN`
-   gate still protects the *data*, but the page itself would be open).
+   gate still protects the _data_, but the page itself would be open).
 4. Back in `worker/wrangler.toml`, set `DASHBOARD_ORIGIN` to the final
    origin (the `pages.dev` URL or your custom domain, scheme + host, no
    trailing slash) and redeploy the Worker (`wrangler deploy` from

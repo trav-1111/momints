@@ -1,0 +1,51 @@
+# Archived isolated-staging resource map after momints-roll-worker-staging was
+# promoted in place. It intentionally targets a different, non-existent
+# sandbox service and exposes no route, consumer or schedule. The former
+# staging secret/test helpers refuse to use it. Provision a fresh isolated
+# sandbox deliberately before this file is ever deployed.
+name = "momints-roll-worker-sandbox"
+main = "src/index.ts"
+compatibility_date = "2026-07-22"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+preview_urls = false
+
+[vars]
+DEPLOYMENT_ENV = "staging-sandbox"
+MAINTENANCE_MODE = "true"
+QUICK_PLACEHOLDER_URI = "https://arweave.net/JbRjC4JbM7jbNRyiEZO7gj43gbOWBqt-O5RD4oZmCcw"
+QUICK_TREASURY_ADDRESS = "6kvixjeqdVaZE9dzduPfma4tgQkhR3yhTp3hdYd5wZ6q"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "momints-rolls-staging"
+database_id = "1a7fdb4c-6367-4a00-b61a-8ebc2f388ff1"
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "QUICK_STAGING"
+bucket_name = "momints-quick-staging-test"
+
+[[r2_buckets]]
+binding = "FILMSTOCK_ASSETS"
+bucket_name = "momints-filmstocks-staging"
+
+[[ratelimits]]
+name = "FILMSTOCK_UNLOCK_LIMITER"
+namespace_id = "2001"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "ROLL_MUTATION_LIMITER"
+namespace_id = "2002"
+simple = { limit = 30, period = 60 }
+
+[[ratelimits]]
+name = "QUICK_MINT_LIMITER"
+namespace_id = "2003"
+simple = { limit = 20, period = 60 }
+
+[[rules]]
+type = "Data"
+globs = ["**/*.jpg"]
+fallthrough = true

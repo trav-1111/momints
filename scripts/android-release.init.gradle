@@ -1,0 +1,75 @@
+// Local release signing only. No credentials or generated Android patches in Git.
+import groovy.json.JsonSlurper
+import java.security.KeyStore
+import java.security.MessageDigest
+
+def credentialsPath = System.getenv('MOMINTS_ANDROID_CREDENTIALS')
+if (!credentialsPath) {
+    throw new GradleException('Existing Android release credentials required: MOMINTS_ANDROID_CREDENTIALS')
+}
+def credentialsFile = new File(credentialsPath)
+if (!credentialsFile.isFile()) {
+    throw new GradleException('Android release credentials file is unavailable')
+}
+def signing
+try {
+    signing = new JsonSlurper().parse(credentialsFile).android?.keystore
+} catch (Exception ignored) {
+    throw new GradleException('Android release credentials must be EAS-style JSON')
+}
+for (def field : ['keystorePath', 'keystorePassword', 'keyAlias', 'keyPassword']) {
+    if (!(signing?.get(field) instanceof String) || signing.get(field).isEmpty()) {
+        throw new GradleException('Missing Android release credential field: ' + field)
+    }
+}
+def storeFile = new File(signing.keystorePath)
+if (!storeFile.isAbsolute()) storeFile = new File(credentialsFile.parentFile, signing.keystorePath)
+if (!storeFile.isFile()) throw new GradleException('Existing Android release keystore is unavailable')
+def certificateHash
+def hackathonDebugSigning = System.getenv('MOMINTS_ANDROID_HACKATHON_DEBUG_SIGNING') == '1'
+def expectedHash = System.getenv('MOMINTS_ANDROID_EXPECTED_CERT_SHA256')
+if (hackathonDebugSigning && !(expectedHash?.replace(':', '') ==~ /(?i)[a-f0-9]{64}/)) {
+    throw new GradleException('Hackathon debug signing requires the verified installed certificate SHA-256')
+}
+try {
+    def store = KeyStore.getInstance(storeFile.name.toLowerCase().endsWith('.p12') ? 'PKCS12' : 'JKS')
+    storeFile.withInputStream { stream -> store.load(stream, signing.keystorePassword.toCharArray()) }
+    if (!store.isKeyEntry(signing.keyAlias)) throw new IllegalArgumentException()
+    def certificate = store.getCertificate(signing.keyAlias)
+    def debugIdentity = signing.keyAlias.equalsIgnoreCase('androiddebugkey') ||
+        certificate.subjectX500Principal.name.toLowerCase().contains('cn=android debug')
+    if (debugIdentity && !hackathonDebugSigning) {
+        throw new GradleException('Debug signing identity requires the explicit hackathon-only option')
+    }
+    if (hackathonDebugSigning && !debugIdentity) throw new GradleException('Hackathon option must use the existing debug identity')
+    if (store.getKey(signing.keyAlias, signing.keyPassword.toCharArray()) == null) throw new IllegalArgumentException()
+    certificateHash = MessageDigest.getInstance('SHA-256').digest(certificate.encoded).encodeHex().toString()
+} catch (GradleException error) {
+    throw error
+} catch (Exception ignored) {
+    throw new GradleException('Cannot unlock existing Android release identity; check secure local credentials')
+}
+if (expectedHash && certificateHash != expectedHash.replace(':', '').toLowerCase()) {
+    throw new GradleException('Android release certificate does not match the expected established identity')
+}
+
+gradle.beforeProject { project ->
+    project.plugins.withId('com.android.application') {
+        project.extensions.getByName('androidComponents').finalizeDsl { android ->
+            if (android.defaultConfig.applicationId != 'com.momints.app') {
+                throw new GradleException('Unexpected Android application identity')
+            }
+            def releaseSigning = android.signingConfigs.maybeCreate('momintsRelease')
+            releaseSigning.storeFile = storeFile
+            releaseSigning.storePassword = signing.keystorePassword
+            releaseSigning.keyAlias = signing.keyAlias
+            releaseSigning.keyPassword = signing.keyPassword
+            def release = android.buildTypes.getByName('release')
+            release.signingConfig = releaseSigning
+            release.debuggable = false
+            release.jniDebuggable = false
+            println('Momints signing policy: ' + (hackathonDebugSigning ? 'hackathon-only debug-signed; not dApp Store release' : 'non-debug release'))
+            println('Momints release signer SHA-256: ' + certificateHash)
+        }
+    }
+}

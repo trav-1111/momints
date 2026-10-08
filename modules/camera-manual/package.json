@@ -1,0 +1,8 @@
+{
+  "name": "camera-manual",
+  "version": "1.0.0",
+  "description": "MICRO-SPIKE — sets manual ISO / shutter on the live react-native-vision-camera session via CameraX's Camera2Interop, reached through reflection (no vision-camera fork/patch). Day-1 gate for Tier 2 manual camera controls.",
+  "main": "index.ts",
+  "license": "UNLICENSED",
+  "private": true
+}

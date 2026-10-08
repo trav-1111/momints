@@ -162,7 +162,9 @@ export async function runFeeRecompute(deps: FeeRecomputeDeps): Promise<FeeRecomp
     const reason = `read failed: ${err instanceof Error ? err.message : String(err)}`
     await cache.recordFailedAttempt(reason)
     const delivery = await postDiscordAlert(env, buildRecomputeFailedAlert(reason))
-    alertNotes.push(delivery.ok ? 'posted recompute-failed alert' : `recompute-failed alert NOT delivered: ${delivery.error}`)
+    alertNotes.push(
+      delivery.ok ? 'posted recompute-failed alert' : `recompute-failed alert NOT delivered: ${delivery.error}`,
+    )
     return { ok: false, note: reason, alertNotes }
   }
 
@@ -173,14 +175,18 @@ export async function runFeeRecompute(deps: FeeRecomputeDeps): Promise<FeeRecomp
       `(${KNOWN_LAMPORTS_PER_BYTE.join(', ')}) — treated as a bad read, not a real step`
     await cache.recordFailedAttempt(reason)
     const delivery = await postDiscordAlert(env, buildRecomputeFailedAlert(reason))
-    alertNotes.push(delivery.ok ? 'posted recompute-failed alert' : `recompute-failed alert NOT delivered: ${delivery.error}`)
+    alertNotes.push(
+      delivery.ok ? 'posted recompute-failed alert' : `recompute-failed alert NOT delivered: ${delivery.error}`,
+    )
     return { ok: false, note: reason, alertNotes }
   }
   if (wincPerReferenceSol <= 0n) {
     const reason = `rejected Turbo SOL exchange rate: quoted ${wincPerReferenceSol} winc for ${RATE_REFERENCE_LAMPORTS} lamports`
     await cache.recordFailedAttempt(reason)
     const delivery = await postDiscordAlert(env, buildRecomputeFailedAlert(reason))
-    alertNotes.push(delivery.ok ? 'posted recompute-failed alert' : `recompute-failed alert NOT delivered: ${delivery.error}`)
+    alertNotes.push(
+      delivery.ok ? 'posted recompute-failed alert' : `recompute-failed alert NOT delivered: ${delivery.error}`,
+    )
     return { ok: false, note: reason, alertNotes }
   }
   const storageCostLamports = lamportsForWinc(storageCostWinc, wincPerReferenceSol)
@@ -190,7 +196,9 @@ export async function runFeeRecompute(deps: FeeRecomputeDeps): Promise<FeeRecomp
       `sane range [${STORAGE_COST_MIN_LAMPORTS}, ${STORAGE_COST_MAX_LAMPORTS}]`
     await cache.recordFailedAttempt(reason)
     const delivery = await postDiscordAlert(env, buildRecomputeFailedAlert(reason))
-    alertNotes.push(delivery.ok ? 'posted recompute-failed alert' : `recompute-failed alert NOT delivered: ${delivery.error}`)
+    alertNotes.push(
+      delivery.ok ? 'posted recompute-failed alert' : `recompute-failed alert NOT delivered: ${delivery.error}`,
+    )
     return { ok: false, note: reason, alertNotes }
   }
 

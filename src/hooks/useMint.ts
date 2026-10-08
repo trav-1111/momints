@@ -7,12 +7,21 @@ import { finalizeQuickMint, releaseQuickStage, stageQuickMint } from '../service
 import { mintWorkerFrame, RollApiError } from '../services/rollApi'
 import { isSkrQuoteUnavailable, quoteSkrFee } from '../services/skrApi'
 import { formatSkr } from '../config/skr'
-import { checkPriorAttempt, clearPendingFinalize, recordPendingFinalize } from '../store/quickFinalize'
+import {
+  checkPriorAttempt,
+  clearPendingFinalize,
+  recordPendingFinalize,
+  startPendingFinalizePolling,
+} from '../store/quickFinalize'
 import { getClusterRpc } from '../store/network'
-import type { RollContext } from '../store/mintQueue'
-import type { CaptureMeta } from '../store/photos'
+import type { MintFilmUsed, RollContext } from '../store/mintQueue'
+import type { CaptureMeta, PhotoArtifact } from '../store/photos'
+import type { AspectRatio } from '../store/session'
+import { tryPermanentQuickImage } from '../services/permanentAsset'
+import { isPermanentImagePending, verifyPermanentImage } from '../services/imagePrivacy'
+import { isRollVaultPhotoUri, withDecryptedRollFrame } from '../services/rollVault'
 
-const SKR_UNAVAILABLE_NOTE = "$SKR unavailable — paying with SOL instead"
+const SKR_UNAVAILABLE_NOTE = '$SKR unavailable — paying with SOL instead'
 
 /** Frames per wallet approval. MWA signs a whole chunk in one prompt; kept
  * small so the shared blockhash never expires before send, and so parallel
@@ -27,14 +36,27 @@ export interface BatchItemInput {
   capturedAt: number
   rollContext?: RollContext
   captureMeta?: CaptureMeta
+  filmUsed?: MintFilmUsed
+  aspect?: AspectRatio
+  artifact?: PhotoArtifact
   /** Quick mint only. Defaults 'SOL'. A Worker quote failure falls back to SOL automatically. */
   paymentCurrency?: 'SOL' | 'SKR'
 }
 
 export type BatchItemUpdate =
-  | { status: 'uploading' | 'signing' | 'confirming'; note?: string }
-  | { status: 'success'; signature: string; mintAddress?: string }
+  | { status: 'uploading' | 'signing'; note?: string }
+  | {
+      status: 'confirming'
+      note?: string
+      signature?: string
+      mintAddress?: string
+      imageUri?: string
+      artifact?: MintArtifactReceipt
+    }
+  | { status: 'success'; signature: string; mintAddress: string; imageUri: string; artifact?: MintArtifactReceipt }
   | { status: 'failed'; error: string }
+
+export type MintArtifactReceipt = Pick<PhotoArtifact, 'imageHash' | 'width' | 'height'>
 
 export interface BatchSummary {
   succeeded: number
@@ -115,7 +137,14 @@ async function stageAndRecord(params: {
   photoUri: string
   metadata: ReturnType<typeof buildMintMetadata>
   paymentCurrency?: 'SOL' | 'SKR'
-}): Promise<{ stagingKey: string; placeholderUri: string; terms: QuickMintTerms; note?: string }> {
+  artifact: PhotoArtifact
+}): Promise<{
+  stagingKey: string
+  placeholderUri: string
+  terms: QuickMintTerms
+  artifact: MintArtifactReceipt
+  note?: string
+}> {
   const staged = await stageQuickMint({
     wallet: params.wallet,
     photoUri: params.photoUri,
@@ -125,6 +154,15 @@ async function stageAndRecord(params: {
     treasury: staged.treasury,
     feeLamports: staged.feeLamports,
     updateAuthority: staged.updateAuthority,
+  }
+  if (
+    staged.mime !== params.artifact.mime ||
+    staged.byteLength !== params.artifact.byteLength ||
+    staged.width !== params.artifact.width ||
+    staged.height !== params.artifact.height ||
+    staged.imageHash !== params.artifact.imageHash
+  ) {
+    throw new Error('The Worker-derived quick image receipt does not match the developed capture.')
   }
 
   let note: string | undefined
@@ -142,7 +180,13 @@ async function stageAndRecord(params: {
     }
   }
 
-  return { stagingKey: staged.stagingKey, placeholderUri: staged.placeholderUri, terms, note }
+  return {
+    stagingKey: staged.stagingKey,
+    placeholderUri: staged.placeholderUri,
+    terms,
+    artifact: { imageHash: staged.imageHash, width: staged.width, height: staged.height },
+    note,
+  }
 }
 
 /**
@@ -150,12 +194,17 @@ async function stageAndRecord(params: {
  * placeholder. A failure here is NOT a failed mint — the asset exists and is
  * paid for — so it never fails the item; the persisted queue retries.
  */
-async function finalizeAndClear(entry: { stagingKey: string; signature: string; assetAddress: string }): Promise<void> {
+async function finalizeAndCheck(entry: {
+  stagingKey: string
+  signature: string
+  assetAddress: string
+}): Promise<string | null> {
   try {
-    await finalizeQuickMint(entry)
-    await clearPendingFinalize(entry.stagingKey)
+    const finalized = await finalizeQuickMint(entry)
+    return tryPermanentQuickImage(entry.assetAddress, finalized.imageUri)
   } catch (err) {
     console.warn(`[mint] finalize deferred for ${entry.assetAddress}:`, err instanceof Error ? err.message : err)
+    throw err
   }
 }
 
@@ -194,7 +243,10 @@ export function useMint() {
    * stay pending for a retry.
    */
   const mintBatch = useCallback(
-    async (items: BatchItemInput[], onItem: (photoId: string, update: BatchItemUpdate) => void): Promise<BatchSummary> => {
+    async (
+      items: BatchItemInput[],
+      onItem: (photoId: string, update: BatchItemUpdate) => void,
+    ): Promise<BatchSummary> => {
       const summary: BatchSummary = { succeeded: 0, failed: 0, aborted: false }
 
       if (!account) {
@@ -204,12 +256,23 @@ export function useMint() {
       }
       const walletAddress = account.address.toString()
 
-      const workerItems = items.filter(isWorkerFrame)
+      const missingReceiptItems = items.filter((item) => !item.artifact)
+      for (const item of missingReceiptItems) {
+        summary.failed++
+        onItem(item.photoId, {
+          status: 'failed',
+          error: 'This capture has no verified development receipt and cannot enter the mint queue.',
+        })
+      }
+      const verifiedItems = items.filter((item): item is BatchItemInput & { artifact: PhotoArtifact } =>
+        Boolean(item.artifact),
+      )
+      const workerItems = verifiedItems.filter(isWorkerFrame)
       // A roll frame that reaches here without a usable collection address is
       // a bug (rollContext set, but isWorkerFrame() rejected it) — report it
       // failed rather than quietly minting it as an unrelated, unpaid asset.
-      const malformedRollItems = items.filter((item) => !isWorkerFrame(item) && item.rollContext)
-      const clientItems = items.filter((item) => !isWorkerFrame(item) && !item.rollContext)
+      const malformedRollItems = verifiedItems.filter((item) => !isWorkerFrame(item) && item.rollContext)
+      const clientItems = verifiedItems.filter((item) => !isWorkerFrame(item) && !item.rollContext)
 
       for (const item of malformedRollItems) {
         summary.failed++
@@ -227,13 +290,56 @@ export function useMint() {
         const { collectionAddress, frameNumber } = item.rollContext!
         onItem(item.photoId, { status: 'uploading' })
         try {
-          const res = await mintWorkerFrame({
-            collectionAddress: collectionAddress!,
-            frameIndex: frameNumber,
-            photoUri: item.photoUri,
-            description: `Shot on Seeker by ${item.artist}`,
-            attributes: workerFrameAttributes(item),
-          })
+          const mintFrame = (photoUri: string) =>
+            mintWorkerFrame({
+              collectionAddress: collectionAddress!,
+              frameIndex: frameNumber,
+              photoUri,
+              description: `Shot on Seeker by ${item.artist}`,
+              attributes: workerFrameAttributes(item),
+            })
+          const res = isRollVaultPhotoUri(item.photoUri)
+            ? await withDecryptedRollFrame(item.photoUri, async (photoUri, _artifact, reference) => {
+                if (
+                  reference.rollId !== item.rollContext!.rollId ||
+                  reference.photoId !== item.photoId ||
+                  reference.frameNumber !== frameNumber
+                ) {
+                  throw new Error('The encrypted frame does not match this roll queue entry.')
+                }
+                return mintFrame(photoUri)
+              })
+            : await mintFrame(item.photoUri)
+          if (
+            res.mime !== item.artifact.mime ||
+            res.byteLength !== item.artifact.byteLength ||
+            res.width !== item.artifact.width ||
+            res.height !== item.artifact.height ||
+            res.imageHash !== item.artifact.imageHash
+          ) {
+            throw new Error('The Worker-derived roll image receipt does not match the encrypted developed frame.')
+          }
+          let imageUri: string
+          try {
+            imageUri = await verifyPermanentImage(res.imageUri)
+          } catch (error) {
+            if (!isPermanentImagePending(error)) throw error
+
+            // The Worker has returned the minted asset and permanent URI. A
+            // gateway 404 at this point means Arweave is still propagating,
+            // not that the mint failed. Keep the encrypted roll source and
+            // let the progress screen retry retrieval without offering a
+            // second mint transaction.
+            onItem(item.photoId, {
+              status: 'confirming',
+              signature: res.signature ?? undefined,
+              mintAddress: res.assetAddress,
+              imageUri: res.imageUri,
+              artifact: { imageHash: res.imageHash, width: res.width, height: res.height },
+              note: 'Minted · permanent image becoming available (usually 8–12 min)',
+            })
+            continue
+          }
           summary.succeeded++
           onItem(item.photoId, {
             status: 'success',
@@ -241,6 +347,8 @@ export function useMint() {
             // the asset address is what identifies the mint either way.
             signature: res.signature ?? '',
             mintAddress: res.assetAddress,
+            imageUri,
+            artifact: { imageHash: res.imageHash, width: res.width, height: res.height },
           })
         } catch (err) {
           summary.failed++
@@ -260,16 +368,30 @@ export function useMint() {
       for (const item of clientItems) {
         const check = await checkPriorAttempt(item.photoId)
         if (check.action === 'resolved') {
-          summary.succeeded++
-          onItem(item.photoId, { status: 'success', signature: check.signature, mintAddress: check.assetAddress })
+          try {
+            summary.succeeded++
+            onItem(item.photoId, {
+              status: 'success',
+              signature: check.signature,
+              mintAddress: check.assetAddress,
+              imageUri: check.imageUri,
+              artifact: check.artifact,
+            })
+            await clearPendingFinalize(check.stagingKey)
+          } catch (err) {
+            summary.failed++
+            onItem(item.photoId, { status: 'failed', error: categorizeError(err) })
+          }
         } else if (check.action === 'wait') {
           // A prior attempt may still land. Do not mint again yet — the
           // background drain, or the next retry (which re-checks), resolves it.
-          summary.failed++
           onItem(item.photoId, {
-            status: 'failed',
-            error: 'Still confirming a previous attempt — wait a moment before retrying',
+            status: 'confirming',
+            signature: check.signature,
+            mintAddress: check.assetAddress,
+            note: 'Mint submitted · finalizing on Arweave (usually 8–12 min)',
           })
+          void startPendingFinalizePolling().catch(() => {})
         } else {
           // 'none' (no prior attempt) or 'clear' (a prior attempt is
           // confirmed dead) — a fresh mint is safe.
@@ -291,6 +413,7 @@ export function useMint() {
                 photoUri: item.photoUri,
                 metadata: buildMintMetadata(item),
                 paymentCurrency: item.paymentCurrency,
+                artifact: item.artifact!,
               })
               return { item, metadataUri: quick.placeholderUri, quick }
             } catch (err) {
@@ -304,6 +427,7 @@ export function useMint() {
         if (ready.length === 0) continue
 
         const quickByPhotoId = new Map(ready.map((r) => [r.item.photoId, r.quick] as const))
+        const itemByPhotoId = new Map(ready.map((r) => [r.item.photoId, r.item] as const))
         // Which quick items got as far as a signature. Anything NOT in here on
         // failure was never paid for, so its stage can safely be given back.
         const signedPhotoIds = new Set<string>()
@@ -340,7 +464,8 @@ export function useMint() {
               // before the transaction that spends the fee goes out.
               onItemSigned: async (photoId, { signature, mintAddress }) => {
                 const quick = quickByPhotoId.get(photoId)
-                if (quick) {
+                const sourceItem = itemByPhotoId.get(photoId)
+                if (quick && sourceItem) {
                   signedPhotoIds.add(photoId)
                   signedInfo.set(photoId, { signature, mintAddress })
                   await recordPendingFinalize({
@@ -348,6 +473,14 @@ export function useMint() {
                     signature,
                     assetAddress: mintAddress,
                     photoId,
+                    history: {
+                      title: sourceItem.title,
+                      artist: sourceItem.artist,
+                      capturedAt: sourceItem.capturedAt,
+                      filmUsed: sourceItem.filmUsed,
+                      aspect: sourceItem.aspect,
+                      artifact: quick.artifact,
+                    },
                   })
                 }
               },
@@ -363,9 +496,8 @@ export function useMint() {
             },
             (result) => {
               if (result.success && result.signature) {
-                summary.succeeded++
-                onItem(result.id, { status: 'success', signature: result.signature, mintAddress: result.mintAddress })
-              } else {
+                onItem(result.id, { status: 'confirming' })
+              } else if (!signedInfo.has(result.id)) {
                 summary.failed++
                 onItem(result.id, {
                   status: 'failed',
@@ -375,9 +507,8 @@ export function useMint() {
             },
           )
 
-          // Finalize after the chunk, not per item: the mints are already
-          // reported as successful, and a finalize failure must not turn a paid
-          // mint into a failed one — the persisted queue retries it instead.
+          // Finalize after the chunk. A mint is not reported as successful
+          // until its permanent Arweave image is returned and retrievable.
           //
           // Driven by signedInfo (captured at signing time), NOT by
           // result.success/result.signature — a confirmation TIMEOUT in
@@ -392,11 +523,44 @@ export function useMint() {
           for (const [photoId, quick] of quickByPhotoId) {
             const info = signedInfo.get(photoId)
             if (info) {
-              await finalizeAndClear({
-                stagingKey: quick.stagingKey,
-                signature: info.signature,
-                assetAddress: info.mintAddress,
-              })
+              try {
+                const imageUri = await finalizeAndCheck({
+                  stagingKey: quick.stagingKey,
+                  signature: info.signature,
+                  assetAddress: info.mintAddress,
+                })
+                if (imageUri) {
+                  summary.succeeded++
+                  onItem(photoId, {
+                    status: 'success',
+                    signature: info.signature,
+                    mintAddress: info.mintAddress,
+                    imageUri,
+                    artifact: quick.artifact,
+                  })
+                  await clearPendingFinalize(quick.stagingKey)
+                } else {
+                  onItem(photoId, {
+                    status: 'confirming',
+                    signature: info.signature,
+                    mintAddress: info.mintAddress,
+                    artifact: quick.artifact,
+                    note: 'Paid · finalizing on Arweave (usually 8–12 min)',
+                  })
+                  void startPendingFinalizePolling().catch(() => {})
+                }
+              } catch {
+                // A signed mint may already have landed. Keep it in recovery
+                // instead of offering a second paid transaction.
+                onItem(photoId, {
+                  status: 'confirming',
+                  signature: info.signature,
+                  mintAddress: info.mintAddress,
+                  artifact: quick.artifact,
+                  note: 'Mint submitted · confirming payment and permanent storage',
+                })
+                void startPendingFinalizePolling().catch(() => {})
+              }
             }
           }
         } catch (err) {

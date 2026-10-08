@@ -63,9 +63,7 @@ function normalizeArtwork(bytes) {
     const height = img.get_height()
     const scale = Math.min(1, MAX_PLACEHOLDER_EDGE / Math.max(width, height))
     const target =
-      scale < 1
-        ? resize(img, Math.round(width * scale), Math.round(height * scale), SamplingFilter.Lanczos3)
-        : img
+      scale < 1 ? resize(img, Math.round(width * scale), Math.round(height * scale), SamplingFilter.Lanczos3) : img
 
     try {
       for (const quality of JPEG_QUALITIES) {

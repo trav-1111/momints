@@ -1,0 +1,13 @@
+{
+  "filmstocks/bali-400-v1/attribution.txt": "97bc2e8da492a36998e4243c1fbce5e18319a3c26123d20c968b96dab87992f5",
+  "filmstocks/bali-400-v1/previews/preview-01.jpg": "684c6d57a04bd7df9760b7efd0a945426fe7f7075fcc9a0edbe8b8ed15a0d442",
+  "filmstocks/bali-400-v1/recipe.json": "cafd88e750824842ebca4477211c64910af706dfdb452976d0e21dc0d5bdfe24",
+  "filmstocks/bali-400-v1/runtime/bali-400-v1.lut": "af4c0a4641872990e1da7d8d1ad03101f7084995ddfa15f29a64086e615ae778",
+  "filmstocks/martha-v1/attribution.txt": "2e1c7086570a0bd772efd0bca55dc05e07e814da18faaddd098140fe1f75ea76",
+  "filmstocks/martha-v1/previews/preview-01.jpg": "680d9564e494b51c016fbee13d8f986cacc51fd40fcccaa52a07cf3ae34fab5f",
+  "filmstocks/martha-v1/previews/preview-02.jpg": "21ccc9ef8dc34cbeab677102f2b0aa5747e034817024a3f3b98ecfce827b274e",
+  "filmstocks/martha-v1/recipe.json": "607864c92fe34e7d0008066049caa37b7bd79cccd2bf95ee3039043bda10b53b",
+  "filmstocks/martha-v1/runtime/martha-v1.lut": "068f18bc5e41ed7fca5b8bc6d65887e9b90016c97245557a0e45aaf12c2f8e92",
+  "recipes/momints-bw-v1.json": "35f0316a8f83ce9eb19ac04a2549d0f8632102230059948dbe4b3be60feb5851",
+  "recipes/momints-color-v1.json": "e160f6105f373d29ae4ee82302fd228c034206dfdc453c01afbe41ff748fa5b0"
+}

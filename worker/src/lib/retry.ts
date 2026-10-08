@@ -6,7 +6,9 @@ export interface BackoffOptions {
 
 function isRateLimitError(err: unknown): boolean {
   const msg = (err instanceof Error ? `${err.name}: ${err.message}` : String(err)).toLowerCase()
-  return msg.includes('429') || msg.includes('rate limit') || msg.includes('rate-limit') || msg.includes('too many requests')
+  return (
+    msg.includes('429') || msg.includes('rate limit') || msg.includes('rate-limit') || msg.includes('too many requests')
+  )
 }
 
 /**

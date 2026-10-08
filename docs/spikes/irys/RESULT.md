@@ -13,11 +13,11 @@ real `IRYS_FUNDING_KEY` secret, real devnet upload) — not just local
 
 ## Stage results
 
-| Stage | Result | Notes |
-|---|---|---|
-| 1 — import/instantiate | **pass** | `@irys/upload` + `@irys/upload-solana` imported and `Uploader(Solana).withWallet(key).withRpc(SOLANA_DEVNET_RPC).devnet()` constructed on the deployed edge Worker, not just local Miniflare. |
-| 2 — sign/signer-adjacent | **pass** | `.ready()` + `.address` (key derivation) and `.getPrice(100)` (network round-trip) both succeeded against the real funded key. |
-| 3 — fund + upload | **pass** | Real payload uploaded to Irys devnet from the deployed Worker and paid for by the funding wallet — the actual proof this whole spike exists to get. |
+| Stage                    | Result   | Notes                                                                                                                                                                                         |
+| ------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1 — import/instantiate   | **pass** | `@irys/upload` + `@irys/upload-solana` imported and `Uploader(Solana).withWallet(key).withRpc(SOLANA_DEVNET_RPC).devnet()` constructed on the deployed edge Worker, not just local Miniflare. |
+| 2 — sign/signer-adjacent | **pass** | `.ready()` + `.address` (key derivation) and `.getPrice(100)` (network round-trip) both succeeded against the real funded key.                                                                |
+| 3 — fund + upload        | **pass** | Real payload uploaded to Irys devnet from the deployed Worker and paid for by the funding wallet — the actual proof this whole spike exists to get.                                           |
 
 ## Bundle size — flag as a watch item
 

@@ -1,9 +1,17 @@
 import { create } from 'zustand'
 import { v4 as uuidv4 } from 'uuid'
-import { Paths, File } from 'expo-file-system'
-// Value import, but not a runtime cycle: mintQueue imports only a *type* from
-// this module, which erases at compile time.
-import { useMintQueue, historyHydrated } from './mintQueue'
+import type { AspectRatio } from './session'
+
+export interface PhotoArtifact {
+  mime: 'image/jpeg'
+  byteLength: number
+  width: number
+  height: number
+  imageHash: string
+  renderer: 'native-egl-v2' | 'skia-v2' | 'legacy-v1'
+  recipeSha256?: string
+  lutSha256: string | null
+}
 
 export interface CaptureMeta {
   location?: string // "Austin, Texas" — granularity the user chose, never raw coords
@@ -17,6 +25,12 @@ export interface Photo {
   // photo can never re-enter a mint flow. Enforced in setAction/setBulkAction,
   // not just by convention.
   action: 'pending' | 'delete' | 'save' | 'mint' | 'minted'
+  /** Capture crop applied to the stored image; absent on legacy records. */
+  aspect?: AspectRatio
+  /** Exact recipe already applied to this capture. */
+  filmStockId?: string
+  /** Verified developed-artifact metadata. Contains no image bytes. */
+  artifact?: PhotoArtifact
   meta?: CaptureMeta
   // Roll membership, stamped at capture. Deliberately stored on the photo
   // rather than read from session.activeRoll.frameIds: completeRoll() nulls
@@ -24,17 +38,26 @@ export interface Photo {
   // un-hid all of them the moment a roll finished minting.
   rollId?: string
   rollName?: string
+  /** Stable 1-based position within a prepaid roll, retained across retries. */
+  rollFrameNumber?: number
 }
 
 /** Roll a frame belongs to, passed at capture so membership is stamped atomically. */
 export interface PhotoRollRef {
   id: string
   name: string
+  frameNumber: number
 }
 
 interface PhotoStore {
   photos: Photo[]
-  addPhoto: (uri: string, roll?: PhotoRollRef) => string
+  addPhoto: (
+    uri: string,
+    roll?: PhotoRollRef,
+    aspect?: AspectRatio,
+    filmStockId?: string,
+    artifact?: PhotoArtifact,
+  ) => string
   setAction: (id: string, action: Photo['action']) => void
   setBulkAction: (ids: string[], action: Photo['action']) => void
   setPhotoMeta: (id: string, meta: CaptureMeta) => void
@@ -44,85 +67,28 @@ interface PhotoStore {
   getPhotosForMint: () => Photo[]
   getPhotosByAction: (action: Photo['action']) => Photo[]
   clearSession: () => void
+  restoreRollPhotos: (photos: Photo[]) => void
   clearMintedPhotos: () => void
-}
-
-const STORAGE_KEY = 'photos-store'
-
-function parsePhoto(raw: unknown): Photo | null {
-  if (raw === null || typeof raw !== 'object') return null
-  const p = raw as Record<string, unknown>
-  if (
-    typeof p.id !== 'string' ||
-    typeof p.uri !== 'string' ||
-    typeof p.capturedAt !== 'number' ||
-    (p.action !== 'pending' &&
-      p.action !== 'delete' &&
-      p.action !== 'save' &&
-      p.action !== 'mint' &&
-      p.action !== 'minted')
-  ) {
-    return null
-  }
-  let meta: CaptureMeta | undefined
-  if (p.meta !== null && typeof p.meta === 'object') {
-    const m = p.meta as Record<string, unknown>
-    meta = {
-      location: typeof m.location === 'string' ? m.location : undefined,
-    }
-  }
-  // Records written before roll membership moved onto the photo have neither
-  // field; they hydrate as quick photos, which is correct for everything
-  // except frames of an already-finished roll — those are healed to 'minted'
-  // by the mint-history reconcile at the bottom of this file.
-  return {
-    id: p.id,
-    uri: p.uri,
-    capturedAt: p.capturedAt,
-    action: p.action,
-    meta,
-    rollId: typeof p.rollId === 'string' ? p.rollId : undefined,
-    rollName: typeof p.rollName === 'string' ? p.rollName : undefined,
-  }
-}
-
-async function readPersistedPhotos(): Promise<Photo[]> {
-  try {
-    const file = new File(Paths.document, `${STORAGE_KEY}.json`)
-    if (!file.exists) return []
-    const text = await file.text()
-    const data: unknown = JSON.parse(text)
-    if (!Array.isArray(data)) return []
-    return data.map(parsePhoto).filter((p): p is Photo => p !== null)
-  } catch {
-    return []
-  }
-}
-
-function persistPhotos(photos: Photo[]): void {
-  try {
-    const file = new File(Paths.document, `${STORAGE_KEY}.json`)
-    file.write(JSON.stringify(photos))
-  } catch {
-    // non-critical
-  }
 }
 
 export const usePhotoStore = create<PhotoStore>((set, get) => ({
   photos: [],
 
-  addPhoto: (uri: string, roll?: PhotoRollRef): string => {
+  addPhoto: (uri, roll, aspect, filmStockId, artifact): string => {
     const newPhoto: Photo = {
       id: uuidv4(),
       uri,
       capturedAt: Date.now(),
       action: 'pending',
+      aspect,
+      filmStockId,
+      artifact,
       rollId: roll?.id,
       rollName: roll?.name,
+      rollFrameNumber: roll?.frameNumber,
     }
     set((state) => {
       const photos = [...state.photos, newPhoto]
-      persistPhotos(photos)
       return { photos }
     })
     return newPhoto.id
@@ -134,9 +100,8 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
   setAction: (id: string, action: Photo['action']) => {
     set((state) => {
       const photos = state.photos.map((photo) =>
-        photo.id === id && photo.action !== 'minted' ? { ...photo, action } : photo
+        photo.id === id && photo.action !== 'minted' ? { ...photo, action } : photo,
       )
-      persistPhotos(photos)
       return { photos }
     })
   },
@@ -144,29 +109,22 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
   setBulkAction: (ids: string[], action: Photo['action']) => {
     set((state) => {
       const photos = state.photos.map((photo) =>
-        ids.includes(photo.id) && photo.action !== 'minted' ? { ...photo, action } : photo
+        ids.includes(photo.id) && photo.action !== 'minted' ? { ...photo, action } : photo,
       )
-      persistPhotos(photos)
       return { photos }
     })
   },
 
   setPhotoMeta: (id: string, meta: CaptureMeta) => {
     set((state) => {
-      const photos = state.photos.map((photo) =>
-        photo.id === id ? { ...photo, meta } : photo
-      )
-      persistPhotos(photos)
+      const photos = state.photos.map((photo) => (photo.id === id ? { ...photo, meta } : photo))
       return { photos }
     })
   },
 
   updatePhotoUri: (id: string, newUri: string) => {
     set((state) => {
-      const photos = state.photos.map((photo) =>
-        photo.id === id ? { ...photo, uri: newUri } : photo
-      )
-      persistPhotos(photos)
+      const photos = state.photos.map((photo) => (photo.id === id ? { ...photo, uri: newUri } : photo))
       return { photos }
     })
   },
@@ -174,7 +132,6 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
   removePhoto: (id: string) => {
     set((state) => {
       const photos = state.photos.filter((photo) => photo.id !== id)
-      persistPhotos(photos)
       return { photos }
     })
   },
@@ -182,7 +139,6 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
   removeBulkPhotos: (ids: string[]) => {
     set((state) => {
       const photos = state.photos.filter((photo) => !ids.includes(photo.id))
-      persistPhotos(photos)
       return { photos }
     })
   },
@@ -196,60 +152,19 @@ export const usePhotoStore = create<PhotoStore>((set, get) => ({
   },
 
   clearSession: () => {
-    persistPhotos([])
     set({ photos: [] })
+  },
+
+  restoreRollPhotos: (photos) => {
+    set((state) => ({
+      photos: [...state.photos.filter((photo) => !photo.rollId), ...photos],
+    }))
   },
 
   clearMintedPhotos: () => {
     set((state) => {
       const photos = state.photos.filter((photo) => photo.action !== 'minted')
-      persistPhotos(photos)
       return { photos }
     })
   },
 }))
-
-// Async hydration on startup — same pattern as session.ts and mintQueue.ts.
-// Drop records whose image file no longer exists on disk.
-const photosHydrated: Promise<void> = readPersistedPhotos().then((persisted) => {
-  if (persisted.length === 0) return
-  const alive = persisted.filter((p) => {
-    try {
-      return new File(p.uri).exists
-    } catch {
-      return false
-    }
-  })
-  usePhotoStore.setState((state) => {
-    // Photos captured before hydration finished (unlikely) stay; avoid dupes by id
-    const existingIds = new Set(state.photos.map((p) => p.id))
-    const merged = [...alive.filter((p) => !existingIds.has(p.id)), ...state.photos]
-    return { photos: merged }
-  })
-})
-
-// Self-heal records left behind by builds where minting only set 'mint'. Those
-// hydrate as "marked for minting" and would silently mint a second NFT of a
-// frame already on-chain — billed to the user's own wallet, since the finished
-// roll's prepaid collection context is long gone.
-//
-// Mint history is the durable record of what actually minted, so it wins. Both
-// stores hydrate from independent unawaited reads, hence the Promise.all —
-// reconciling early would run against an empty photo store and do nothing.
-void Promise.all([photosHydrated, historyHydrated]).then(() => {
-  const mintedIds = new Set(useMintQueue.getState().mintHistory.map((h) => h.id))
-  if (mintedIds.size === 0) return
-
-  usePhotoStore.setState((state) => {
-    let healed = 0
-    const photos = state.photos.map((photo) => {
-      if (photo.action === 'minted' || !mintedIds.has(photo.id)) return photo
-      healed++
-      return { ...photo, action: 'minted' as const }
-    })
-    if (healed === 0) return state
-    console.log(`[photos] reconciled ${healed} photo(s) to 'minted' from mint history`)
-    persistPhotos(photos)
-    return { photos }
-  })
-})

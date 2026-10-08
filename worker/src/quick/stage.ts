@@ -6,6 +6,7 @@ import { HttpError } from '../lib/http'
 import { sanitizeAttributes, sanitizeText, type MetadataAttribute } from '../lib/sanitize'
 import { ALLOWED_MIME } from '../rolls/config'
 import { MAX_QUICK_IMAGE_BYTES, MAX_STAGES_PER_WALLET_PER_DAY, stagingKeyFor } from './config'
+import type { VerifiedFrameArtifact } from '../rolls/imageArtifact'
 
 /**
  * Metadata as it is stored between stage and finalize.
@@ -28,6 +29,7 @@ export interface StageQuickMintRequest {
   wallet: string
   imageBytes: Uint8Array
   mime: string
+  artifact: VerifiedFrameArtifact
   /** Raw parsed client metadata, before whitelisting. */
   metadata: unknown
 }
@@ -98,6 +100,11 @@ export interface StageQuickMintResult {
   treasury: string
   updateAuthority: string
   maxImageBytes: number
+  mime: string
+  byteLength: number
+  width: number
+  height: number
+  imageHash: string
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -178,7 +185,16 @@ export async function stageQuickMint(
     )
   }
 
+  const reservedArtifactTraits = new Set(['image_sha256', 'image_mime', 'image_bytes', 'image_width', 'image_height'])
   const metadata = whitelistMetadata(req.metadata, req.wallet)
+  metadata.attributes = [
+    ...metadata.attributes.filter((attribute) => !reservedArtifactTraits.has(attribute.trait_type)),
+    { trait_type: 'image_sha256', value: req.artifact.imageHash },
+    { trait_type: 'image_mime', value: req.artifact.mime },
+    { trait_type: 'image_bytes', value: String(req.artifact.byteLength) },
+    { trait_type: 'image_width', value: String(req.artifact.width) },
+    { trait_type: 'image_height', value: String(req.artifact.height) },
+  ]
 
   // Quote and PERSIST the fee now — finalize verifies payment against exactly
   // this number (quick_mints.fee_lamports_required), never a live re-read of
@@ -213,6 +229,10 @@ export async function stageQuickMint(
       stagingKey: key,
       mime: req.mime,
       feeLamportsRequired: feeLamports,
+      byteLength: req.artifact.byteLength,
+      width: req.artifact.width,
+      height: req.artifact.height,
+      imageHash: req.artifact.imageHash,
     })
   } catch (err) {
     // No row means nothing will ever finalize or sweep this object — delete it
@@ -228,5 +248,10 @@ export async function stageQuickMint(
     treasury,
     updateAuthority: workerPubkey,
     maxImageBytes: MAX_QUICK_IMAGE_BYTES,
+    mime: req.artifact.mime,
+    byteLength: req.artifact.byteLength,
+    width: req.artifact.width,
+    height: req.artifact.height,
+    imageHash: req.artifact.imageHash,
   }
 }

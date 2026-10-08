@@ -9,18 +9,23 @@ import type { FundingProvider, StorageProvider } from '../providers/types'
 import { revokeRollDelegateSafely } from './handoff'
 import { ConfirmTimeoutError, getSignatureStatus, sendAndConfirm } from '../solana/confirm'
 import { ALLOWED_MIME, ESTIMATED_METADATA_BYTES } from './config'
+import type { VerifiedFrameArtifact } from './imageArtifact'
 
 // Longer than the client's own 90s give-up timeout and the 45s on-chain
 // confirm timeout combined with realistic upload latency, so a lock is never
 // reclaimed out from under a request that's genuinely still running — only a
 // request whose Worker isolate actually died without releasing it.
 const FRAME_LOCK_STALE_SECONDS = 120
+const ARTIFACT_TRAITS = new Set(['image_sha256', 'image_mime', 'image_bytes', 'image_width', 'image_height'])
 
 export interface MintFrameRequest {
   collectionAddress: string
   /** 1-based position in the roll (1..size). The client owns frame ordering. */
   frameIndex: number
   imageBytes: Uint8Array
+  /** Worker-derived receipt for the complete image bytes. */
+  artifact: VerifiedFrameArtifact
+  /** Mirrors artifact.mime for compatibility with the existing error path. */
   mime: string
   description?: string
   /** Extra attributes from the app's auto-metadata pipeline (location, weather, ...). */
@@ -51,6 +56,11 @@ export interface MintFrameResult {
   rollStatus: 'OPEN' | 'COMPLETE'
   mintedCount: number
   fundingWarning: string | null
+  mime: string
+  byteLength: number
+  width: number
+  height: number
+  imageHash: string
 }
 
 function frameName(roll: RollRow, frameIndex: number): string {
@@ -83,6 +93,9 @@ export async function mintFrame(deps: MintFrameDeps, req: MintFrameRequest): Pro
     throw new HttpError(400, `frameIndex must be an integer in 1..${roll.size}, got ${req.frameIndex}`)
   }
 
+  // Refuse substituted retry bytes before the frame-lock mutation.
+  assertArtifactMatches(await db.getFrame(req.collectionAddress, req.frameIndex), req.artifact)
+
   // Serialize concurrent requests for this frame. Sequential re-POSTs are
   // already safe via the D1 checkpoint below, but nothing previously stopped
   // two requests in flight at once (e.g. a client navigation leaving the
@@ -108,6 +121,7 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
   const { db, rpcUrl, getUmi, getSeams } = deps
 
   const existing = await db.getFrame(req.collectionAddress, req.frameIndex)
+  assertArtifactMatches(existing, req.artifact)
 
   // ---- Fast path: already minted (idempotent resume) ----
   if (existing?.status === 'MINTED' && existing.asset_address) {
@@ -123,6 +137,7 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
       rollStatus: roll.status,
       mintedCount: roll.minted_count,
       fundingWarning: null,
+      ...artifactResponse(req.artifact),
     }
   }
 
@@ -146,6 +161,7 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
         status: 'MINTED',
         assetAddress: existing.asset_address,
         mintSignature: existing.mint_signature,
+        ...artifactCheckpoint(req.artifact),
       })
       const { mintedCount, status: rollStatus } = await db.syncMintedCount(req.collectionAddress)
       if (rollStatus === 'COMPLETE') {
@@ -163,6 +179,7 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
         rollStatus,
         mintedCount,
         fundingWarning: null,
+        ...artifactResponse(req.artifact),
       }
     }
     if (status && !status.err && status.confirmationStatus === 'processed') {
@@ -174,7 +191,7 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
     // Not landed (or failed on-chain): fall through and re-mint with a fresh signer.
   }
 
-  if (!ALLOWED_MIME.has(req.mime)) {
+  if (!ALLOWED_MIME.has(req.artifact.mime)) {
     throw new HttpError(400, `Unsupported image MIME "${req.mime}" — use image/jpeg, image/png, or image/webp`)
   }
   if (req.imageBytes.byteLength === 0 && !existing?.image_uri) {
@@ -193,8 +210,8 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
       throw new HttpError(
         503,
         `Frame upload refused: Turbo credit balance is insufficient (have ${fundingStatus.balanceAtomic}, ` +
-          `need ${fundingStatus.requiredAtomic} winc). OPERATOR: top up per the README runbook. `
-          + 'The frame checkpoint is untouched — re-POST this frame after the top-up to resume.',
+          `need ${fundingStatus.requiredAtomic} winc). OPERATOR: top up per the README runbook. ` +
+          'The frame checkpoint is untouched — re-POST this frame after the top-up to resume.',
       )
     }
   }
@@ -204,12 +221,13 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
   // ---- Step 1: image upload (skipped on resume — permanent bytes are paid for once) ----
   let imageUri = existing?.image_uri ?? null
   if (!imageUri) {
-    imageUri = await storage.uploadImage(req.imageBytes, req.mime)
+    imageUri = await storage.uploadImage(req.imageBytes, req.artifact.mime)
     await db.upsertFrame({
       collectionAddress: req.collectionAddress,
       frameIndex: req.frameIndex,
       status: 'IMAGE_UPLOADED',
       imageUri,
+      ...artifactCheckpoint(req.artifact),
     })
   }
 
@@ -223,14 +241,19 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
         description:
           req.description ?? `Frame ${String(req.frameIndex).padStart(3, '0')} of Momints roll ${roll.name}.`,
         imageUri,
-        mime: req.mime,
+        mime: req.artifact.mime,
         attributes: [
           // Inherited from the roll: provenance identity + vanity display name.
           { trait_type: 'skr_identity', value: roll.skr_identity },
           { trait_type: 'artist', value: roll.artist },
           { trait_type: 'roll', value: roll.name },
           { trait_type: 'frame', value: `${String(req.frameIndex).padStart(3, '0')}/${roll.size}` },
-          ...(req.attributes ?? []),
+          { trait_type: 'image_sha256', value: req.artifact.imageHash },
+          { trait_type: 'image_mime', value: req.artifact.mime },
+          { trait_type: 'image_bytes', value: String(req.artifact.byteLength) },
+          { trait_type: 'image_width', value: String(req.artifact.width) },
+          { trait_type: 'image_height', value: String(req.artifact.height) },
+          ...(req.attributes ?? []).filter((attribute) => !ARTIFACT_TRAITS.has(attribute.trait_type)),
         ],
         creators: [{ address: roll.wallet, share: 100 }],
       }),
@@ -241,15 +264,14 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
       status: 'METADATA_UPLOADED',
       imageUri,
       metadataUri,
+      ...artifactCheckpoint(req.artifact),
     })
   }
 
   // ---- Step 3: mint the Core asset into the roll's collection ----
   const umi = await getUmi()
   const { create, fetchCollection } = await import('@metaplex-foundation/mpl-core')
-  const collection = await withBackoff('fetchCollection', () =>
-    fetchCollection(umi, publicKey(req.collectionAddress)),
-  )
+  const collection = await withBackoff('fetchCollection', () => fetchCollection(umi, publicKey(req.collectionAddress)))
   const assetSigner = generateSigner(umi)
 
   // Checkpoint BEFORE sending: if confirmation times out, the next attempt
@@ -287,6 +309,7 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
     metadataUri,
     assetAddress: assetSigner.publicKey.toString(),
     mintSignature: pendingSignature,
+    ...artifactCheckpoint(req.artifact),
   })
 
   let signature: string
@@ -326,6 +349,7 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
     metadataUri,
     assetAddress: assetSigner.publicKey.toString(),
     mintSignature: signature,
+    ...artifactCheckpoint(req.artifact),
   })
   const { mintedCount, status: rollStatus } = await db.syncMintedCount(req.collectionAddress)
   if (rollStatus === 'COMPLETE') {
@@ -347,6 +371,44 @@ async function mintFrameLocked(deps: MintFrameDeps, req: MintFrameRequest, roll:
     rollStatus,
     mintedCount,
     fundingWarning,
+    ...artifactResponse(req.artifact),
+  }
+}
+
+function artifactResponse(artifact: VerifiedFrameArtifact) {
+  return {
+    mime: artifact.mime,
+    byteLength: artifact.byteLength,
+    width: artifact.width,
+    height: artifact.height,
+    imageHash: artifact.imageHash,
+  }
+}
+
+function artifactCheckpoint(artifact: VerifiedFrameArtifact) {
+  return {
+    mime: artifact.mime,
+    byteLength: artifact.byteLength,
+    width: artifact.width,
+    height: artifact.height,
+    imageHash: artifact.imageHash,
+  }
+}
+
+function assertArtifactMatches(existing: FrameRow | null, artifact: VerifiedFrameArtifact): void {
+  if (!existing) return
+  const stored = [existing.mime, existing.byte_length, existing.width, existing.height, existing.image_hash]
+  // Protocol-v1 checkpoints have no receipt columns. They remain distinct
+  // from v2; every v2 retry is bound to the first verified image bytes.
+  if (stored.every((value) => value === null)) return
+  if (
+    existing.mime !== artifact.mime ||
+    existing.byte_length !== artifact.byteLength ||
+    existing.width !== artifact.width ||
+    existing.height !== artifact.height ||
+    existing.image_hash !== artifact.imageHash
+  ) {
+    throw new HttpError(409, 'Frame retry bytes do not match the original verified artifact')
   }
 }
 
@@ -359,6 +421,11 @@ export function summarizeFrames(frames: FrameRow[]) {
     imageUri: f.image_uri,
     metadataUri: f.metadata_uri,
     signature: f.mint_signature,
+    mime: f.mime,
+    byteLength: f.byte_length,
+    width: f.width,
+    height: f.height,
+    imageHash: f.image_hash,
     updatedAt: f.updated_at,
   }))
 }
