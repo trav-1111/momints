@@ -38,6 +38,7 @@ import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
 import { CompositionGridOverlay, type GridMode } from '../components/CompositionGridOverlay'
 import { FocusReticle } from '../components/FocusReticle'
 import ManualControls from '../components/ManualControls'
+import { LongExposureBanner } from '../features/long-exposure'
 import { useManualCameraState } from '../hooks/useManualCameraState'
 import { useCameraReadiness } from '../hooks/useCameraReadiness'
 import { captureLongExposure, WhiteBalancePreset } from '../../modules/camera-manual'
@@ -1359,33 +1360,12 @@ export default function CameraScreen() {
           paddingHorizontal: 26,
         }}
       >
-        {isCapturing && manualCamera.shutterMode === 'manual' && manualCamera.manualShutterNs >= 500_000_000 && (
-          <View
-            pointerEvents="none"
-            style={{
-              position: 'absolute',
-              top: 8,
-              left: 0,
-              right: 0,
-              alignItems: 'center',
-            }}
-          >
-            <View
-              style={{
-                backgroundColor: 'rgba(15,15,20,0.88)',
-                paddingHorizontal: 12,
-                paddingVertical: 5,
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: colors.accentSoft,
-              }}
-            >
-              <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.accentSoft, letterSpacing: 0.8 }}>
-                {`HOLD STILL · EXPOSING ${(manualCamera.manualShutterNs / 1e9).toFixed(1)}s`}
-              </Text>
-            </View>
-          </View>
-        )}
+        {/* Long Exposure Hold Still Banner */}
+        <LongExposureBanner
+          isCapturing={isCapturing}
+          shutterMode={manualCamera.shutterMode}
+          manualShutterNs={manualCamera.manualShutterNs}
+        />
 
         <Pressable onPress={toggleCamera} style={roundChip(44)}>
           <IconFlip size={20} color={colors.text} />
