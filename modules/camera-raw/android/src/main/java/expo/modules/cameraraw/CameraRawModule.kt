@@ -10,6 +10,7 @@ import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.DngCreator
 import android.hardware.camera2.TotalCaptureResult
+import android.media.ExifInterface
 import android.media.Image
 import android.media.ImageReader
 import android.os.Handler
@@ -17,6 +18,7 @@ import android.os.HandlerThread
 import android.os.Looper
 import android.util.Log
 import android.util.Size
+import android.view.Surface
 import android.view.View
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -54,7 +56,7 @@ class RawCaptureOptionsRecord : Record {
   var whiteBalanceMode: Int? = null
 
   @Field
-  var orientation: Int = 0
+  var orientation: Int? = null
 }
 
 class CameraRawModule : Module() {
@@ -177,6 +179,32 @@ class CameraRawModule : Module() {
       return
     }
 
+    val sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: run {
+      promise.reject("ERR_RAW_ORIENTATION", "Camera $cameraId has no sensor orientation", null)
+      return
+    }
+    @Suppress("DEPRECATION")
+    val displayRotation = appContext.currentActivity?.windowManager?.defaultDisplay?.rotation ?: Surface.ROTATION_0
+    val displayDegrees = when (displayRotation) {
+      Surface.ROTATION_90 -> 90
+      Surface.ROTATION_180 -> 180
+      Surface.ROTATION_270 -> 270
+      else -> 0
+    }
+    val sign = if (characteristics.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT) 1 else -1
+    // JPEG_ORIENTATION takes degrees; DngCreator takes TIFF/EXIF orientation constants.
+    val jpegOrientation = options.orientation ?: (sensorOrientation - displayDegrees * sign + 360) % 360
+    val exifOrientation = when (jpegOrientation) {
+      0 -> ExifInterface.ORIENTATION_NORMAL
+      90 -> ExifInterface.ORIENTATION_ROTATE_90
+      180 -> ExifInterface.ORIENTATION_ROTATE_180
+      270 -> ExifInterface.ORIENTATION_ROTATE_270
+      else -> {
+        promise.reject("ERR_RAW_ORIENTATION", "Invalid RAW orientation: $jpegOrientation", null)
+        return
+      }
+    }
+
     val map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
     val rawSizes = map?.getOutputSizes(ImageFormat.RAW_SENSOR) ?: emptyArray()
     val rawSize = rawSizes.firstOrNull() ?: Size(4000, 3000)
@@ -286,9 +314,7 @@ class CameraRawModule : Module() {
                 // 1. Write Lossless Adobe DNG
                 val dngFile = File(cacheDir, "momints_raw_${timestamp}.dng")
                 val dngCreator = DngCreator(characteristics, result)
-                if (options.orientation != 0) {
-                  dngCreator.setOrientation(options.orientation)
-                }
+                dngCreator.setOrientation(exifOrientation)
 
                 FileOutputStream(dngFile).use { fos ->
                   dngCreator.writeImage(fos, raw)
@@ -438,9 +464,7 @@ class CameraRawModule : Module() {
                       // Lens Shading Map mode for DNG vignetting correction
                       set(CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE, CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE_ON)
 
-                      if (options.orientation != 0) {
-                        set(CaptureRequest.JPEG_ORIENTATION, options.orientation)
-                      }
+                      set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation)
                     }
 
                     session.capture(requestBuilder.build(), object : CameraCaptureSession.CaptureCallback() {

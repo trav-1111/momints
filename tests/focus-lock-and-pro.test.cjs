@@ -517,3 +517,20 @@ test('FocusReticle: EV slider drag calibration is stable, non-runaway, and comfo
   const results = samples.map((dy) => computeEvFromDrag(evStart, dy))
   assert.deepEqual(results, [0.2, 0.3, 0.5, 0.7, 0.8, 1.0])
 })
+
+test('manual AF range uses Camera2 focus capability when VisionCamera reports zero', () => {
+  const { sourceLoader } = require('./helpers/load-source.cjs')
+  const { resolveManualFocusRange } = sourceLoader()('src/features/pro-controls/focusRange.ts')
+  const seeker = { cameraId: '0', manualFocusPossible: true, minFocusDistanceDiopters: 2 }
+  assert.equal(resolveManualFocusRange('0', 0, [seeker]), 22)
+  assert.equal(resolveManualFocusRange('1', 0, [seeker]), null)
+  assert.equal(resolveManualFocusRange('0', 50, [{ ...seeker, manualFocusPossible: false, minFocusDistanceDiopters: 0 }]), null)
+  assert.equal(resolveManualFocusRange('0', 50, []), 22)
+  assert.equal(resolveManualFocusRange(null, 50, [seeker]), null)
+})
+
+test('Pro camera gates AF against native Camera2 lens characteristics', () => {
+  const camera = fs.readFileSync(path.join(__dirname, '../src/app/camera.tsx'), 'utf8')
+  assert.match(camera, /getCameraCapabilities\(\)/)
+  assert.match(camera, /resolveManualFocusRange\(/)
+})

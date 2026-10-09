@@ -21,7 +21,8 @@ test('.well-known/assetlinks.json is valid and matches app package and certifica
   const expectedPackage = appJson.expo?.android?.package
   assert.ok(expectedPackage, 'app.json must declare android.package')
 
-  const entry = assetLinks[0]
+  const entry = assetLinks.find((e) => e.target?.package_name === expectedPackage)
+  assert.ok(entry, `assetlinks.json must contain entry for ${expectedPackage}`)
   assert.deepEqual(entry.relation, ['delegate_permission/common.handle_all_urls'])
   assert.equal(entry.target?.namespace, 'android_app')
   assert.equal(entry.target?.package_name, expectedPackage)

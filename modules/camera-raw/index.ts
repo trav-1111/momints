@@ -35,7 +35,7 @@ export interface RawCaptureOptions {
   manualFocusDistance?: number
   /** Camera2 White Balance mode preset. */
   whiteBalanceMode?: number
-  /** EXIF / DNG orientation (0, 90, 180, 270). */
+  /** Optional clockwise JPEG rotation in degrees; native derives it from sensor/display when omitted. */
   orientation?: number
 }
 
@@ -98,6 +98,6 @@ export async function captureRawDng(options: RawCaptureOptions = {}): Promise<Ra
     manualExposureNs: options.manualExposureNs,
     manualFocusDistance: options.manualFocusDistance,
     whiteBalanceMode: options.whiteBalanceMode,
-    orientation: options.orientation ?? 0,
+    orientation: options.orientation,
   })
 }

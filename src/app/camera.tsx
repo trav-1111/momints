@@ -42,10 +42,12 @@ import { FocusReticle } from '../components/FocusReticle'
 import ManualControls from '../components/ManualControls'
 import { KinoBanners } from '../features/kino'
 import { LongExposureBanner } from '../features/long-exposure'
+import { resolveManualFocusRange } from '../features/pro-controls/focusRange'
 import { useManualCameraState } from '../hooks/useManualCameraState'
 import { useCameraReadiness } from '../hooks/useCameraReadiness'
 import { captureLongExposure, WhiteBalancePreset } from '../../modules/camera-manual'
 import { captureRawDng, isRawSupported } from '../../modules/camera-raw'
+import { getCameraCapabilities } from '../../modules/camera-caps'
 import { useWalletDomain, formatWalletDisplay } from '../hooks/useWalletDomain'
 import { useMintRoll } from '../hooks/useMintRoll'
 import { useSessionStore } from '../store/session'
@@ -283,23 +285,20 @@ export default function CameraScreen() {
   const maxZoom = Math.min(activeDevice?.maxZoom ?? 5, 10)
   const minExposure = activeDevice?.minExposure ?? -2
   const maxExposure = activeDevice?.maxExposure ?? 2
-  // vision-camera reports minFocusDistance in cm (0 = unknown/fixed-focus);
-  // Camera2's LENS_FOCUS_DISTANCE is diopters (1/meters) — 100/cm converts.
-  // MANUAL_FOCUS_HEADROOM_DIOPTERS: LENS_INFO_MINIMUM_FOCUS_DISTANCE is
-  // documented by Android as a "guaranteed sharp" floor, not a hard
-  // mechanical limit — the lens can be racked past it, sharp result not
-  // guaranteed. On this Seeker's main camera (reported min: 2 diopters /
-  // 50cm) autofocus visibly focuses much closer than that, which the old
-  // manual range couldn't reach. Verified on-device by manually pushing
-  // LENS_FOCUS_DISTANCE well past the declared max and confirming sharp,
-  // readable macro detail (mm ruler markings in focus) all the way past
-  // 20 diopters (~5cm) — so this headroom is empirical, not a spec value,
-  // and is specific to this camera module.
-  const MANUAL_FOCUS_HEADROOM_DIOPTERS = 20
-  const maxFocusDiopters =
-    activeDevice && activeDevice.minFocusDistance > 0
-      ? 100 / activeDevice.minFocusDistance + MANUAL_FOCUS_HEADROOM_DIOPTERS
-      : null
+  const focusCapabilities = useMemo(() => {
+    try {
+      return getCameraCapabilities()
+    } catch {
+      return []
+    }
+  }, [activeDevice?.id])
+  // Camera2 is authoritative for manual focus. VisionCamera can report an
+  // unknown minimum distance even when the Seeker's lens is adjustable.
+  const maxFocusDiopters = resolveManualFocusRange(
+    activeDevice?.id ?? null,
+    activeDevice?.minFocusDistance,
+    focusCapabilities,
+  )
 
   const cameraReadiness = useCameraReadiness(activeDevice?.id ?? null, isFocused && appActive)
   const { cameraRef, invalidate: invalidateCamera } = cameraReadiness
@@ -441,9 +440,10 @@ export default function CameraScreen() {
               : undefined,
           whiteBalanceMode: WhiteBalancePreset[currentManualCamera.whiteBalance],
         })
+        if (!rawResult.jpegPath) throw new Error('RAW capture did not return a paired JPEG')
         rawNegativePath = rawResult.dngPath
         rawNegativeSize = rawResult.dngByteLength
-        photoPath = rawResult.jpegPath ?? rawResult.dngPath
+        photoPath = rawResult.jpegPath
       } else {
         const photo: PhotoFile = await cameraRef.current.takePhoto({
           flash: usingTorchForFlash ? 'off' : supportsFlash ? flash : 'off',
@@ -559,6 +559,10 @@ export default function CameraScreen() {
   }, [
     flash,
     isCapturing,
+    rawMode,
+    isRawHardwareSupported,
+    manualCamera,
+    cameraReadiness,
     addPhoto,
     supportsFlash,
     supportsTorch,

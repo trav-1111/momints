@@ -112,7 +112,7 @@ test('captureRawDng supplies strict defaults and rejects missing capabilities', 
   await captureRawDng()
   assert.equal(passedOptions.cameraId, '0')
   assert.equal(passedOptions.includeJpeg, true)
-  assert.equal(passedOptions.orientation, 0)
+  assert.equal(passedOptions.orientation, undefined, 'native Camera2 must infer orientation when omitted')
 
   await assert.rejects(
     async () => {
@@ -137,5 +137,51 @@ test('camera UI wires raw capability and photo store registers raw negative', ()
   const photosSrc = fs.readFileSync(path.join(__dirname, '../src/store/photos.ts'), 'utf8')
   assert.ok(photosSrc.includes('rawNegativeUri?: string'))
   assert.ok(photosSrc.includes('rawNegativeBytes?: number'))
+})
+
+test('the shutter callback tracks the current RAW selection and camera settings', () => {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const ts = require('typescript')
+  const source = fs.readFileSync(path.join(__dirname, '../src/app/camera.tsx'), 'utf8')
+  const parsed = ts.createSourceFile('camera.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
+  let dependencies
+  function visit(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(parsed) === 'handleCapture') {
+      assert.ok(ts.isCallExpression(node.initializer))
+      const deps = node.initializer.arguments[1]
+      assert.ok(ts.isArrayLiteralExpression(deps))
+      dependencies = deps.elements.map((element) => element.getText(parsed))
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(parsed)
+  assert.ok(dependencies, 'capture callback was not found')
+  for (const value of ['rawMode', 'isRawHardwareSupported', 'manualCamera', 'cameraReadiness']) {
+    assert.ok(dependencies.includes(value), `${value} may be stale when the shutter is pressed`)
+  }
+})
+
+test('Camera2 RAW stills orient both JPEG and DNG from sensor and display rotation', () => {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const native = fs.readFileSync(
+    path.join(__dirname, '../modules/camera-raw/android/src/main/java/expo/modules/cameraraw/CameraRawModule.kt'),
+    'utf8',
+  )
+  assert.match(native, /SENSOR_ORIENTATION/)
+  assert.match(native, /\.rotation/)
+  assert.match(native, /set\(CaptureRequest\.JPEG_ORIENTATION, jpegOrientation\)/)
+  assert.match(native, /dngCreator\.setOrientation\(exifOrientation\)/)
+  assert.match(native, /ExifInterface\.ORIENTATION_ROTATE_90/)
+  assert.match(native, /ExifInterface\.ORIENTATION_ROTATE_270/)
+})
+
+test('a missing paired JPEG cannot be passed to the film renderer as a DNG', () => {
+  const fs = require('node:fs')
+  const path = require('node:path')
+  const camera = fs.readFileSync(path.join(__dirname, '../src/app/camera.tsx'), 'utf8')
+  assert.doesNotMatch(camera, /rawResult\.jpegPath\s*\?\?\s*rawResult\.dngPath/)
+  assert.match(camera, /if \(!rawResult\.jpegPath\) throw new Error/)
 })
 
