@@ -42,6 +42,12 @@ import { FocusReticle } from '../components/FocusReticle'
 import ManualControls from '../components/ManualControls'
 import { KinoBanners } from '../features/kino'
 import { LongExposureBanner } from '../features/long-exposure'
+import {
+  useDoubleExposure,
+  blendDoubleExposure,
+  MxGhostOverlay,
+  MxBanner,
+} from '../features/double-exposure'
 import { resolveManualFocusRange } from '../features/pro-controls/focusRange'
 import { useManualCameraState } from '../hooks/useManualCameraState'
 import { useCameraReadiness } from '../hooks/useCameraReadiness'
@@ -189,6 +195,13 @@ export default function CameraScreen() {
   const [proOpen, setProOpen] = useState(false)
   const [rawMode, setRawMode] = useState(false)
   const [ev, setEv] = useState(0)
+  const {
+    isMxActive,
+    firstExposureUri,
+    toggleMx,
+    recordFirstExposure,
+    resetMx,
+  } = useDoubleExposure()
 
   // Release the camera when the screen loses focus or the app is backgrounded
   // (e.g. wallet handoff) — Android throws camera-is-restricted otherwise
@@ -475,6 +488,21 @@ export default function CameraScreen() {
       if (effectiveAspect !== 'full') {
         captureUri = await cropToAspect(captureUri, effectiveAspect)
       }
+
+      // Handle Multiple Exposure (MX): First exposure is held as latent ghost, second blends
+      if (isMxActive) {
+        if (!firstExposureUri) {
+          recordFirstExposure(captureUri)
+          setIsCapturing(false)
+          return
+        }
+        const blendedUri = await blendDoubleExposure(firstExposureUri, captureUri)
+        deleteCapture(firstExposureUri)
+        deleteCapture(captureUri)
+        resetMx()
+        captureUri = blendedUri
+      }
+
       let receipt = await processFilm(captureUri, effectiveFilm)
       captureUri = receipt.outputUri
       // Quick Shots and prepaid frames share one permanent artifact contract.
@@ -559,6 +587,10 @@ export default function CameraScreen() {
   }, [
     flash,
     isCapturing,
+    isMxActive,
+    firstExposureUri,
+    recordFirstExposure,
+    resetMx,
     rawMode,
     isRawHardwareSupported,
     manualCamera,
@@ -1159,6 +1191,9 @@ export default function CameraScreen() {
           {/* Composition grid overlay */}
           <CompositionGridOverlay mode={gridMode} aspect={effectiveAspect} width={screenW} height={screenH} />
 
+          {/* Multiple Exposure Ghost Alignment Overlay */}
+          <MxGhostOverlay firstExposureUri={firstExposureUri} />
+
           {/* Viewfinder touch target for focus / lock */}
           <Pressable
             style={StyleSheet.absoluteFill}
@@ -1354,6 +1389,38 @@ export default function CameraScreen() {
               </Text>
             </Pressable>
           )}
+
+          <Pressable
+            onPress={() => {
+              toggleMx()
+              Haptics.selectionAsync()
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Multiple Exposure: ${isMxActive ? 'On' : 'Off'}`}
+            style={[
+              chip,
+              {
+                height: 42,
+                paddingHorizontal: 12,
+                borderRadius: 21,
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderColor: isMxActive ? colors.accent : colors.chipBorder,
+                backgroundColor: isMxActive ? colors.accentTint : colors.chipBg,
+              },
+            ]}
+          >
+            <Text
+              style={{
+                fontFamily: fonts.sansBold,
+                fontSize: 11,
+                letterSpacing: tracking(0.1, 11),
+                color: isMxActive ? colors.accentSoft : colors.text,
+              }}
+            >
+              MX
+            </Text>
+          </Pressable>
         </View>
 
         {account && walletAddress ? (
@@ -1610,6 +1677,13 @@ export default function CameraScreen() {
           />
         </View>
       )}
+
+      {/* Multiple Exposure Status Banner */}
+      <MxBanner
+        isMxActive={isMxActive}
+        firstExposureUri={firstExposureUri}
+        onReset={resetMx}
+      />
 
       {/* LomoKino Cranking & Developing Banners */}
       <KinoBanners
