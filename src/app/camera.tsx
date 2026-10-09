@@ -1255,7 +1255,7 @@ export default function CameraScreen() {
           alignItems: 'center',
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
           <Pressable
             onPress={toggleFlash}
             disabled={!supportsFlash}
@@ -1362,7 +1362,10 @@ export default function CameraScreen() {
               {
                 flexDirection: 'row',
                 alignItems: 'center',
-                gap: 7,
+                gap: 5,
+                flexShrink: 1,
+                minWidth: 0,
+                marginLeft: 6,
                 paddingVertical: 8,
                 paddingHorizontal: 12,
                 borderRadius: 999,
@@ -1370,7 +1373,7 @@ export default function CameraScreen() {
             ]}
           >
             <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.green }} />
-            <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.text }}>
+            <Text numberOfLines={1} ellipsizeMode="middle" style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.text, flexShrink: 1 }}>
               {formatWalletDisplay(walletAddress, domain)}
             </Text>
             <Text style={{ fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft, marginLeft: 2 }}>▼</Text>
@@ -1398,6 +1401,8 @@ export default function CameraScreen() {
               flexDirection: 'row',
               alignItems: 'center',
               gap: 7,
+              flexShrink: 1,
+              marginLeft: 6,
               paddingVertical: 8,
               paddingHorizontal: 14,
               borderRadius: 999,

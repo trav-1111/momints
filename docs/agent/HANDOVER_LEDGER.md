@@ -4,6 +4,16 @@
 
 ---
 
+## Session 2026-10-09: V2 Camera Header Wallet Clearance
+
+* **Agent / Author:** Hermes Momints Engineer
+* **Branch:** `fix/v2-wallet-header-fit` (from `v2-staging`)
+* **Scope:** Tightened first-row control gaps from 8 to 5 dp, kept 42 dp icon targets, and let the wallet pill and its single-line label shrink inside the 18 dp right inset rather than overflow for longer `.skr` handles. Added a 6 dp minimum separation from the left controls.
+* **Verified Truth:** `npm run agent:check` passed 57/57. Physical Seeker `SM02G40619133790` reports 1200x2670 at 480 dpi. Installed baseline V1 wallet menu measured `[835,72][1200,175]` via UIAutomator (touches screen edge); updated V2 build has **not** been installed or visually verified on hardware.
+* **Open:** Rebuild/install updated V2 QA APK on Seeker and inspect longest supported wallet label; `scripts/seeker-agent/run.sh` against the *installed baseline V1*, not this change, passed 5/6 flows (wallet flow UIAutomator exited 137). No Worker endpoints modified.
+
+---
+
 ## Session 2026-10-08: MWA Hardening & Edge-Case Resolution
 
 * **Agent / Author:** Antigravity (Pair Programming with Zaac)
