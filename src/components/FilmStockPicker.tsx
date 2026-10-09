@@ -99,9 +99,9 @@ function FilmCard({
     }
   }
 
-  const isVaultedLocked = !stock.evergreen && !isStocked && !isUnlocked
-  const isQuickLocked = purpose === 'quick' && !stock.evergreen && !isUnlocked
-  const isDisabled = Boolean(locked || incompatible || isVaultedLocked || isQuickLocked)
+  const isVaultedLocked = false
+  const isQuickLocked = false
+  const isDisabled = Boolean(locked || incompatible)
 
   return (
     <Pressable

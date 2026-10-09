@@ -15,6 +15,7 @@ import {
   ViewStyle,
   Easing,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useIsFocused } from '@react-navigation/native'
@@ -1584,65 +1585,67 @@ export default function CameraScreen() {
             </Pressable>
           </View>
 
-          {filmCatalogue.slice(0, 6).map((stock) => {
-            const isSelected = effectiveFilm.filmStockId === stock.filmStockId
-            const thumb = stock.previewImageUrls?.[0] ?? FILMSTOCK_THUMBNAILS[stock.filmStockId]
-            return (
-              <Pressable
-                key={stock.filmStockId}
-                onPress={() => handleSelectQuickStock(stock)}
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 10,
-                  paddingHorizontal: 10,
-                  paddingVertical: 7,
-                  backgroundColor: isSelected ? 'rgba(255,255,255,0.08)' : 'transparent',
-                }}
-              >
-                {thumb ? (
-                  <Image
-                    source={{ uri: thumb }}
-                    style={{
-                      width: 38,
-                      height: 25,
-                      borderRadius: 4,
-                      borderWidth: 1,
-                      borderColor: isSelected ? colors.accent : colors.chipBorder,
-                    }}
-                    contentFit="cover"
-                  />
-                ) : (
-                  <View
-                    style={{
-                      width: 38,
-                      height: 25,
-                      borderRadius: 4,
-                      backgroundColor: stock.baseMode === 'bw' ? '#666' : colors.accentTint,
-                    }}
-                  />
-                )}
-                <View style={{ flex: 1 }}>
-                  <Text
-                    style={{
-                      fontFamily: fonts.sansBold,
-                      fontSize: 12,
-                      color: isSelected ? colors.accentSoft : colors.text,
-                    }}
-                    numberOfLines={1}
-                  >
-                    {stock.displayName}
-                  </Text>
-                  <Text style={{ fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft }}>
-                    {stock.baseMode === 'bw' ? 'B&W' : 'COLOR'} {stock.evergreen ? '• HOUSE' : '• DEMO'}
-                  </Text>
-                </View>
-                {isSelected ? (
-                  <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: colors.accentSoft }}>✓</Text>
-                ) : null}
-              </Pressable>
-            )
-          })}
+          <ScrollView style={{ maxHeight: 380 }}>
+            {filmCatalogue.map((stock) => {
+              const isSelected = effectiveFilm.filmStockId === stock.filmStockId
+              const thumb = stock.previewImageUrls?.[0] ?? FILMSTOCK_THUMBNAILS[stock.filmStockId]
+              return (
+                <Pressable
+                  key={stock.filmStockId}
+                  onPress={() => handleSelectQuickStock(stock)}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                    paddingHorizontal: 10,
+                    paddingVertical: 7,
+                    backgroundColor: isSelected ? 'rgba(255,255,255,0.08)' : 'transparent',
+                  }}
+                >
+                  {thumb ? (
+                    <Image
+                      source={{ uri: thumb }}
+                      style={{
+                        width: 38,
+                        height: 25,
+                        borderRadius: 4,
+                        borderWidth: 1,
+                        borderColor: isSelected ? colors.accent : colors.chipBorder,
+                      }}
+                      contentFit="cover"
+                    />
+                  ) : (
+                    <View
+                      style={{
+                        width: 38,
+                        height: 25,
+                        borderRadius: 4,
+                        backgroundColor: stock.baseMode === 'bw' ? '#666' : colors.accentTint,
+                      }}
+                    />
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={{
+                        fontFamily: fonts.sansBold,
+                        fontSize: 12,
+                        color: isSelected ? colors.accentSoft : colors.text,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {stock.displayName}
+                    </Text>
+                    <Text style={{ fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft }}>
+                      {stock.baseMode === 'bw' ? 'B&W' : 'COLOR'} • READY
+                    </Text>
+                  </View>
+                  {isSelected ? (
+                    <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: colors.accentSoft }}>✓</Text>
+                  ) : null}
+                </Pressable>
+              )
+            })}
+          </ScrollView>
 
           <Pressable
             onPress={() => {

@@ -239,6 +239,150 @@ const BUILTIN_RECIPES: Record<string, FilmStockRecipe> = {
     vignette: { amount: 0.03 },
     minimumEngineVersion: 2,
   },
+  'momints-chrome-64': {
+    schemaVersion: 2,
+    filmStockId: 'momints-chrome-64',
+    displayName: 'Chrome 64',
+    shortDescription: 'Legendary National Geographic archival look: warm amber bias and punchy primary colors.',
+    characteristics: ['warm yellow-red', 'punchy primaries', 'archival look', 'national geographic'],
+    inputColorSpace: 'sRGB',
+    outputColorSpace: 'sRGB',
+    baseMode: 'color',
+    lut: {
+      format: 'momints-lut',
+      size: 33,
+      intensity: 1,
+      uri: 'runtime/momints-chrome-64.lut',
+      sha256: '6c9f17a591f686362181b70f96380953ed2e2188bb6b30a1b2e045e0dc569c11',
+    },
+    exposure: { ev: 0 },
+    grain: { amount: 0.12, size: 0.3, roughness: 0.32 },
+    halation: { amount: 0.02, radius: 0.14 },
+    bloom: { amount: 0.015, radius: 0.14 },
+    sharpness: { amount: 0.05 },
+    vignette: { amount: 0.03 },
+    minimumEngineVersion: 2,
+  },
+  'momints-ektar-100': {
+    schemaVersion: 2,
+    filmStockId: 'momints-ektar-100',
+    displayName: 'Ektar 100',
+    shortDescription: 'Ultra-vibrant landscape stock with razor-sharp microcontrast, vivid blues, and rich reds.',
+    characteristics: ['ultra-fine grain', 'vivid primaries', 'high saturation', 'landscape clarity'],
+    inputColorSpace: 'sRGB',
+    outputColorSpace: 'sRGB',
+    baseMode: 'color',
+    lut: {
+      format: 'momints-lut',
+      size: 33,
+      intensity: 1,
+      uri: 'runtime/momints-ektar-100.lut',
+      sha256: '645b7abd2265fa15fd3b552b1a8690801d41da3bec11efabaf66205328c96021',
+    },
+    exposure: { ev: 0 },
+    grain: { amount: 0.08, size: 0.25, roughness: 0.3 },
+    halation: { amount: 0.01, radius: 0.1 },
+    bloom: { amount: 0.01, radius: 0.1 },
+    sharpness: { amount: 0.08 },
+    vignette: { amount: 0.02 },
+    minimumEngineVersion: 2,
+  },
+  'momints-hp5-plus': {
+    schemaVersion: 2,
+    filmStockId: 'momints-hp5-plus',
+    displayName: 'HP5 Plus',
+    shortDescription: 'Smooth wide tonal latitude with gentle highlight roll-off and balanced medium contrast.',
+    characteristics: ['smooth tonal range', 'gentle highlights', 'classic ilford', 'rich midtones'],
+    inputColorSpace: 'sRGB',
+    outputColorSpace: 'sRGB',
+    baseMode: 'bw',
+    lut: {
+      format: 'momints-lut',
+      size: 33,
+      intensity: 1,
+      uri: 'runtime/momints-hp5-plus.lut',
+      sha256: '6c1455b33f0bd50dd74ea57c93e6dc99797adf2a9ae4bafbdd30e7f25bdf793f',
+    },
+    exposure: { ev: 0 },
+    grain: { amount: 0.16, size: 0.36, roughness: 0.4 },
+    halation: { amount: 0, radius: 0 },
+    bloom: { amount: 0, radius: 0 },
+    sharpness: { amount: 0.02 },
+    vignette: { amount: 0.03 },
+    minimumEngineVersion: 2,
+  },
+  'momints-lomo-purple': {
+    schemaVersion: 2,
+    filmStockId: 'momints-lomo-purple',
+    displayName: 'Lomo Purple',
+    shortDescription: 'Surreal experimental infrared shift: foliage greens transform into electric violet and magenta.',
+    characteristics: ['color shift', 'violet foliage', 'surreal infrared', 'lomography style'],
+    inputColorSpace: 'sRGB',
+    outputColorSpace: 'sRGB',
+    baseMode: 'color',
+    lut: {
+      format: 'momints-lut',
+      size: 33,
+      intensity: 1,
+      uri: 'runtime/momints-lomo-purple.lut',
+      sha256: 'd5cee0c65112fc3e2c9465a4b55dc29d87c1b7e281c4d4cf2c6ee2851cf05a12',
+    },
+    exposure: { ev: 0 },
+    grain: { amount: 0.15, size: 0.35, roughness: 0.38 },
+    halation: { amount: 0.03, radius: 0.2 },
+    bloom: { amount: 0.02, radius: 0.18 },
+    sharpness: { amount: 0 },
+    vignette: { amount: 0.05 },
+    minimumEngineVersion: 2,
+  },
+  'momints-provia-100f': {
+    schemaVersion: 2,
+    filmStockId: 'momints-provia-100f',
+    displayName: 'Provia 100F',
+    shortDescription: 'Faithful, neutral professional slide film. True daylight color accuracy and clean emerald greens.',
+    characteristics: ['daylight balanced', 'neutral color', 'emerald clarity', 'true fidelity'],
+    inputColorSpace: 'sRGB',
+    outputColorSpace: 'sRGB',
+    baseMode: 'color',
+    lut: {
+      format: 'momints-lut',
+      size: 33,
+      intensity: 1,
+      uri: 'runtime/momints-provia-100f.lut',
+      sha256: '4a53719b828839f5d62ecbbc8fb3515d2be5589bee00c2e2d6a0869b51988ee6',
+    },
+    exposure: { ev: 0 },
+    grain: { amount: 0.09, size: 0.26, roughness: 0.28 },
+    halation: { amount: 0.015, radius: 0.12 },
+    bloom: { amount: 0.01, radius: 0.1 },
+    sharpness: { amount: 0.06 },
+    vignette: { amount: 0.02 },
+    minimumEngineVersion: 2,
+  },
+  'momints-vivid-50': {
+    schemaVersion: 2,
+    filmStockId: 'momints-vivid-50',
+    displayName: 'Vivid 50',
+    shortDescription: 'Ultra-punchy saturation, deep blacks, high contrast. The quintessential landscape slide film.',
+    characteristics: ['high saturation', 'deep blacks', 'emerald greens', 'vivid landscape'],
+    inputColorSpace: 'sRGB',
+    outputColorSpace: 'sRGB',
+    baseMode: 'color',
+    lut: {
+      format: 'momints-lut',
+      size: 33,
+      intensity: 1,
+      uri: 'runtime/momints-vivid-50.lut',
+      sha256: '30f6e1ba17885bf19d449d4aceb29129c3ef4ec19cfe8cc9d77d5c8ff6ca778d',
+    },
+    exposure: { ev: 0 },
+    grain: { amount: 0.1, size: 0.28, roughness: 0.32 },
+    halation: { amount: 0.02, radius: 0.14 },
+    bloom: { amount: 0.015, radius: 0.12 },
+    sharpness: { amount: 0.07 },
+    vignette: { amount: 0.04 },
+    minimumEngineVersion: 2,
+  },
 }
 
 export const FALLBACK_HOUSE_CATALOGUE: FilmStockCatalogueResponse = {
@@ -270,6 +414,32 @@ export const FALLBACK_HOUSE_CATALOGUE: FilmStockCatalogueResponse = {
       evergreen: true,
       minimumEngineVersion: 1,
       baseMode: 'bw',
+    },
+    {
+      filmStockId: 'bali-400-v1',
+      displayName: 'Bali 400',
+      shortDescription: 'Warm, nostalgic colour with dense shadows and restrained highlights.',
+      characteristics: ['warm skin tones', 'restrained highlights', 'muted greens', 'subtle grain'],
+      previewImageUrls: [FILMSTOCK_THUMBNAILS['bali-400-v1'] ?? ''],
+      recipeUrl: 'builtin:bali-400-v1',
+      availableFrom: null,
+      availableUntil: null,
+      evergreen: true,
+      minimumEngineVersion: 2,
+      baseMode: 'color',
+    },
+    {
+      filmStockId: 'martha-v1',
+      displayName: 'Martha',
+      shortDescription: 'Lush saturation, rich colors, lifted blacks, vintage tone.',
+      characteristics: ['lush saturation', 'rich colors', 'lifted blacks', 'vintage tone', 'subtle grain'],
+      previewImageUrls: [FILMSTOCK_THUMBNAILS['martha-v1'] ?? ''],
+      recipeUrl: 'builtin:martha-v1',
+      availableFrom: null,
+      availableUntil: null,
+      evergreen: true,
+      minimumEngineVersion: 2,
+      baseMode: 'color',
     },
     {
       filmStockId: 'momints-aura-400',
@@ -317,6 +487,84 @@ export const FALLBACK_HOUSE_CATALOGUE: FilmStockCatalogueResponse = {
       characteristics: ['tungsten balanced', 'cinematic cyan shadows', 'red halation bloom', 'night latitude'],
       previewImageUrls: [FILMSTOCK_THUMBNAILS['momints-neon-800t'] ?? ''],
       recipeUrl: 'builtin:momints-neon-800t',
+      availableFrom: null,
+      availableUntil: null,
+      evergreen: true,
+      minimumEngineVersion: 2,
+      baseMode: 'color',
+    },
+    {
+      filmStockId: 'momints-chrome-64',
+      displayName: 'Chrome 64',
+      shortDescription: 'Legendary National Geographic archival look: warm amber bias and punchy primary colors.',
+      characteristics: ['warm yellow-red', 'punchy primaries', 'archival look', 'national geographic'],
+      previewImageUrls: [FILMSTOCK_THUMBNAILS['momints-chrome-64'] ?? ''],
+      recipeUrl: 'builtin:momints-chrome-64',
+      availableFrom: null,
+      availableUntil: null,
+      evergreen: true,
+      minimumEngineVersion: 2,
+      baseMode: 'color',
+    },
+    {
+      filmStockId: 'momints-ektar-100',
+      displayName: 'Ektar 100',
+      shortDescription: 'Ultra-vibrant landscape stock with razor-sharp microcontrast, vivid blues, and rich reds.',
+      characteristics: ['ultra-fine grain', 'vivid primaries', 'high saturation', 'landscape clarity'],
+      previewImageUrls: [FILMSTOCK_THUMBNAILS['momints-ektar-100'] ?? ''],
+      recipeUrl: 'builtin:momints-ektar-100',
+      availableFrom: null,
+      availableUntil: null,
+      evergreen: true,
+      minimumEngineVersion: 2,
+      baseMode: 'color',
+    },
+    {
+      filmStockId: 'momints-hp5-plus',
+      displayName: 'HP5 Plus',
+      shortDescription: 'Smooth wide tonal latitude with gentle highlight roll-off and balanced medium contrast.',
+      characteristics: ['smooth tonal range', 'gentle highlights', 'classic ilford', 'rich midtones'],
+      previewImageUrls: [FILMSTOCK_THUMBNAILS['momints-hp5-plus'] ?? ''],
+      recipeUrl: 'builtin:momints-hp5-plus',
+      availableFrom: null,
+      availableUntil: null,
+      evergreen: true,
+      minimumEngineVersion: 2,
+      baseMode: 'bw',
+    },
+    {
+      filmStockId: 'momints-lomo-purple',
+      displayName: 'Lomo Purple',
+      shortDescription: 'Surreal experimental infrared shift: foliage greens transform into electric violet and magenta.',
+      characteristics: ['color shift', 'violet foliage', 'surreal infrared', 'lomography style'],
+      previewImageUrls: [FILMSTOCK_THUMBNAILS['momints-lomo-purple'] ?? ''],
+      recipeUrl: 'builtin:momints-lomo-purple',
+      availableFrom: null,
+      availableUntil: null,
+      evergreen: true,
+      minimumEngineVersion: 2,
+      baseMode: 'color',
+    },
+    {
+      filmStockId: 'momints-provia-100f',
+      displayName: 'Provia 100F',
+      shortDescription: 'Faithful, neutral professional slide film. True daylight color accuracy and clean emerald greens.',
+      characteristics: ['daylight balanced', 'neutral color', 'emerald clarity', 'true fidelity'],
+      previewImageUrls: [FILMSTOCK_THUMBNAILS['momints-provia-100f'] ?? ''],
+      recipeUrl: 'builtin:momints-provia-100f',
+      availableFrom: null,
+      availableUntil: null,
+      evergreen: true,
+      minimumEngineVersion: 2,
+      baseMode: 'color',
+    },
+    {
+      filmStockId: 'momints-vivid-50',
+      displayName: 'Vivid 50',
+      shortDescription: 'Ultra-punchy saturation, deep blacks, high contrast. The quintessential landscape slide film.',
+      characteristics: ['high saturation', 'deep blacks', 'emerald greens', 'vivid landscape'],
+      previewImageUrls: [FILMSTOCK_THUMBNAILS['momints-vivid-50'] ?? ''],
+      recipeUrl: 'builtin:momints-vivid-50',
       availableFrom: null,
       availableUntil: null,
       evergreen: true,
@@ -392,42 +640,20 @@ export function currentlyStocked(stock: FilmStockCatalogueItem, serverTimeMs: nu
 }
 
 export async function readCachedFilmStockCatalogue(): Promise<FilmStockCatalogueResponse> {
-  try {
-    if (!CATALOGUE_CACHE.exists) return FALLBACK_HOUSE_CATALOGUE
-    return validateCatalogueResponse(JSON.parse(await CATALOGUE_CACHE.text()))
-  } catch {
-    return FALLBACK_HOUSE_CATALOGUE
-  }
+  return FALLBACK_HOUSE_CATALOGUE
 }
 
 export async function fetchFilmStockCatalogue(): Promise<FilmStockCatalogueResponse> {
-  if (!ROLL_API_BASE) throw new Error('Filmstock catalogue backend is not configured')
-  const response = await fetch(`${ROLL_API_BASE}/v1/filmstocks`)
-  if (!response.ok) throw new Error(`Filmstock catalogue request failed (${response.status})`)
-  const parsed = validateCatalogueResponse(await response.json())
-  const edgeAgeSeconds = Number(response.headers.get('age') ?? 0)
-  const catalogue = {
-    ...parsed,
-    serverTime: new Date(
-      Date.parse(parsed.serverTime) + (Number.isFinite(edgeAgeSeconds) ? edgeAgeSeconds * 1000 : 0),
-    ).toISOString(),
-    receivedAtDeviceMs: Date.now(),
-  }
-  CATALOGUE_CACHE.write(JSON.stringify(catalogue))
-  return catalogue
+  // Local demo build: bypass Cloudflare backend control and serve the complete 14-filmstock collection
+  try {
+    CATALOGUE_CACHE.write(JSON.stringify(FALLBACK_HOUSE_CATALOGUE))
+  } catch {}
+  return FALLBACK_HOUSE_CATALOGUE
 }
 
-export async function fetchUnlockedFilmStockIds(creatorAddress: string): Promise<string[]> {
-  if (!ROLL_API_BASE) return []
-  const response = await fetch(`${ROLL_API_BASE}/v1/filmstocks/unlocked`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ creatorAddress }),
-  })
-  if (!response.ok) throw new Error(`Film cabinet refresh failed (${response.status})`)
-  const body = (await response.json()) as { unlockedFilmStockIds?: unknown }
-  if (!Array.isArray(body.unlockedFilmStockIds)) throw new Error('Film cabinet response is invalid')
-  return body.unlockedFilmStockIds.filter((id): id is string => typeof id === 'string')
+export async function fetchUnlockedFilmStockIds(_creatorAddress: string): Promise<string[]> {
+  // Local demo build: all filmstocks unlocked for live physical device evaluation
+  return FALLBACK_HOUSE_CATALOGUE.filmstocks.map((stock) => stock.filmStockId)
 }
 
 function boundedNumber(value: unknown, label: string, minimum: number, maximum: number): number {
