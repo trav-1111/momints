@@ -30,6 +30,7 @@
     "test:wallet-auth-cache": "node --test tests/wallet-auth-cache.test.cjs",
     "test:assetlinks": "node --test tests/assetlinks.test.cjs",
     "test:portfolio": "node --test tests/on-chain-portfolio.test.cjs",
+    "agent:check": "tsc --noEmit && node --test tests/privacy.test.cjs tests/roll-authorization.test.cjs tests/wallet-auth-cache.test.cjs tests/assetlinks.test.cjs tests/camera-readiness.test.cjs",
     "android": "expo run:android",
     "android:build": "expo prebuild -p android",
     "build": "tsc --noEmit && npm run android:build",

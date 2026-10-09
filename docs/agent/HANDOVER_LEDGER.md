@@ -1,0 +1,63 @@
+# Momints Living Agent Handover Ledger
+
+> **Rule for Agents:** When completing a task, append a new session entry to the top of this ledger following the standard schema. Never delete historical entries.
+
+---
+
+## Session 2026-10-08: MWA Hardening & Edge-Case Resolution
+
+* **Agent / Author:** Antigravity (Pair Programming with Zaac)
+* **Active Branch:** `fix/mwa-wallet-integration`
+* **Head Commit:** [`0fbb1e0`](https://github.com/ZaacIsHere/momints/commit/0fbb1e0) on remote `zaacishere`
+* **Upstream Baseline:** `origin/main` / `codex/submission-v1-baseline`
+
+### 1. Scope & Issues Addressed
+1. **Ed25519 Signature Slicing:** MWA returns message + 64-byte signature in single payload. Added [`extractSignatureBytes()`](file:///Users/zaac/momints/src/services/rollApi.ts#L269) to extract trailing 64 bytes (`signedPayload.subarray(-64)`).
+2. **Hardware Keystore Auth Token Caching:** Replaced unencrypted `AsyncStorage` with `expo-secure-store` in [`walletAuthCache.ts`](file:///Users/zaac/momints/src/services/walletAuthCache.ts).
+3. **Atomic Auth Token Migration (Codex catch):** Fixed migration order so legacy `AsyncStorage` token is preserved if `SecureStore.setItemAsync` fails, and only purged upon confirmed write.
+4. **Recovery Capability Staging (Codex catch):** Staged recovery capability before dispatch in [`rollCapability.ts`](file:///Users/zaac/momints/src/services/rollCapability.ts). If an initial response packet drops after Worker commits to D1, retries reuse the identical capability, preventing HTTP 409 conflicts.
+5. **No Silent Early-Exit on Pre-saved Tokens (Codex catch):** Removed premature early-return in [`ensureWorkerRollAuthorization`](file:///Users/zaac/momints/src/services/rollApi.ts#L282); pre-existing local tokens are now verified and claimed on Worker.
+6. **Digital Asset Links DAL:** Provided canonical [`.well-known/assetlinks.json`](file:///Users/zaac/momints/.well-known/assetlinks.json) and clarified that production deployment belongs on `momints.xyz` web host.
+7. **Worker TypeScript Verification:** Resolved missing dev dependencies in `worker/` (`npm --prefix worker ci --legacy-peer-deps`), ensuring `npm --prefix worker run typecheck` passes with 0 errors.
+
+### 2. Verified Ground Truth
+* **TypeScript Checks:**
+  * Root app: `npx tsc --noEmit` -> 0 errors.
+  * Worker: `npm --prefix worker run typecheck` -> 0 errors.
+* **Automated Unit Tests:**
+  * `npm run agent:check` -> 38/38 passing (< 1s).
+  * Worker contract tests: `npm --prefix worker run test:roll-contract` -> 10/10 passing.
+* **Real Hardware Validation (Solana Seeker `SM02G40619133790`):**
+  * Release APK (`app-release.apk`, 72.2 MB) compiled and installed via ADB.
+  * MWA connect sheet invoked via Seed Vault / Phantom -> wallet connected successfully.
+  * Address resolved to reverse `.skr` domain (`🟢 zaaci....skr`).
+  * Process force-kill (`adb shell am force-stop com.momints.app`) and cold relaunch -> session auto-restored without prompting user.
+
+### 3. Open Edge Cases & Known Tech Debt
+* **Digital Asset Links Production Deploy:** Needs to be uploaded to whichever web server hosts `https://momints.xyz` using Trav's production release signing key (not local debug cert).
+* **PR Review Preparation:** All changes are isolated on `zaacishere/fix/mwa-wallet-integration`. A review brief must be prepared before merging to `origin/main`.
+
+### 4. Verification Commands for Next Agent
+```bash
+# 1. Fast verification
+npm run agent:check
+
+# 2. Worker verification
+npm --prefix worker run typecheck
+npm --prefix worker run test:roll-contract
+
+# 3. Check git status
+git status
+git log -n 3 --oneline
+```
+
+---
+
+## Session 2026-10-07: Camera RAW DNG Baseline
+
+* **Agent / Author:** Codex / Zaac
+* **Active Branch:** `codex/submission-v1-baseline` (commit `303a9e1`)
+* **Scope:**
+  * Native Camera2 RAW DNG capture engine (`modules/camera-raw/`).
+  * Hardware capabilities probing for Seeker 108MP sensor (`modules/camera-caps/`).
+  * Preservation of raw negative before GL film simulation.
