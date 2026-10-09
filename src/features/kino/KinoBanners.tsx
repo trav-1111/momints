@@ -44,7 +44,7 @@ export const KinoBanners: React.FC<KinoBannersProps> = ({
           >
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#e74c3c' }} />
             <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: '#fff' }}>
-              🎞️ KINO CRANKING ({captureFps === 8 ? '8 FPS · F5' : `${captureFps} FPS`}) · {crankCount} FRAMES (
+              🎞️ KINO CRANKING ({captureFps} FPS) · {crankCount} FRAMES (
               {(crankCount / captureFps).toFixed(1)}s)
             </Text>
           </View>

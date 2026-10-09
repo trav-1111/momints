@@ -1387,40 +1387,6 @@ export default function CameraScreen() {
               PRO
             </Text>
           </Pressable>
-
-          {/* Kino Cadence Selector Chip */}
-          <Pressable
-            onPress={() => {
-              cycleCaptureFps()
-              Vibration.vibrate(25)
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
-            style={[
-              chip,
-              {
-                height: 38,
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 4,
-                paddingHorizontal: 8,
-                borderRadius: 19,
-                borderColor: captureFps !== 8 ? colors.accent : colors.chipBorder,
-                backgroundColor: captureFps !== 8 ? colors.accentTint : colors.chipBg,
-              },
-            ]}
-          >
-            <Text
-              style={{
-                fontFamily: fonts.monoBold,
-                fontSize: 9.5,
-                color: captureFps !== 8 ? colors.accentSoft : colors.text,
-                letterSpacing: 0.4,
-              }}
-            >
-              🎞️ {captureFps === 8 ? '8 FPS' : `${captureFps} FPS`}
-            </Text>
-          </Pressable>
         </View>
 
         {account && walletAddress ? (
@@ -1771,8 +1737,16 @@ export default function CameraScreen() {
           See ManualControls.tsx for the design source and the adjustments
           made from it for this camera's real (coupled) exposure model. */}
       {proOpen && TIER2_ENABLED && (
-        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 150 }}>
-          {/* Pro format & multi-exposure accessory toggles */}
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 145 }}>
+          <ManualControls
+            controls={manualCamera}
+            ev={ev}
+            setEv={setEv}
+            minExposure={minExposure}
+            maxExposure={maxExposure}
+          />
+
+          {/* Pro format, multi-exposure & Kino cadence accessory toggles */}
           <View
             style={{
               flexDirection: 'row',
@@ -1780,7 +1754,7 @@ export default function CameraScreen() {
               alignItems: 'center',
               gap: 8,
               paddingHorizontal: 16,
-              paddingBottom: 8,
+              paddingTop: 8,
             }}
           >
             {isRawHardwareSupported && (
@@ -1848,15 +1822,41 @@ export default function CameraScreen() {
                 {isMxActive ? 'MX ON' : 'MX'}
               </Text>
             </Pressable>
-          </View>
 
-          <ManualControls
-            controls={manualCamera}
-            ev={ev}
-            setEv={setEv}
-            minExposure={minExposure}
-            maxExposure={maxExposure}
-          />
+            {/* Kino Cadence Selector Chip */}
+            <Pressable
+              onPress={() => {
+                cycleCaptureFps()
+                Vibration.vibrate(25)
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
+              style={[
+                chip,
+                {
+                  height: 34,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 5,
+                  paddingHorizontal: 12,
+                  borderRadius: 17,
+                  borderColor: captureFps !== 8 ? colors.accent : colors.chipBorder,
+                  backgroundColor: captureFps !== 8 ? colors.accentTint : 'rgba(12,13,22,0.88)',
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  fontFamily: fonts.sansBold,
+                  fontSize: 11,
+                  letterSpacing: tracking(0.1, 11),
+                  color: captureFps !== 8 ? colors.accentSoft : colors.text,
+                }}
+              >
+                🎞️ {captureFps} FPS
+              </Text>
+            </Pressable>
+          </View>
         </View>
       )}
 
@@ -1992,7 +1992,7 @@ export default function CameraScreen() {
                   color: isCranking ? '#f39c12' : colors.textSoft,
                 }}
               >
-                {isCranking ? 'CRANKING' : `HOLD FOR KINO · ${captureFps === 8 ? '8 FPS (F5)' : `${captureFps} FPS`}`}
+                {isCranking ? 'CRANKING' : `HOLD FOR KINO · ${captureFps} FPS`}
               </Text>
             </View>
           </Pressable>
