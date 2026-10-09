@@ -4,6 +4,31 @@
 
 ---
 
+## Session 2026-10-09: V1/V2 Unification & Seeker Hardware V2 QA Deployment
+
+* **Agent / Author:** Antigravity (Pair Programming with Zaac)
+* **Active Branches:** `v2-staging` (commit `a1c85db`) & `qa/v2-seeker-side-by-side` (commit `9f23079`) on remote `zaacishere`
+* **Upstream Baseline:** `origin/main`
+
+### 1. Scope & Issues Addressed
+1. **MWA Hardening Sync to V2:** Merged `fix/mwa-wallet-integration` into `v2-staging`. V2 now inherits Ed25519 signature slicing (`extractSignatureBytes`), SecureStore encrypted auth token caching, atomic migration write-before-delete, capability retry staging, and the full `docs/agent/` architecture system.
+2. **Conflict Resolution:** Cleanly resolved 4 merge points (`AGENTS.md`, `src/store/photos.ts`, `src/components/ManualControls.tsx`, `src/app/camera.tsx`) to support both V2 Kino reel/burst metadata and MWA auth flows without regressions.
+3. **TypeScript & Performance Optimization:** Added `".worktrees"` to `tsconfig.json` `exclude` array to prevent `tsc` from scanning parallel worktrees, dropping typecheck time from minutes to 4s. Fixed duplicated `rawNegativeUri`/`rawNegativeBytes` declarations in `Photo` interface.
+4. **Unified Fast Test Suite:** Expanded `npm run agent:check` in `v2-staging` to run 57 automated tests across all MWA and V2 modules (0 type errors, 57/57 passing).
+5. **Side-by-Side QA Integration:** Ported camera RAW orientation handling (`ExifInterface` sensor-rotation mapping) and Camera2 manual AF diopter range resolution (`focusRange.ts`) into `qa/v2-seeker-side-by-side` (62/62 unit tests passing).
+6. **Hardware Build & Live Verification:** Compiled clean 193 MB release APK (`app-release.apk` with package `com.momints.v2qa`) and installed via ADB to physical Solana Seeker `SM02G40619133790`. Validated live streaming from rear 108MP sensor, MWA auto-restored session (`4v18...WuZM`), composition grid, PRO manual control strip, and Kino burst reel crank animation.
+
+### 2. Verified Ground Truth
+* **Root Typecheck & Unit Tests:**
+  * `v2-staging`: `npm run agent:check` -> 57/57 passing (< 1s).
+  * `qa/v2-seeker-side-by-side`: `npm run agent:check` -> 62/62 passing (< 1s).
+* **Real Hardware Validation (Solana Seeker `SM02G40619133790`):**
+  * Release APK installed via ADB (`Performing Streamed Install -> Success`).
+  * `com.momints.v2qa` running active side-by-side with V1 `com.momints.app`.
+  * Verified live viewfinder, MWA wallet auto-reconnect, PRO controls strip, and Kino burst animation via screencaps and logcat.
+
+---
+
 ## Session 2026-10-08: MWA Hardening & Edge-Case Resolution
 
 * **Agent / Author:** Antigravity (Pair Programming with Zaac)
