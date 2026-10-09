@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   applyCameraState,
+  getAmbientLight,
   type AutoManualMode,
   type MeteringMode,
   type WhiteBalancePresetName,
@@ -72,6 +73,28 @@ export function useManualCameraState(
 
   const isAeLocked = lockMode === 'AF/AE' || lockMode === 'AE'
   const isAfLocked = lockMode === 'AF/AE' || lockMode === 'AF'
+
+  const [sceneEv, setSceneEv] = useState(10.5)
+
+  useEffect(() => {
+    let active = true
+    const timer = setInterval(() => {
+      if (!active) return
+      try {
+        const reading = getAmbientLight()
+        if (typeof reading.sceneEv === 'number' && Number.isFinite(reading.sceneEv)) {
+          setSceneEv((prev) => {
+            const target = reading.sceneEv
+            return Math.abs(prev - target) < 0.05 ? target : prev * 0.75 + target * 0.25
+          })
+        }
+      } catch {}
+    }, 100)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [])
 
   const lock = useCallback(
     (mode: CameraLockMode, normPoint?: { x: number; y: number }, normExpPoint?: { x: number; y: number }) => {
@@ -299,6 +322,7 @@ export function useManualCameraState(
     controlsError,
     canCapture,
     retry,
+    sceneEv,
   }
 }
 

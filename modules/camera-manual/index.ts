@@ -121,3 +121,18 @@ export async function captureLongExposure(
 ): Promise<string> {
   return await CameraManualNative.captureLongExposure(viewTag, cameraId, durationSeconds)
 }
+
+export type AmbientLightReading = {
+  lux: number
+  alsEv: number
+  ttlEv: number
+  sceneEv: number
+}
+
+export function getAmbientLight(): AmbientLightReading {
+  try {
+    return CameraManualNative.getAmbientLight()
+  } catch {
+    return { lux: 250, alsEv: 6.6, ttlEv: 6.6, sceneEv: 6.6 }
+  }
+}

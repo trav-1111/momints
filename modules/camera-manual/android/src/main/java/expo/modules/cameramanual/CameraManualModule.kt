@@ -1,8 +1,16 @@
 package expo.modules.cameramanual
 
 import android.annotation.SuppressLint
+import android.content.Context
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
+import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
 import android.hardware.camera2.params.MeteringRectangle
 import android.view.View
 import android.os.Handler
@@ -82,9 +90,73 @@ class CameraStateRecord : Record {
 }
 
 class CameraManualModule : Module() {
+  private var sensorManager: SensorManager? = null
+  private var lightSensor: Sensor? = null
+  @Volatile
+  private var ambientLux: Float = 250f
+  @Volatile
+  private var liveTtlEv: Double? = null
+
+  private val lightListener = object : SensorEventListener {
+    override fun onSensorChanged(event: SensorEvent) {
+      if (event.sensor.type == Sensor.TYPE_LIGHT) {
+        ambientLux = event.values[0]
+      }
+    }
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+  }
+
+  private fun ensureLightSensor() {
+    if (sensorManager == null) {
+      val ctx = appContext.reactContext ?: return
+      val sm = ctx.getSystemService(Context.SENSOR_SERVICE) as? SensorManager ?: return
+      val sensor = sm.getDefaultSensor(Sensor.TYPE_LIGHT)
+      if (sensor != null) {
+        sm.registerListener(lightListener, sensor, SensorManager.SENSOR_DELAY_UI)
+        sensorManager = sm
+        lightSensor = sensor
+      }
+    }
+  }
+
+  private val captureCallback = object : CameraCaptureSession.CaptureCallback() {
+    override fun onCaptureCompleted(
+      session: CameraCaptureSession,
+      request: CaptureRequest,
+      result: TotalCaptureResult
+    ) {
+      val iso = result.get(CaptureResult.SENSOR_SENSITIVITY)
+      val expNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+      val aperture = result.get(CaptureResult.LENS_APERTURE) ?: 1.7f
+      if (iso != null && expNs != null && expNs > 0) {
+        val tSec = expNs / 1_000_000_000.0
+        val ev = (Math.log((aperture * aperture) / tSec) / Math.log(2.0)) - (Math.log(iso / 100.0) / Math.log(2.0))
+        liveTtlEv = ev
+      }
+    }
+  }
+
   @OptIn(ExperimentalCamera2Interop::class)
   override fun definition() = ModuleDefinition {
     Name("CameraManual")
+
+    Function("getAmbientLight") {
+      ensureLightSensor()
+      val lux = ambientLux.toDouble()
+      val alsEv = if (lux > 0.05) {
+        (Math.log(lux / 2.5) / Math.log(2.0)).coerceIn(-4.0, 18.0)
+      } else {
+        -4.0
+      }
+      val ttl = liveTtlEv
+      val sceneEv = ttl ?: alsEv
+      mapOf(
+        "lux" to lux,
+        "alsEv" to alsEv,
+        "ttlEv" to (ttl ?: alsEv),
+        "sceneEv" to sceneEv
+      )
+    }
 
     AsyncFunction("applyCameraState") { viewTag: Int, cameraId: String, state: CameraStateRecord, promise: Promise ->
       val camera = requireCamera(viewTag, cameraId)
@@ -103,6 +175,12 @@ class CameraManualModule : Module() {
     AsyncFunction("captureLongExposure") { viewTag: Int, cameraId: String, durationSeconds: Double, promise: Promise ->
       captureLongExposure(viewTag, cameraId, durationSeconds, promise)
     }.runOnQueue(Queues.MAIN)
+
+    OnDestroy {
+      sensorManager?.unregisterListener(lightListener)
+      sensorManager = null
+      lightSensor = null
+    }
   }
 
   @OptIn(ExperimentalCamera2Interop::class)
@@ -253,9 +331,9 @@ class CameraManualModule : Module() {
     )
 
     // --- Metering ---
-    if (state.meteringMode != "matrix") {
-      val array = activeArraySize(camera)
-      if (array != null) {
+    val array = activeArraySize(camera)
+    if (array != null) {
+      if (state.meteringMode != "matrix") {
         val region = when (state.meteringMode) {
           "center" -> centeredRegion(array, 0.5f, 0.5f, 0.5f)
           "spot" -> centeredRegion(array, state.meteringNormX, state.meteringNormY, 0.12f)
@@ -283,8 +361,26 @@ class CameraManualModule : Module() {
             Config.OptionPriority.ALWAYS_OVERRIDE
           )
         }
+      } else {
+        val fullRegion = MeteringRectangle(array.left, array.top, array.width(), array.height(), 0)
+        stillConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.CONTROL_AE_REGIONS,
+          arrayOf(fullRegion),
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
+        previewConfigBuilder.setCaptureRequestOptionWithPriority(
+          CaptureRequest.CONTROL_AE_REGIONS,
+          arrayOf(fullRegion),
+          Config.OptionPriority.ALWAYS_OVERRIDE
+        )
       }
     }
+
+    // Attach repeating TTL exposure callback for match-needle light metering
+    previewConfigBuilder.insertOption(
+      Camera2ImplConfig.SESSION_CAPTURE_CALLBACK_OPTION,
+      captureCallback
+    )
 
     val stillConfig = stillConfigBuilder.build()
     val previewConfig = previewConfigBuilder.build()
@@ -303,9 +399,16 @@ class CameraManualModule : Module() {
     centerYFrac: Float,
     sizeFraction: Float,
   ): MeteringRectangle {
+    // Solana Seeker rear camera is mounted with 90° clockwise sensor orientation relative to portrait UI.
+    // Normalized portrait screen coordinates (centerXFrac, centerYFrac) map to sensor space:
+    // sensorX = centerYFrac
+    // sensorY = 1.0f - centerXFrac
+    val sensorNormX = centerYFrac.coerceIn(0.0f, 1.0f)
+    val sensorNormY = (1.0f - centerXFrac).coerceIn(0.0f, 1.0f)
+
     val side = (minOf(array.width(), array.height()) * sizeFraction).toInt().coerceAtLeast(1)
-    val cx = (array.left + array.width() * centerXFrac).toInt()
-    val cy = (array.top + array.height() * centerYFrac).toInt()
+    val cx = (array.left + array.width() * sensorNormX).toInt()
+    val cy = (array.top + array.height() * sensorNormY).toInt()
     val left = (cx - side / 2).coerceIn(array.left, array.right - side)
     val top = (cy - side / 2).coerceIn(array.top, array.bottom - side)
     return MeteringRectangle(left, top, side, side, MeteringRectangle.METERING_WEIGHT_MAX)

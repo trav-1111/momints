@@ -582,6 +582,7 @@ function computeExposureDelta({
   apertureMode,
   apertureValue,
   ev,
+  sceneEv,
 }: {
   exposureMode: 'auto' | 'manual'
   manualIso: number
@@ -589,6 +590,7 @@ function computeExposureDelta({
   apertureMode: 'auto' | 'manual'
   apertureValue: number
   ev: number
+  sceneEv?: number
 }): number {
   if (exposureMode === 'auto') {
     return ev
@@ -596,13 +598,13 @@ function computeExposureDelta({
   const aperture = apertureMode === 'manual' ? apertureValue : 1.7
   const shutterSec = Math.max(0.0000001, manualShutterNs / 1e9)
   const evManual = Math.log2((aperture * aperture) / shutterSec) - Math.log2(Math.max(1, manualIso) / 100)
-  const targetSceneEv = 10.5 + ev
+  const targetSceneEv = (sceneEv ?? 10.5) + ev
   const delta = targetSceneEv - evManual
   return Math.max(-3, Math.min(3, delta))
 }
 
 function LightMeterBar({ controls, ev }: { controls: ManualCameraState; ev: number }) {
-  const { exposureMode, manualIso, manualShutterNs, apertureMode, apertureValue } = controls
+  const { exposureMode, manualIso, manualShutterNs, apertureMode, apertureValue, sceneEv } = controls
   const deltaEv = computeExposureDelta({
     exposureMode,
     manualIso,
@@ -610,17 +612,21 @@ function LightMeterBar({ controls, ev }: { controls: ManualCameraState; ev: numb
     apertureMode,
     apertureValue,
     ev,
+    sceneEv,
   })
   const isManual = exposureMode === 'manual'
   const needlePct = Math.max(0, Math.min(100, ((deltaEv + 3) / 6) * 100))
   const isBalanced = Math.abs(deltaEv) <= 0.3
   const needleColor = isBalanced ? colors.accent : deltaEv < -0.3 ? '#3498db' : '#e67e22'
+  const currentSceneEv = typeof sceneEv === 'number' && Number.isFinite(sceneEv) ? sceneEv : 10.5
 
   return (
     <View style={styles.meterContainer}>
       <View style={styles.meterHeader}>
         <Text style={styles.meterLabel}>
-          {isManual ? 'LIGHT METER · MANUAL' : 'LIGHT METER · AE'}
+          {isManual
+            ? `LIGHT METER · EV ${currentSceneEv.toFixed(1)}`
+            : `LIGHT METER · AE (EV ${currentSceneEv.toFixed(1)})`}
         </Text>
         <Text style={[styles.meterValue, { color: needleColor }]}>
           {deltaEv >= 0 ? `+${deltaEv.toFixed(1)} EV` : `${deltaEv.toFixed(1)} EV`}
