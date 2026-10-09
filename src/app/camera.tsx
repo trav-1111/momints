@@ -1356,69 +1356,37 @@ export default function CameraScreen() {
             </Text>
           </Pressable>
 
-          {isRawHardwareSupported && (
-            <Pressable
-              onPress={() => {
-                setRawMode((r) => !r)
-                Haptics.selectionAsync()
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`Capture format: ${rawMode ? 'RAW' : 'JPG'}`}
-              style={[
-                chip,
-                {
-                  height: 42,
-                  paddingHorizontal: 12,
-                  borderRadius: 21,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderColor: rawMode ? colors.accent : colors.chipBorder,
-                  backgroundColor: rawMode ? colors.accentTint : colors.chipBg,
-                },
-              ]}
-            >
-              <Text
-                style={{
-                  fontFamily: fonts.sansBold,
-                  fontSize: 11,
-                  letterSpacing: tracking(0.1, 11),
-                  color: rawMode ? colors.accentSoft : colors.text,
-                }}
-              >
-                {rawMode ? 'RAW' : 'JPG'}
-              </Text>
-            </Pressable>
-          )}
-
+          {/* Kino Cadence Selector Chip */}
           <Pressable
             onPress={() => {
-              toggleMx()
-              Haptics.selectionAsync()
+              cycleCaptureFps()
+              Vibration.vibrate(25)
             }}
             accessibilityRole="button"
-            accessibilityLabel={`Multiple Exposure: ${isMxActive ? 'On' : 'Off'}`}
+            accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
             style={[
               chip,
               {
                 height: 42,
-                paddingHorizontal: 12,
-                borderRadius: 21,
+                flexDirection: 'row',
                 alignItems: 'center',
-                justifyContent: 'center',
-                borderColor: isMxActive ? colors.accent : colors.chipBorder,
-                backgroundColor: isMxActive ? colors.accentTint : colors.chipBg,
+                gap: 5,
+                paddingHorizontal: 11,
+                borderRadius: 21,
+                borderColor: captureFps !== 8 ? colors.accent : colors.chipBorder,
+                backgroundColor: captureFps !== 8 ? colors.accentTint : colors.chipBg,
               },
             ]}
           >
             <Text
               style={{
-                fontFamily: fonts.sansBold,
-                fontSize: 11,
-                letterSpacing: tracking(0.1, 11),
-                color: isMxActive ? colors.accentSoft : colors.text,
+                fontFamily: fonts.monoBold,
+                fontSize: 10,
+                color: captureFps !== 8 ? colors.accentSoft : colors.text,
+                letterSpacing: 0.5,
               }}
             >
-              MX
+              🎞️ {captureFps === 8 ? '8 FPS' : `${captureFps} FPS`}
             </Text>
           </Pressable>
         </View>
@@ -1433,13 +1401,14 @@ export default function CameraScreen() {
               {
                 flexDirection: 'row',
                 alignItems: 'center',
-                gap: 5,
+                gap: 6,
                 flexShrink: 1,
                 minWidth: 0,
-                marginLeft: 6,
+                marginLeft: 8,
+                height: 42,
                 paddingVertical: 8,
-                paddingHorizontal: 12,
-                borderRadius: 999,
+                paddingHorizontal: 14,
+                borderRadius: 21,
               },
             ]}
           >
@@ -1547,38 +1516,6 @@ export default function CameraScreen() {
             </>
           )}
         </Pressable>
-
-        {/* Kino Cadence Selector Chip */}
-        <Pressable
-          onPress={() => {
-            cycleCaptureFps()
-            Vibration.vibrate(25)
-          }}
-          accessibilityRole="button"
-          accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
-          style={[
-            chip,
-            {
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 5,
-              paddingVertical: 7,
-              paddingHorizontal: 10,
-              borderRadius: 10,
-            },
-          ]}
-        >
-          <Text
-            style={{
-              fontFamily: fonts.monoBold,
-              fontSize: 10,
-              color: colors.accentSoft,
-              letterSpacing: 0.5,
-            }}
-          >
-            🎞️ {captureFps === 8 ? '8 FPS · F5' : `${captureFps} FPS`}
-          </Text>
-        </Pressable>
       </View>
 
       {/* EXP dial — frames remaining, counts down like a film counter */}
@@ -1668,6 +1605,84 @@ export default function CameraScreen() {
           made from it for this camera's real (coupled) exposure model. */}
       {proOpen && TIER2_ENABLED && (
         <View style={{ position: 'absolute', left: 0, right: 0, bottom: 150 }}>
+          {/* Pro format & multi-exposure accessory toggles */}
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+              gap: 8,
+              paddingHorizontal: 16,
+              paddingBottom: 8,
+            }}
+          >
+            {isRawHardwareSupported && (
+              <Pressable
+                onPress={() => {
+                  setRawMode((r) => !r)
+                  Haptics.selectionAsync()
+                }}
+                accessibilityRole="button"
+                accessibilityLabel={`Capture format: ${rawMode ? 'RAW' : 'JPG'}`}
+                style={[
+                  chip,
+                  {
+                    height: 34,
+                    paddingHorizontal: 12,
+                    borderRadius: 17,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderColor: rawMode ? colors.accent : colors.chipBorder,
+                    backgroundColor: rawMode ? colors.accentTint : 'rgba(12,13,22,0.88)',
+                  },
+                ]}
+              >
+                <Text
+                  style={{
+                    fontFamily: fonts.sansBold,
+                    fontSize: 11,
+                    letterSpacing: tracking(0.1, 11),
+                    color: rawMode ? colors.accentSoft : colors.text,
+                  }}
+                >
+                  {rawMode ? 'RAW' : 'JPG'}
+                </Text>
+              </Pressable>
+            )}
+
+            <Pressable
+              onPress={() => {
+                toggleMx()
+                Haptics.selectionAsync()
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`Multiple Exposure: ${isMxActive ? 'On' : 'Off'}`}
+              style={[
+                chip,
+                {
+                  height: 34,
+                  paddingHorizontal: 12,
+                  borderRadius: 17,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  borderColor: isMxActive ? colors.accent : colors.chipBorder,
+                  backgroundColor: isMxActive ? colors.accentTint : 'rgba(12,13,22,0.88)',
+                },
+              ]}
+            >
+              <Text
+                style={{
+                  fontFamily: fonts.sansBold,
+                  fontSize: 11,
+                  letterSpacing: tracking(0.1, 11),
+                  color: isMxActive ? colors.accentSoft : colors.text,
+                }}
+              >
+                {isMxActive ? 'MX ON' : 'MX'}
+              </Text>
+            </Pressable>
+          </View>
+
           <ManualControls
             controls={manualCamera}
             ev={ev}
