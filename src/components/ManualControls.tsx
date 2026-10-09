@@ -41,6 +41,8 @@ import {
   filterIsoNotches,
   ISO_RANGE,
   SHUTTER_NS_RANGE,
+  APERTURE_STOPS,
+  type ApertureStop,
   type MeteringMode,
   type WhiteBalancePresetName,
 } from '../../modules/camera-manual'
@@ -100,7 +102,8 @@ function formatEv(ev: number): string {
   return `${ev > 0 ? '+' : ''}${ev.toFixed(1)}`
 }
 
-type ParamKey = 'M' | 'ISO' | 'S' | 'EV' | 'WB' | 'AF'
+type ParamKey = 'M' | 'ISO' | 'S' | 'AP' | 'EV' | 'WB' | 'AF'
+const APERTURE_PX_PER_NOTCH = 38
 
 const METERING_ICON: Record<MeteringMode, React.ComponentType<IconProps>> = {
   matrix: IconMeteringMatrix,
@@ -379,6 +382,68 @@ function ShutterPanel({ controls }: { controls: ManualCameraState }) {
   )
 }
 
+function AperturePanel({ controls }: { controls: ManualCameraState }) {
+  const { apertureMode, setApertureMode, apertureValue, setApertureValue } = controls
+  const auto = apertureMode === 'auto'
+  const apIndex = Math.max(0, APERTURE_STOPS.indexOf(apertureValue as ApertureStop))
+
+  let dofDescription = 'NATIVE · OPTICAL SHARPNESS'
+  if (!auto) {
+    if (apertureValue <= 2.8) {
+      dofDescription = 'BOKEH · SHALLOW DOF (FOCAL BRACKET)'
+    } else if (apertureValue >= 11.0) {
+      dofDescription = 'DEEP DOF · EXTENDED MACRO STACK'
+    } else {
+      dofDescription = 'NATIVE · OPTICAL SHARPNESS'
+    }
+  }
+
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={styles.panelRow}>
+        <AutoBadge
+          active={auto}
+          onPress={() => {
+            setApertureMode(auto ? 'manual' : 'auto')
+          }}
+        />
+        <Ruler
+          value={apIndex}
+          min={0}
+          max={APERTURE_STOPS.length - 1}
+          pxRange={APERTURE_STOPS.length * APERTURE_PX_PER_NOTCH}
+          onDrag={(v) => {
+            if (auto) setApertureMode('manual')
+            const idx = Math.min(APERTURE_STOPS.length - 1, Math.max(0, Math.round(v)))
+            setApertureValue(APERTURE_STOPS[idx])
+          }}
+          dim={auto}
+          majorCount={APERTURE_STOPS.length - 1}
+          minorCount={24}
+          hapticStep={1}
+          labels={APERTURE_STOPS.map((n) => {
+            const isSelected = !auto && apertureValue === n
+            return (
+              <Text
+                key={n}
+                style={[
+                  styles.rulerLabelText,
+                  isSelected && { color: colors.accent, fontFamily: fonts.monoBold },
+                ]}
+              >
+                {`f/${n}`}
+              </Text>
+            )
+          })}
+        />
+      </View>
+      <Text style={styles.capabilityNote}>
+        {auto ? 'Auto: Native f/1.7 fixed aperture without computational DoF.' : dofDescription}
+      </Text>
+    </View>
+  )
+}
+
 function EvPanel({
   ev,
   setEv,
@@ -510,6 +575,86 @@ type Props = {
   maxExposure: number
 }
 
+function computeExposureDelta({
+  exposureMode,
+  manualIso,
+  manualShutterNs,
+  apertureMode,
+  apertureValue,
+  ev,
+}: {
+  exposureMode: 'auto' | 'manual'
+  manualIso: number
+  manualShutterNs: number
+  apertureMode: 'auto' | 'manual'
+  apertureValue: number
+  ev: number
+}): number {
+  if (exposureMode === 'auto') {
+    return ev
+  }
+  const aperture = apertureMode === 'manual' ? apertureValue : 1.7
+  const shutterSec = Math.max(0.0000001, manualShutterNs / 1e9)
+  const evManual = Math.log2((aperture * aperture) / shutterSec) - Math.log2(Math.max(1, manualIso) / 100)
+  const targetSceneEv = 10.5 + ev
+  const delta = targetSceneEv - evManual
+  return Math.max(-3, Math.min(3, delta))
+}
+
+function LightMeterBar({ controls, ev }: { controls: ManualCameraState; ev: number }) {
+  const { exposureMode, manualIso, manualShutterNs, apertureMode, apertureValue } = controls
+  const deltaEv = computeExposureDelta({
+    exposureMode,
+    manualIso,
+    manualShutterNs,
+    apertureMode,
+    apertureValue,
+    ev,
+  })
+  const isManual = exposureMode === 'manual'
+  const needlePct = Math.max(0, Math.min(100, ((deltaEv + 3) / 6) * 100))
+  const isBalanced = Math.abs(deltaEv) <= 0.3
+  const needleColor = isBalanced ? colors.accent : deltaEv < -0.3 ? '#3498db' : '#e67e22'
+
+  return (
+    <View style={styles.meterContainer}>
+      <View style={styles.meterHeader}>
+        <Text style={styles.meterLabel}>
+          {isManual ? 'LIGHT METER · MANUAL' : 'LIGHT METER · AE'}
+        </Text>
+        <Text style={[styles.meterValue, { color: needleColor }]}>
+          {deltaEv >= 0 ? `+${deltaEv.toFixed(1)} EV` : `${deltaEv.toFixed(1)} EV`}
+        </Text>
+      </View>
+      <View style={styles.meterTrack}>
+        <View style={styles.meterTicks}>
+          {[-3, -2, -1, 0, 1, 2, 3].map((val) => (
+            <View key={val} style={styles.meterTickCol}>
+              <View
+                style={[
+                  styles.meterTickMark,
+                  val === 0 && styles.meterTickMarkCenter,
+                  Math.round(deltaEv) === val && { backgroundColor: needleColor },
+                ]}
+              />
+              <Text
+                style={[
+                  styles.meterTickText,
+                  val === 0 && styles.meterTickTextCenter,
+                  Math.round(deltaEv) === val && { color: needleColor, fontFamily: fonts.monoBold },
+                ]}
+              >
+                {val === 0 ? '0' : val > 0 ? `+${val}` : `${val}`}
+              </Text>
+            </View>
+          ))}
+        </View>
+        <View style={[styles.meterNeedle, { left: `${needlePct}%`, backgroundColor: needleColor }]} />
+      </View>
+    </View>
+  )
+}
+
 export default function ManualControls({ controls, ev, setEv, minExposure, maxExposure }: Props) {
   const [activeParam, setActiveParam] = useState<ParamKey | null>(null)
   const {
@@ -519,6 +664,8 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
     meteringMode,
     manualIso,
     manualShutterNs,
+    apertureMode,
+    apertureValue,
     maxFocusDiopters,
     fullyManual,
     canIndependentExposure,
@@ -545,6 +692,7 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
           {activeParam === 'M' && <MeteringPanel controls={controls} />}
           {activeParam === 'ISO' && <IsoPanel controls={controls} />}
           {activeParam === 'S' && <ShutterPanel controls={controls} />}
+          {activeParam === 'AP' && <AperturePanel controls={controls} />}
           {activeParam === 'EV' && (
             <EvPanel ev={ev} setEv={setEv} minExposure={minExposure} maxExposure={maxExposure} dim={fullyManual} />
           )}
@@ -556,11 +704,14 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
         </View>
       )}
 
+      {/* Light Meter Gauge */}
+      <LightMeterBar controls={controls} ev={ev} />
+
       <View style={styles.strip}>
         <Pressable style={styles.stripCol} onPress={() => toggle('M')}>
           <Text style={[styles.stripLabel, activeParam === 'M' && styles.stripLabelActive]}>M</Text>
           <View style={styles.stripValueRow}>
-            <MeteringIcon size={17} color={fullyManual ? colors.textMuted : colors.text} />
+            <MeteringIcon size={16} color={fullyManual ? colors.textMuted : colors.text} />
           </View>
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('ISO')}>
@@ -574,6 +725,14 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
           <View style={styles.stripValueRow}>
             <Text style={styles.stripValueText}>
               {exposureMode === 'auto' ? 'AUTO' : formatShutter(manualShutterNs)}
+            </Text>
+          </View>
+        </Pressable>
+        <Pressable style={styles.stripCol} onPress={() => toggle('AP')}>
+          <Text style={[styles.stripLabel, activeParam === 'AP' && styles.stripLabelActive]}>f/</Text>
+          <View style={styles.stripValueRow}>
+            <Text style={styles.stripValueText}>
+              {apertureMode === 'auto' ? 'AUTO' : `f/${apertureValue}`}
             </Text>
           </View>
         </Pressable>
@@ -616,15 +775,87 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(8,9,16,0.82)',
     borderTopWidth: 1,
     borderTopColor: 'rgba(255,255,255,0.08)',
-    paddingVertical: 13,
-    paddingHorizontal: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 4,
   },
-  stripCol: { flex: 1, alignItems: 'center', gap: 7 },
-  stripLabel: { fontFamily: fonts.mono, fontSize: 11, letterSpacing: 1, color: colors.textSoft },
+  stripCol: { flex: 1, alignItems: 'center', gap: 6 },
+  stripLabel: { fontFamily: fonts.mono, fontSize: 10, letterSpacing: 0.5, color: colors.textSoft },
   stripLabelActive: { color: colors.accentSoft, fontFamily: fonts.monoBold },
   stripDisabled: { color: colors.textMuted },
   stripValueRow: { minHeight: 18, alignItems: 'center', justifyContent: 'center' },
-  stripValueText: { fontFamily: fonts.mono, fontSize: 12, color: colors.text },
+  stripValueText: { fontFamily: fonts.mono, fontSize: 11, color: colors.text },
+
+  meterContainer: {
+    backgroundColor: 'rgba(10,11,18,0.92)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.06)',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
+  meterHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  meterLabel: {
+    fontFamily: fonts.mono,
+    fontSize: 8.5,
+    letterSpacing: 0.8,
+    color: colors.textMuted,
+  },
+  meterValue: {
+    fontFamily: fonts.monoBold,
+    fontSize: 9.5,
+  },
+  meterTrack: {
+    height: 18,
+    justifyContent: 'center',
+    position: 'relative',
+  },
+  meterTicks: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 6,
+  },
+  meterTickCol: {
+    alignItems: 'center',
+    gap: 2,
+    width: 24,
+  },
+  meterTickMark: {
+    width: 1.5,
+    height: 6,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 1,
+  },
+  meterTickMarkCenter: {
+    width: 2,
+    height: 9,
+    backgroundColor: colors.accent,
+  },
+  meterTickText: {
+    fontFamily: fonts.mono,
+    fontSize: 8,
+    color: colors.textMuted,
+  },
+  meterTickTextCenter: {
+    color: colors.accentSoft,
+    fontFamily: fonts.monoBold,
+  },
+  meterNeedle: {
+    position: 'absolute',
+    top: 2,
+    width: 3,
+    height: 14,
+    borderRadius: 1.5,
+    marginLeft: -1.5,
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+    elevation: 3,
+  },
 
   panel: {
     backgroundColor: 'rgba(8,9,16,0.7)',

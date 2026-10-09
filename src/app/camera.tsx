@@ -48,6 +48,7 @@ import {
   MxGhostOverlay,
   MxBanner,
 } from '../features/double-exposure'
+import { renderEmulatedDepthOfField } from '../features/aperture-dof'
 import { resolveManualFocusRange } from '../features/pro-controls/focusRange'
 import { useManualCameraState } from '../hooks/useManualCameraState'
 import { useCameraReadiness } from '../hooks/useCameraReadiness'
@@ -526,6 +527,15 @@ export default function CameraScreen() {
         deleteCapture(captureUri)
         resetMx()
         captureUri = blendedUri
+      }
+
+      // Emulated Depth of Field (Aperture / Bokeh)
+      if (manualCamera.apertureMode === 'manual' && manualCamera.apertureValue <= 3.5) {
+        const dofUri = await renderEmulatedDepthOfField(captureUri, manualCamera.apertureValue, focusPoint)
+        if (dofUri !== captureUri) {
+          deleteCapture(captureUri)
+          captureUri = dofUri
+        }
       }
 
       let receipt = await processFilm(captureUri, effectiveFilm)

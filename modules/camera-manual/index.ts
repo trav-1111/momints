@@ -16,6 +16,9 @@ export const SHUTTER_NS_RANGE = { min: 100_000, max: 16_000_000_000 } as const
 // algorithm can pick any value in the full supported range.
 export const ISO_NOTCHES = [100, 200, 400, 800, 1600, 3200] as const
 
+export const APERTURE_STOPS = [1.2, 1.4, 1.8, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0] as const
+export type ApertureStop = (typeof APERTURE_STOPS)[number]
+
 // Filters the notch list against a camera's real SENSOR_INFO_SENSITIVITY_RANGE
 // (from camera-caps) — defensive for any camera/device where the range
 // doesn't cover the full 100-3200 span (e.g. this app's own camera 3 macro

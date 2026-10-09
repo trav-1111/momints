@@ -51,6 +51,12 @@ export function useManualCameraState(
   const [focusMode, setFocusMode] = useState<AutoManualMode>('auto')
   const [manualFocusDiopters, setManualFocusDiopters] = useState(0) // 0 = infinity
 
+  // Aperture / Depth of Field emulation mode.
+  // 'auto': native optical f/1.7 lens without computational depth processing.
+  // 'manual': emulated f-stop (f/1.2 - f/16), driving focal bracketing / DfD bokeh.
+  const [apertureMode, setApertureMode] = useState<AutoManualMode>('auto')
+  const [apertureValue, setApertureValue] = useState<number>(1.8)
+
   const [whiteBalance, setWhiteBalance] = useState<WhiteBalancePresetName>('AUTO')
   const [meteringMode, setMeteringMode] = useState<MeteringMode>('matrix')
   const [meteringPoint, setMeteringPoint] = useState({ x: 0.5, y: 0.5 })
@@ -239,6 +245,8 @@ export function useManualCameraState(
     // application handles the native reset once this session is ready again.
     setExposureMode('auto')
     setFocusMode('auto')
+    setApertureMode('auto')
+    setApertureValue(1.8)
     setWhiteBalance('AUTO')
     setMeteringMode('matrix')
     setLockMode('none')
@@ -258,6 +266,10 @@ export function useManualCameraState(
     setManualIso,
     manualShutterNs,
     setManualShutterNs,
+    apertureMode,
+    setApertureMode,
+    apertureValue,
+    setApertureValue,
     focusMode,
     setFocusMode,
     manualFocusDiopters,
