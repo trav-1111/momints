@@ -377,7 +377,7 @@ class CameraManualModule : Module() {
     }
 
     // Attach repeating TTL exposure callback for match-needle light metering
-    previewConfigBuilder.insertOption(
+    previewConfigBuilder.mutableConfig.insertOption(
       Camera2ImplConfig.SESSION_CAPTURE_CALLBACK_OPTION,
       captureCallback
     )
