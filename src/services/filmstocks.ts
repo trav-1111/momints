@@ -157,7 +157,7 @@ const BUILTIN_RECIPES: Record<string, FilmStockRecipe> = {
       size: 33,
       intensity: 1,
       uri: 'runtime/momints-aura-400.lut',
-      sha256: '9021e618c91bebeab85876a8b9e0d3632a0390a227a7886a3c882751a3c01672',
+      sha256: '3a49041e303152ddfc10844416e13e96e49b4fb296f62e0ad486d3ef188c6be8',
     },
     exposure: { ev: 0 },
     grain: { amount: 0.12, size: 0.3, roughness: 0.35 },
@@ -181,7 +181,7 @@ const BUILTIN_RECIPES: Record<string, FilmStockRecipe> = {
       size: 33,
       intensity: 1,
       uri: 'runtime/momints-amber-200.lut',
-      sha256: 'ebe9f007b7edfe823fed084192b87df45fa9cf77fc88199ffb5769962df5e734',
+      sha256: '8d4fe21ce7d49c028c3991f917f85452203c265669fe65dd416677f69554d722',
     },
     exposure: { ev: 0 },
     grain: { amount: 0.14, size: 0.32, roughness: 0.38 },
@@ -205,7 +205,7 @@ const BUILTIN_RECIPES: Record<string, FilmStockRecipe> = {
       size: 33,
       intensity: 1,
       uri: 'runtime/momints-silver-400.lut',
-      sha256: 'd46cf0460859f5b4af78744662d393cbfcf59287fc8420ad31adc44f7ee38675',
+      sha256: 'dbf8fea629edd3c552665be9440f73e56cbc35460c3a14557a072ff355992322',
     },
     exposure: { ev: 0 },
     grain: { amount: 0.22, size: 0.42, roughness: 0.48 },
@@ -229,7 +229,7 @@ const BUILTIN_RECIPES: Record<string, FilmStockRecipe> = {
       size: 33,
       intensity: 1,
       uri: 'runtime/momints-neon-800t.lut',
-      sha256: 'c1d9fd9d59f53eba7d8f37e240a2304d183ced623af375e6689124a32e8b2ec8',
+      sha256: '09adb53d59bebaee4c87264e684e53eb85c0e3782aac7c876069c729b2011d19',
     },
     exposure: { ev: 0 },
     grain: { amount: 0.18, size: 0.38, roughness: 0.4 },
@@ -373,7 +373,7 @@ const BUILTIN_RECIPES: Record<string, FilmStockRecipe> = {
       size: 33,
       intensity: 1,
       uri: 'runtime/momints-vivid-50.lut',
-      sha256: '30f6e1ba17885bf19d449d4aceb29129c3ef4ec19cfe8cc9d77d5c8ff6ca778d',
+      sha256: '9c26f02a9a1728d723e1978d3972fbdb5177a079cd799c8fd92ed1ca1c99fd26',
     },
     exposure: { ev: 0 },
     grain: { amount: 0.1, size: 0.28, roughness: 0.32 },
@@ -791,15 +791,13 @@ export async function ensureFilmStockRecipe(stock: FilmStockCatalogueItem): Prom
   if (builtin) {
     if (builtin.schemaVersion === 2) {
       const runtime = runtimeFile(stock.filmStockId)
-      if (!runtime.exists) {
-        const lutBytes = getBundledLutBytes(stock.filmStockId)
-        if (lutBytes) {
-          const directory = packageDirectory(stock.filmStockId)
-          if (!directory.exists) directory.create({ idempotent: true, intermediates: true })
-          runtime.write(lutBytes)
-          recipeFile(stock.filmStockId).write(JSON.stringify(builtin))
-          touchPackage(stock.filmStockId)
-        }
+      const lutBytes = getBundledLutBytes(stock.filmStockId)
+      if (lutBytes && (!runtime.exists || runtime.size !== lutBytes.length)) {
+        const directory = packageDirectory(stock.filmStockId)
+        if (!directory.exists) directory.create({ idempotent: true, intermediates: true })
+        runtime.write(lutBytes)
+        recipeFile(stock.filmStockId).write(JSON.stringify(builtin))
+        touchPackage(stock.filmStockId)
       }
     }
     return builtin
@@ -845,14 +843,12 @@ export async function loadFilmStockPackage(id: string): Promise<LoadedFilmStockP
   if (builtin) {
     if (builtin.schemaVersion === 1) return { recipe: builtin }
     const runtime = runtimeFile(id)
-    if (!runtime.exists) {
-      const lutBytes = getBundledLutBytes(id)
-      if (lutBytes) {
-        const directory = packageDirectory(id)
-        if (!directory.exists) directory.create({ idempotent: true, intermediates: true })
-        runtime.write(lutBytes)
-        recipeFile(id).write(JSON.stringify(builtin))
-      }
+    const lutBytes = getBundledLutBytes(id)
+    if (lutBytes && (!runtime.exists || runtime.size !== lutBytes.length)) {
+      const directory = packageDirectory(id)
+      if (!directory.exists) directory.create({ idempotent: true, intermediates: true })
+      runtime.write(lutBytes)
+      recipeFile(id).write(JSON.stringify(builtin))
     }
     if (runtime.exists) {
       touchPackage(id)

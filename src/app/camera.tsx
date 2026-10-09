@@ -204,6 +204,7 @@ export default function CameraScreen() {
   // (manual ISO/shutter/focus/WB) mounts underneath, gated by TIER2_ENABLED.
   const [proOpen, setProOpen] = useState(false)
   const [rawMode, setRawMode] = useState(false)
+  const [showLightMeter, setShowLightMeter] = useState(true)
   const [ev, setEv] = useState(0)
   const {
     isMxActive,
@@ -1760,27 +1761,62 @@ export default function CameraScreen() {
             setEv={setEv}
             minExposure={minExposure}
             maxExposure={maxExposure}
+            showLightMeter={showLightMeter}
           />
 
-          {/* Pro format, multi-exposure & Kino cadence accessory toggles */}
+          {/* Pro format, light meter, multi-exposure & Kino cadence accessory toggles */}
           <View
             style={{
               flexDirection: 'row',
-              justifyContent: 'flex-end',
+              justifyContent: 'space-between',
               alignItems: 'center',
-              gap: 8,
               paddingHorizontal: 16,
               paddingTop: 8,
             }}
           >
-            {isRawHardwareSupported && (
+            {/* Left side: RAW/JPG and Light Meter toggles */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {isRawHardwareSupported && (
+                <Pressable
+                  onPress={() => {
+                    setRawMode((r) => !r)
+                    Haptics.selectionAsync()
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Capture format: ${rawMode ? 'RAW' : 'JPG'}`}
+                  style={[
+                    chip,
+                    {
+                      height: 34,
+                      paddingHorizontal: 12,
+                      borderRadius: 17,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      borderColor: rawMode ? colors.accent : colors.chipBorder,
+                      backgroundColor: rawMode ? colors.accentTint : 'rgba(12,13,22,0.88)',
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      fontFamily: fonts.sansBold,
+                      fontSize: 11,
+                      letterSpacing: tracking(0.1, 11),
+                      color: rawMode ? colors.accentSoft : colors.text,
+                    }}
+                  >
+                    {rawMode ? 'RAW' : 'JPG'}
+                  </Text>
+                </Pressable>
+              )}
+
               <Pressable
                 onPress={() => {
-                  setRawMode((r) => !r)
+                  setShowLightMeter((s) => !s)
                   Haptics.selectionAsync()
                 }}
                 accessibilityRole="button"
-                accessibilityLabel={`Capture format: ${rawMode ? 'RAW' : 'JPG'}`}
+                accessibilityLabel={`Light Meter: ${showLightMeter ? 'On' : 'Off'}`}
                 style={[
                   chip,
                   {
@@ -1789,8 +1825,8 @@ export default function CameraScreen() {
                     borderRadius: 17,
                     alignItems: 'center',
                     justifyContent: 'center',
-                    borderColor: rawMode ? colors.accent : colors.chipBorder,
-                    backgroundColor: rawMode ? colors.accentTint : 'rgba(12,13,22,0.88)',
+                    borderColor: showLightMeter ? colors.accent : colors.chipBorder,
+                    backgroundColor: showLightMeter ? colors.accentTint : 'rgba(12,13,22,0.88)',
                   },
                 ]}
               >
@@ -1799,79 +1835,82 @@ export default function CameraScreen() {
                     fontFamily: fonts.sansBold,
                     fontSize: 11,
                     letterSpacing: tracking(0.1, 11),
-                    color: rawMode ? colors.accentSoft : colors.text,
+                    color: showLightMeter ? colors.accentSoft : colors.text,
                   }}
                 >
-                  {rawMode ? 'RAW' : 'JPG'}
+                  {showLightMeter ? 'METER' : 'METER OFF'}
                 </Text>
               </Pressable>
-            )}
+            </View>
 
-            <Pressable
-              onPress={() => {
-                toggleMx()
-                Haptics.selectionAsync()
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`Multiple Exposure: ${isMxActive ? 'On' : 'Off'}`}
-              style={[
-                chip,
-                {
-                  height: 34,
-                  paddingHorizontal: 12,
-                  borderRadius: 17,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  borderColor: isMxActive ? colors.accent : colors.chipBorder,
-                  backgroundColor: isMxActive ? colors.accentTint : 'rgba(12,13,22,0.88)',
-                },
-              ]}
-            >
-              <Text
-                style={{
-                  fontFamily: fonts.sansBold,
-                  fontSize: 11,
-                  letterSpacing: tracking(0.1, 11),
-                  color: isMxActive ? colors.accentSoft : colors.text,
+            {/* Right side: MX and Kino cadence toggles */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Pressable
+                onPress={() => {
+                  toggleMx()
+                  Haptics.selectionAsync()
                 }}
+                accessibilityRole="button"
+                accessibilityLabel={`Multiple Exposure: ${isMxActive ? 'On' : 'Off'}`}
+                style={[
+                  chip,
+                  {
+                    height: 34,
+                    paddingHorizontal: 12,
+                    borderRadius: 17,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    borderColor: isMxActive ? colors.accent : colors.chipBorder,
+                    backgroundColor: isMxActive ? colors.accentTint : 'rgba(12,13,22,0.88)',
+                  },
+                ]}
               >
-                {isMxActive ? 'MX ON' : 'MX'}
-              </Text>
-            </Pressable>
+                <Text
+                  style={{
+                    fontFamily: fonts.sansBold,
+                    fontSize: 11,
+                    letterSpacing: tracking(0.1, 11),
+                    color: isMxActive ? colors.accentSoft : colors.text,
+                  }}
+                >
+                  {isMxActive ? 'MX ON' : 'MX'}
+                </Text>
+              </Pressable>
 
-            {/* Kino Cadence Selector Chip */}
-            <Pressable
-              onPress={() => {
-                cycleKinoMode()
-                Vibration.vibrate(25)
-              }}
-              accessibilityRole="button"
-              accessibilityLabel={`Kino Frame Rate: ${kinoEnabled ? `${captureFps} FPS` : 'Off'}`}
-              style={[
-                chip,
-                {
-                  height: 34,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  gap: 5,
-                  paddingHorizontal: 12,
-                  borderRadius: 17,
-                  borderColor: kinoEnabled ? colors.accent : colors.chipBorder,
-                  backgroundColor: kinoEnabled ? colors.accentTint : 'rgba(12,13,22,0.88)',
-                },
-              ]}
-            >
-              <Text
-                style={{
-                  fontFamily: fonts.sansBold,
-                  fontSize: 11,
-                  letterSpacing: tracking(0.1, 11),
-                  color: kinoEnabled ? colors.accentSoft : colors.text,
+              {/* Kino Cadence Selector Chip */}
+              <Pressable
+                onPress={() => {
+                  cycleKinoMode()
+                  Vibration.vibrate(25)
                 }}
+                accessibilityRole="button"
+                accessibilityLabel={`Kino Frame Rate: ${kinoEnabled ? `${captureFps} FPS` : 'Off'}`}
+                style={[
+                  chip,
+                  {
+                    height: 34,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 5,
+                    paddingHorizontal: 12,
+                    borderRadius: 17,
+                    borderColor: kinoEnabled ? colors.accent : colors.chipBorder,
+                    backgroundColor: kinoEnabled ? colors.accentTint : 'rgba(12,13,22,0.88)',
+                  },
+                ]}
               >
-                {kinoEnabled ? `🎞️ ${captureFps} FPS` : 'KINO'}
-              </Text>
-            </Pressable>
+                <Text
+                  style={{
+                    fontFamily: fonts.sansBold,
+                    fontSize: 11,
+                    letterSpacing: tracking(0.1, 11),
+                    color: kinoEnabled ? colors.accentSoft : colors.text,
+                  }}
+                >
+                  {kinoEnabled ? `🎞️ ${captureFps} FPS` : 'KINO'}
+                </Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       )}

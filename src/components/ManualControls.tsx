@@ -459,7 +459,6 @@ function EvPanel({
 }) {
   return (
     <View style={styles.panelRow}>
-      <View style={styles.autoBadgeSpacer} />
       <Ruler
         value={ev}
         min={minExposure}
@@ -573,6 +572,7 @@ type Props = {
   setEv: (v: number) => void
   minExposure: number
   maxExposure: number
+  showLightMeter?: boolean
 }
 
 function computeExposureDelta({
@@ -661,7 +661,14 @@ function LightMeterBar({ controls, ev }: { controls: ManualCameraState; ev: numb
   )
 }
 
-export default function ManualControls({ controls, ev, setEv, minExposure, maxExposure }: Props) {
+export default function ManualControls({
+  controls,
+  ev,
+  setEv,
+  minExposure,
+  maxExposure,
+  showLightMeter = true,
+}: Props) {
   const [activeParam, setActiveParam] = useState<ParamKey | null>(null)
   const {
     exposureMode,
@@ -711,7 +718,7 @@ export default function ManualControls({ controls, ev, setEv, minExposure, maxEx
       )}
 
       {/* Light Meter Gauge */}
-      <LightMeterBar controls={controls} ev={ev} />
+      {showLightMeter && <LightMeterBar controls={controls} ev={ev} />}
 
       <View style={styles.strip}>
         <Pressable style={styles.stripCol} onPress={() => toggle('M')}>
