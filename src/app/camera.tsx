@@ -177,8 +177,9 @@ export default function CameraScreen() {
   const didCrankRef = useRef(false)
   const crankAnim = useRef(new Animated.Value(0)).current
 
+  const kinoEnabled = useKinoSettingsStore((s) => s.kinoEnabled)
   const captureFps = useKinoSettingsStore((s) => s.captureFps)
-  const cycleCaptureFps = useKinoSettingsStore((s) => s.cycleCaptureFps)
+  const cycleKinoMode = useKinoSettingsStore((s) => s.cycleKinoMode)
 
   useEffect(() => {
     if (isCranking) {
@@ -806,10 +807,12 @@ export default function CameraScreen() {
       return
     }
     didCrankRef.current = false
-    crankHoldTimer.current = setTimeout(() => {
-      handleStartCrank()
-    }, 280)
-  }, [isCapturing, controlsReady, rollIsFull, activeRoll?.developed, kinoDevelopingCount, handleStartCrank, retryCameraControls])
+    if (kinoEnabled) {
+      crankHoldTimer.current = setTimeout(() => {
+        handleStartCrank()
+      }, 280)
+    }
+  }, [isCapturing, controlsReady, rollIsFull, activeRoll?.developed, kinoDevelopingCount, kinoEnabled, handleStartCrank, retryCameraControls])
 
   const handleShutterPressOut = useCallback(() => {
     if (crankHoldTimer.current) {
@@ -1826,11 +1829,11 @@ export default function CameraScreen() {
             {/* Kino Cadence Selector Chip */}
             <Pressable
               onPress={() => {
-                cycleCaptureFps()
+                cycleKinoMode()
                 Vibration.vibrate(25)
               }}
               accessibilityRole="button"
-              accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
+              accessibilityLabel={`Kino Frame Rate: ${kinoEnabled ? `${captureFps} FPS` : 'Off'}`}
               style={[
                 chip,
                 {
@@ -1840,8 +1843,8 @@ export default function CameraScreen() {
                   gap: 5,
                   paddingHorizontal: 12,
                   borderRadius: 17,
-                  borderColor: captureFps !== 8 ? colors.accent : colors.chipBorder,
-                  backgroundColor: captureFps !== 8 ? colors.accentTint : 'rgba(12,13,22,0.88)',
+                  borderColor: kinoEnabled ? colors.accent : colors.chipBorder,
+                  backgroundColor: kinoEnabled ? colors.accentTint : 'rgba(12,13,22,0.88)',
                 },
               ]}
             >
@@ -1850,10 +1853,10 @@ export default function CameraScreen() {
                   fontFamily: fonts.sansBold,
                   fontSize: 11,
                   letterSpacing: tracking(0.1, 11),
-                  color: captureFps !== 8 ? colors.accentSoft : colors.text,
+                  color: kinoEnabled ? colors.accentSoft : colors.text,
                 }}
               >
-                🎞️ {captureFps} FPS
+                {kinoEnabled ? `🎞️ ${captureFps} FPS` : 'KINO'}
               </Text>
             </Pressable>
           </View>
@@ -1958,44 +1961,46 @@ export default function CameraScreen() {
               ) : null}
             </View>
           </Pressable>
-          {/* Shutter sub-label: shows current mode and speed, tapping cycles capture FPS */}
-          <Pressable
-            onPress={() => {
-              if (!isCranking) {
-                cycleCaptureFps()
-                Vibration.vibrate(25)
-              }
-            }}
-            hitSlop={12}
-            accessibilityRole="button"
-            accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
-          >
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 5,
-                marginTop: 6,
-                paddingHorizontal: 8,
-                paddingVertical: 3,
-                borderRadius: 6,
-                backgroundColor: 'rgba(255, 255, 255, 0.08)',
-                borderWidth: 1,
-                borderColor: isCranking ? '#f39c12' : 'rgba(255, 255, 255, 0.16)',
+          {/* Shutter sub-label: shows current mode and speed when Kino is enabled */}
+          {kinoEnabled ? (
+            <Pressable
+              onPress={() => {
+                if (!isCranking) {
+                  cycleKinoMode()
+                  Vibration.vibrate(25)
+                }
               }}
+              hitSlop={12}
+              accessibilityRole="button"
+              accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
             >
-              <Text
+              <View
                 style={{
-                  fontFamily: fonts.mono,
-                  fontSize: 8,
-                  letterSpacing: tracking(0.12, 8),
-                  color: isCranking ? '#f39c12' : colors.textSoft,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 5,
+                  marginTop: 6,
+                  paddingHorizontal: 8,
+                  paddingVertical: 3,
+                  borderRadius: 6,
+                  backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                  borderWidth: 1,
+                  borderColor: isCranking ? '#f39c12' : 'rgba(255, 255, 255, 0.16)',
                 }}
               >
-                {isCranking ? 'CRANKING' : `HOLD FOR KINO · ${captureFps} FPS`}
-              </Text>
-            </View>
-          </Pressable>
+                <Text
+                  style={{
+                    fontFamily: fonts.mono,
+                    fontSize: 8,
+                    letterSpacing: tracking(0.12, 8),
+                    color: isCranking ? '#f39c12' : colors.textSoft,
+                  }}
+                >
+                  {isCranking ? 'CRANKING' : `HOLD FOR KINO · ${captureFps} FPS`}
+                </Text>
+              </View>
+            </Pressable>
+          ) : null}
         </View>
 
         {/* Quick mode shows MINT; Roll mode shows DARKROOM / Gallery */}

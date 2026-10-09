@@ -51,12 +51,15 @@ export function getShutterBlackoutMs(gap: KinoShutterGap, fps: KinoPlaybackSpeed
 }
 
 interface KinoSettingsStore {
+  kinoEnabled: boolean
   captureFps: KinoCaptureSpeed
   playbackFps: KinoPlaybackSpeed
   shutterGap: KinoShutterGap
+  setKinoEnabled: (enabled: boolean) => void
   setCaptureFps: (fps: KinoCaptureSpeed) => void
   setPlaybackFps: (fps: KinoPlaybackSpeed) => void
   setShutterGap: (gap: KinoShutterGap) => void
+  cycleKinoMode: () => { enabled: boolean; fps: KinoCaptureSpeed }
   cycleCaptureFps: () => KinoCaptureSpeed
   cycleShutterGap: () => KinoShutterGap
 }
@@ -80,6 +83,7 @@ function parseShutterGap(value: unknown): KinoShutterGap {
 }
 
 async function readPersistedKinoSettings(): Promise<{
+  kinoEnabled: boolean
   captureFps: KinoCaptureSpeed
   playbackFps: KinoPlaybackSpeed
   shutterGap: KinoShutterGap
@@ -87,21 +91,23 @@ async function readPersistedKinoSettings(): Promise<{
   try {
     const file = new File(Paths.document, `${STORAGE_KEY}.json`)
     if (!file.exists) {
-      return { captureFps: 5, playbackFps: 8, shutterGap: 'classic' }
+      return { kinoEnabled: false, captureFps: 5, playbackFps: 8, shutterGap: 'classic' }
     }
     const text = await file.text()
     const data = JSON.parse(text)
     return {
+      kinoEnabled: Boolean(data?.kinoEnabled),
       captureFps: parseCaptureFps(data?.captureFps),
       playbackFps: parsePlaybackFps(data?.playbackFps),
       shutterGap: parseShutterGap(data?.shutterGap),
     }
   } catch {
-    return { captureFps: 5, playbackFps: 8, shutterGap: 'classic' }
+    return { kinoEnabled: false, captureFps: 5, playbackFps: 8, shutterGap: 'classic' }
   }
 }
 
 function persistKinoSettings(settings: {
+  kinoEnabled: boolean
   captureFps: KinoCaptureSpeed
   playbackFps: KinoPlaybackSpeed
   shutterGap: KinoShutterGap
@@ -115,9 +121,16 @@ function persistKinoSettings(settings: {
 }
 
 export const useKinoSettingsStore = create<KinoSettingsStore>()((set, get) => ({
+  kinoEnabled: false,
   captureFps: 5,
   playbackFps: 8,
   shutterGap: 'classic',
+
+  setKinoEnabled: (kinoEnabled) => {
+    const next = { ...get(), kinoEnabled }
+    persistKinoSettings(next)
+    set({ kinoEnabled })
+  },
 
   setCaptureFps: (captureFps) => {
     const next = { ...get(), captureFps }
@@ -135,6 +148,25 @@ export const useKinoSettingsStore = create<KinoSettingsStore>()((set, get) => ({
     const next = { ...get(), shutterGap }
     persistKinoSettings(next)
     set({ shutterGap })
+  },
+
+  cycleKinoMode: () => {
+    const { kinoEnabled, captureFps } = get()
+    if (!kinoEnabled) {
+      get().setKinoEnabled(true)
+      get().setCaptureFps(3)
+      return { enabled: true, fps: 3 }
+    }
+    if (captureFps === 3) {
+      get().setCaptureFps(5)
+      return { enabled: true, fps: 5 }
+    }
+    if (captureFps === 5) {
+      get().setCaptureFps(8)
+      return { enabled: true, fps: 8 }
+    }
+    get().setKinoEnabled(false)
+    return { enabled: false, fps: 8 }
   },
 
   cycleCaptureFps: () => {
