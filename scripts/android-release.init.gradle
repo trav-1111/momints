@@ -56,7 +56,9 @@ if (expectedHash && certificateHash != expectedHash.replace(':', '').toLowerCase
 gradle.beforeProject { project ->
     project.plugins.withId('com.android.application') {
         project.extensions.getByName('androidComponents').finalizeDsl { android ->
-            if (android.defaultConfig.applicationId != 'com.momints.app') {
+            if (android.defaultConfig.applicationId != 'com.momints.app' &&
+                android.defaultConfig.applicationId != 'com.momints.v2qa' &&
+                android.defaultConfig.applicationId != 'com.momints.v3qa') {
                 throw new GradleException('Unexpected Android application identity')
             }
             def releaseSigning = android.signingConfigs.maybeCreate('momintsRelease')

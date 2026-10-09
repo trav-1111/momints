@@ -301,7 +301,9 @@ async function main(args) {
     const aapt2 = path.join(tools, process.platform === 'win32' ? 'aapt2.exe' : 'aapt2')
     const badging = await run('apk-badging', aapt2, ['dump', 'badging', apk])
     if (
-      !badging.includes("name='com.momints.app'") ||
+      (!badging.includes("name='com.momints.app'") &&
+        !badging.includes("name='com.momints.v2qa'") &&
+        !badging.includes("name='com.momints.v3qa'")) ||
       badging.includes('application-debuggable') ||
       !badging.includes("'arm64-v8a'")
     )
