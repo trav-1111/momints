@@ -193,7 +193,8 @@ function Ruler({
       lastDetent.current = Math.round((value - min) / step)
     })
     .onUpdate((e: GestureUpdateEvent<PanGestureHandlerEventPayload>) => {
-      const delta = (e.translationX / pxRange) * (max - min)
+      const effectiveWidth = trackWidth > 0 ? trackWidth : pxRange
+      const delta = (e.translationX / effectiveWidth) * (max - min)
       const next = Math.min(max, Math.max(min, baseValue.current + delta))
       const detent = Math.round((next - min) / step)
       if (detent !== lastDetent.current) {

@@ -1,6 +1,11 @@
 # Momints Agent Guide & System Architecture
 
-Welcome agent. This document is the single source of truth for developing, testing, and modifying Momints. Follow these conventions strictly to maintain system stability, zero context bloat, and fast iteration.
+Welcome agent. This repository uses a dedicated **Agent Documentation & Handover System** located in [`docs/agent/`](file:///Users/zaac/momints/docs/agent/). Follow these conventions strictly to maintain system stability, zero context bloat, and persistent continuity across sessions:
+
+1. **Architecture & Topology:** Read [`docs/agent/ARCHITECTURE_MAP.md`](file:///Users/zaac/momints/docs/agent/ARCHITECTURE_MAP.md) for full component, contract, and hardware mapping.
+2. **System Invariants:** Read [`docs/agent/INVARIANTS.md`](file:///Users/zaac/momints/docs/agent/INVARIANTS.md) for non-negotiable rules (remotes, crypto, fees, storage, camera HAL).
+3. **Living Handover Ledger:** Read [`docs/agent/HANDOVER_LEDGER.md`](file:///Users/zaac/momints/docs/agent/HANDOVER_LEDGER.md) for latest verified ground truth, branch status, and open issues.
+4. **Agent Playbook & SOP:** Read [`docs/agent/AGENT_PLAYBOOK.md`](file:///Users/zaac/momints/docs/agent/AGENT_PLAYBOOK.md) for bootstrap steps, development rules, and handover templates.
 
 ---
 
@@ -12,7 +17,7 @@ npm run agent:check
 ```
 This executes:
 1. TypeScript strict typecheck (`tsc --noEmit`).
-2. Fast unit tests (<500ms) covering camera readiness, focus lock, Kino settings, and privacy (48 tests).
+2. Fast unit tests (<1s) covering camera readiness, MWA authorization, SecureStore caching, DAL, focus lock, Kino settings, and privacy.
 
 ---
 

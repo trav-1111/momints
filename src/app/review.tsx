@@ -523,7 +523,7 @@ export default function ReviewScreen() {
           displayWidth={screenWidth}
           displayHeight={screenHeight}
           style={{ position: 'absolute', width: screenWidth, height: screenHeight }}
-          contentFit="cover"
+          contentFit="contain"
         />
       ) : null}
 
@@ -578,10 +578,46 @@ export default function ReviewScreen() {
           <IconBack size={19} color={colors.text} strokeWidth={1.7} />
         </Pressable>
 
-        <View style={[chip, { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999 }]}>
-          <Text style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.text }}>
-            {currentIndex + 1} / {photos.length}
-          </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={[chip, { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 999 }]}>
+            <Text style={{ fontFamily: fonts.mono, fontSize: 12, color: colors.text }}>
+              {currentIndex + 1} / {photos.length}
+            </Text>
+          </View>
+          {currentPhoto?.aspect && currentPhoto.aspect !== 'full' && (
+            <View
+              style={[
+                chip,
+                {
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  borderRadius: 999,
+                  borderColor: colors.accent,
+                },
+              ]}
+            >
+              <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.accent }}>
+                {currentPhoto.aspect}
+              </Text>
+            </View>
+          )}
+          {Boolean(currentPhoto?.rawNegativeUri) && (
+            <View
+              style={[
+                chip,
+                {
+                  paddingVertical: 8,
+                  paddingHorizontal: 12,
+                  borderRadius: 999,
+                  borderColor: colors.accent,
+                },
+              ]}
+            >
+              <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.accent }}>
+                RAW
+              </Text>
+            </View>
+          )}
         </View>
 
         <Pressable

@@ -310,6 +310,10 @@ export default function CameraScreen() {
     cameraReadiness.isCurrent,
   )
   const { canCapture, controlsReady, controlsError, retry: retryCameraControls } = manualCamera
+  const manualCameraRef = useRef(manualCamera)
+  manualCameraRef.current = manualCamera
+  const cameraReadinessRef = useRef(cameraReadiness)
+  cameraReadinessRef.current = cameraReadiness
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
       if (state !== 'active') invalidateCamera()
@@ -399,8 +403,8 @@ export default function CameraScreen() {
     try {
       // Also recheck after the torch delay. Never shoot with unconfirmed controls.
       if (!cameraRef.current || !canCapture()) return
-      const currentManualCamera = manualCamera
-      const currentReadiness = cameraReadiness
+      const currentManualCamera = manualCameraRef.current
+      const currentReadiness = cameraReadinessRef.current
       const isComputationalLongExposure =
         currentManualCamera.shutterMode === 'manual' &&
         currentManualCamera.manualShutterNs != null &&
@@ -540,6 +544,8 @@ export default function CameraScreen() {
         .catch(() => {})
     } catch (error) {
       deleteCapture(captureUri)
+      if (rawNegativeUri) deleteCapture(rawNegativeUri)
+      else if (rawNegativePath) deleteCapture(`file://${rawNegativePath}`)
       if (createdPhotoId) removePhoto(createdPhotoId)
       console.error('Failed to capture photo:', error)
       Alert.alert(
@@ -556,6 +562,8 @@ export default function CameraScreen() {
     addPhoto,
     supportsFlash,
     supportsTorch,
+    rawMode,
+    isRawHardwareSupported,
     activeMode,
     activeRoll,
     addFrameToRoll,
@@ -1247,7 +1255,7 @@ export default function CameraScreen() {
           alignItems: 'center',
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Pressable
             onPress={toggleFlash}
             disabled={!supportsFlash}

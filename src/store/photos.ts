@@ -32,13 +32,13 @@ export interface Photo {
   /** Verified developed-artifact metadata. Contains no image bytes. */
   artifact?: PhotoArtifact
   meta?: CaptureMeta
+  /** Local or permanent URI of the raw DNG negative if shot in RAW mode. */
+  rawNegativeUri?: string
+  rawNegativeBytes?: number
   // Roll membership, stamped at capture. Deliberately stored on the photo
   // rather than read from session.activeRoll.frameIds: completeRoll() nulls
   // the active roll, and screens that hid frames by subtracting that array
   // un-hid all of them the moment a roll finished minting.
-  /** Local or permanent URI of the raw DNG negative if shot in RAW mode. */
-  rawNegativeUri?: string
-  rawNegativeBytes?: number
   rollId?: string
   rollName?: string
   /** Stable 1-based position within a prepaid roll, retained across retries. */

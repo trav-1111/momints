@@ -77,3 +77,12 @@ modules/*/android/.gradle/
 *.apk
 *.aab
 /worker/wrangler.review.local.toml
+
+# Scratch testing screenshots and local staging artifacts
+artifacts/
+after_exposure.png
+camera_screen.png
+exposing_*.png
+review_*.png
+.vscode/
+

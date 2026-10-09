@@ -49,7 +49,8 @@ export function adoptTemporaryCapture(sourceUri: string): string {
   ensureDirectory(CAPTURE_TEMP_DIRECTORY)
   if (isFileUriInsideDirectory(sourceUri, CAPTURE_TEMP_DIRECTORY.uri)) return sourceUri
 
-  const extension = sourceUri.toLowerCase().includes('.png') ? 'png' : 'jpg'
+  const lower = sourceUri.toLowerCase()
+  const extension = lower.includes('.png') ? 'png' : lower.includes('.dng') ? 'dng' : 'jpg'
   const destination = new File(
     CAPTURE_TEMP_DIRECTORY,
     `capture-${Date.now()}-${Math.random().toString(36).slice(2)}.${extension}`,

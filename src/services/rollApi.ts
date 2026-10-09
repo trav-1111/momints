@@ -2,10 +2,13 @@ import { ROLL_API_BASE } from '../config/rollApi'
 import { Buffer } from '@craftzdog/react-native-buffer'
 import {
   bindStagedRollCapability,
+  clearRecoveryRollCapability,
   createRollCapability,
+  getPendingRecoveryRollCapability,
   getRollCapability,
   hashRollCapability,
   saveRollCapability,
+  stageRecoveryRollCapability,
 } from './rollCapability'
 
 /**
@@ -266,19 +269,34 @@ function legacyClaimMessage(input: {
   ].join('\n')
 }
 
+export function extractSignatureBytes(signedPayload: Uint8Array): Uint8Array {
+  if (signedPayload.length < 64) {
+    throw new Error(`Invalid signature from wallet: expected at least 64 bytes, got ${signedPayload.length}`)
+  }
+  return signedPayload.length === 64 ? signedPayload : signedPayload.subarray(signedPayload.length - 64)
+}
+
 /** One-time wallet-signed capability recovery for a pre-contract open roll. */
 export async function ensureWorkerRollAuthorization(
   collectionAddress: string,
   wallet: string,
   signMessage: (message: Uint8Array) => Promise<Uint8Array>,
 ): Promise<void> {
-  if (await getRollCapability(collectionAddress)) return
-  const rollCapability = createRollCapability()
-  await saveRollCapability(collectionAddress, rollCapability)
+  // Reuse a staged recovery capability (from a previous retry or dropped response),
+  // or an existing local capability for this collection.
+  let rollCapability =
+    (await getPendingRecoveryRollCapability(collectionAddress)) || (await getRollCapability(collectionAddress))
+
+  if (!rollCapability) {
+    rollCapability = createRollCapability()
+    await stageRecoveryRollCapability(collectionAddress, rollCapability)
+  }
+
   const issuedAt = new Date().toISOString()
   const capabilityHash = hashRollCapability(rollCapability)
   const message = legacyClaimMessage({ collectionAddress, wallet, capabilityHash, issuedAt })
-  const signature = await signMessage(new TextEncoder().encode(message))
+  const signedPayload = await signMessage(new TextEncoder().encode(message))
+  const signature = extractSignatureBytes(signedPayload)
   await request(
     `/rolls/${collectionAddress}/authorize`,
     {
@@ -293,6 +311,8 @@ export async function ensureWorkerRollAuthorization(
     },
     READ_TIMEOUT_MS,
   )
+  await saveRollCapability(collectionAddress, rollCapability)
+  await clearRecoveryRollCapability(collectionAddress)
 }
 
 export interface CompleteRollResponse {

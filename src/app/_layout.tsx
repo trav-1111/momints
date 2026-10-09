@@ -1,7 +1,7 @@
 import '../global.css'
 
 import { Slot } from 'expo-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AppState, View } from 'react-native'
 import { useFonts } from 'expo-font'
 import {
@@ -12,6 +12,7 @@ import {
 } from '@expo-google-fonts/space-grotesk'
 import { SpaceMono_400Regular, SpaceMono_700Bold } from '@expo-google-fonts/space-mono'
 import { MobileWalletProvider, createSolanaMainnet, useMobileWallet } from '@wallet-ui/react-native-kit'
+import { createSecureWalletAuthCache } from '../services/walletAuthCache'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { isWorkerRollEnabled } from '../config/rollApi'
 import { getClusterRpc } from '../store/network'
@@ -179,6 +180,8 @@ export default function Layout() {
     SpaceMono_700Bold,
   })
 
+  const walletAuthCache = useMemo(() => createSecureWalletAuthCache(), [])
+
   // Hold on a blank brand-dark frame for the moment fonts decode
   if (!fontsLoaded || !storageReady) {
     return <View style={{ flex: 1, backgroundColor: colors.bg }} />
@@ -186,7 +189,7 @@ export default function Layout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <MobileWalletProvider cluster={solanaCluster} identity={identity}>
+      <MobileWalletProvider cluster={solanaCluster} identity={identity} cache={walletAuthCache}>
         <FilmStockWalletSync />
         <RollFrameReconciliationSync />
         <Slot />
