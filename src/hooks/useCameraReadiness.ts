@@ -25,8 +25,11 @@ export function useCameraReadiness(cameraId: string | null, active: boolean) {
   }, [publish])
   const ref = useCallback(
     (camera: Camera | null) => {
+      if (cameraRef.current === camera) return
       cameraRef.current = camera
-      publish({ session: null, started: false })
+      if (!camera) {
+        publish({ session: null, started: false })
+      }
     },
     [publish],
   )
@@ -34,13 +37,17 @@ export function useCameraReadiness(cameraId: string | null, active: boolean) {
     const viewTag = findNodeHandle(cameraRef.current)
     if (viewTag == null || cameraId == null) return
     setError(null)
-    publish({ session: { viewTag, cameraId, generation: ++generation.current }, started: false })
+    const wasStarted =
+      current.current.started &&
+      current.current.session?.viewTag === viewTag &&
+      current.current.session?.cameraId === cameraId
+    publish({ session: { viewTag, cameraId, generation: ++generation.current }, started: wasStarted })
   }, [cameraId, publish])
   const onStarted = useCallback(() => {
-    const previous = current.current.session
-    if (!previous || previous.cameraId !== cameraId || findNodeHandle(cameraRef.current) !== previous.viewTag) return
-    // Resuming the same native view still requires a fresh settings application.
-    publish({ session: { ...previous, generation: ++generation.current }, started: true })
+    const viewTag = findNodeHandle(cameraRef.current)
+    if (viewTag == null || cameraId == null) return
+    setError(null)
+    publish({ session: { viewTag, cameraId, generation: ++generation.current }, started: true })
   }, [cameraId, publish])
   const onError = useCallback(
     (failure: CameraRuntimeError) => {
@@ -54,7 +61,8 @@ export function useCameraReadiness(cameraId: string | null, active: boolean) {
       identity.current.active &&
       identity.current.cameraId === session.cameraId &&
       current.current.started &&
-      current.current.session === session &&
+      current.current.session?.viewTag === session.viewTag &&
+      current.current.session?.generation === session.generation &&
       findNodeHandle(cameraRef.current) === session.viewTag
     )
   }, [])

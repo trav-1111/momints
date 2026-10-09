@@ -64,7 +64,14 @@ import { useContactSheetDiscovery } from '../store/contactSheetDiscovery'
 import { useKinoSettingsStore, CAPTURE_CADENCE_MS } from '../store/kinoSettings'
 import { PERMANENT_IMAGE_MAX_LONG_EDGE, PERMANENT_IMAGE_MAX_PIXELS } from '../config/imageArtifact'
 import { colors, fonts, tracking } from '../theme'
-import { DEFAULT_COLOR_FILM_ID, ensureFilmStockRecipe, isFilmStockDownloaded } from '../services/filmstocks'
+import {
+  DEFAULT_COLOR_FILM_ID,
+  ensureFilmStockRecipe,
+  isFilmStockDownloaded,
+  type FilmStockCatalogueItem,
+} from '../services/filmstocks'
+import { FILMSTOCK_THUMBNAILS } from '../services/filmstockThumbnails'
+import { Image } from 'expo-image'
 import { useFilmStockStore } from '../store/filmstocks'
 import {
   IconBolt,
@@ -258,6 +265,23 @@ export default function CameraScreen() {
   // Quick mode picks aspect live on the camera; roll mode uses the roll's fixed aspect.
   const [quickAspect, setQuickAspect] = useState<AspectRatio>('full')
   const [aspectMenuOpen, setAspectMenuOpen] = useState(false)
+  const [filmPickerOpen, setFilmPickerOpen] = useState(false)
+  const currentThumbnailUri =
+    filmCatalogue.find((stock) => stock.filmStockId === effectiveFilm.filmStockId)?.previewImageUrls?.[0] ??
+    FILMSTOCK_THUMBNAILS[effectiveFilm.filmStockId] ??
+    null
+
+  const handleSelectQuickStock = useCallback(async (stock: FilmStockCatalogueItem) => {
+    try {
+      await ensureFilmStockRecipe(stock)
+      useFilmStockStore.getState().selectQuickFilm(stock.filmStockId)
+      Vibration.vibrate(20)
+      setFilmPickerOpen(false)
+    } catch (err) {
+      Alert.alert('Film unavailable', err instanceof Error ? err.message : String(err))
+    }
+  }, [])
+
   const quickAspectLabel = QUICK_ASPECTS.find((a) => a.value === quickAspect)?.label ?? 'FULL'
   const effectiveAspect: AspectRatio = activeMode === 'roll' ? (activeRoll?.aspect ?? 'full') : quickAspect
   const { width: screenW, height: screenH } = useWindowDimensions()
@@ -776,12 +800,16 @@ export default function CameraScreen() {
   ])
 
   const handleShutterPressIn = useCallback(() => {
-    if (isCapturing || !controlsReady || rollIsFull || activeRoll?.developed || kinoDevelopingCount !== null) return
+    if (isCapturing || rollIsFull || activeRoll?.developed || kinoDevelopingCount !== null) return
+    if (!controlsReady) {
+      retryCameraControls()
+      return
+    }
     didCrankRef.current = false
     crankHoldTimer.current = setTimeout(() => {
       handleStartCrank()
     }, 280)
-  }, [isCapturing, controlsReady, rollIsFull, activeRoll?.developed, kinoDevelopingCount, handleStartCrank])
+  }, [isCapturing, controlsReady, rollIsFull, activeRoll?.developed, kinoDevelopingCount, handleStartCrank, retryCameraControls])
 
   const handleShutterPressOut = useCallback(() => {
     if (crankHoldTimer.current) {
@@ -798,8 +826,12 @@ export default function CameraScreen() {
       didCrankRef.current = false
       return
     }
+    if (!controlsReady) {
+      retryCameraControls()
+      return
+    }
     handleCapture()
-  }, [handleCapture])
+  }, [controlsReady, handleCapture, retryCameraControls])
 
   const toggleFlash = useCallback(() => {
     if (!supportsFlash) return
@@ -1286,7 +1318,7 @@ export default function CameraScreen() {
       <View
         style={{
           position: 'absolute',
-          top: 20,
+          top: 28,
           left: 18,
           right: 18,
           flexDirection: 'row',
@@ -1294,24 +1326,24 @@ export default function CameraScreen() {
           alignItems: 'center',
         }}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <Pressable
             onPress={toggleFlash}
             disabled={!supportsFlash}
-            style={[roundChip(42), { opacity: supportsFlash ? 1 : 0.4 }]}
+            style={[roundChip(38), { opacity: supportsFlash ? 1 : 0.4 }]}
           >
             {flash === 'on' && supportsFlash ? (
-              <IconBolt size={19} color={colors.text} />
+              <IconBolt size={18} color={colors.text} />
             ) : (
-              <IconBoltOff size={19} color={colors.text} />
+              <IconBoltOff size={18} color={colors.text} />
             )}
           </Pressable>
 
           <Pressable
             onPress={() => setLocationMenuVisible(true)}
-            style={[roundChip(42), { opacity: locationGranularity === 'off' ? 0.4 : 1 }]}
+            style={[roundChip(38), { opacity: locationGranularity === 'off' ? 0.4 : 1 }]}
           >
-            <IconPin size={19} color={locationGranularity === 'off' ? colors.text : colors.accent} />
+            <IconPin size={18} color={locationGranularity === 'off' ? colors.text : colors.accent} />
           </Pressable>
 
           <Pressable
@@ -1319,14 +1351,14 @@ export default function CameraScreen() {
             accessibilityRole="button"
             accessibilityLabel={`Composition Grid: ${gridMode}`}
             style={[
-              roundChip(42),
+              roundChip(38),
               {
                 borderColor: gridMode !== 'off' ? colors.accent : colors.chipBorder,
                 backgroundColor: gridMode !== 'off' ? colors.accentTint : colors.chipBg,
               },
             ]}
           >
-            <IconGrid size={18} color={gridMode !== 'off' ? colors.accentSoft : colors.text} />
+            <IconGrid size={17} color={gridMode !== 'off' ? colors.accentSoft : colors.text} />
           </Pressable>
 
           <Pressable
@@ -1334,9 +1366,9 @@ export default function CameraScreen() {
             style={[
               chip,
               {
-                height: 42,
-                paddingHorizontal: 14,
-                borderRadius: 21,
+                height: 38,
+                paddingHorizontal: 11,
+                borderRadius: 19,
                 alignItems: 'center',
                 justifyContent: 'center',
                 borderColor: proOpen ? colors.accent : colors.chipBorder,
@@ -1347,8 +1379,8 @@ export default function CameraScreen() {
             <Text
               style={{
                 fontFamily: fonts.sansBold,
-                fontSize: 11,
-                letterSpacing: tracking(0.1, 11),
+                fontSize: 10.5,
+                letterSpacing: tracking(0.1, 10.5),
                 color: proOpen ? colors.accentSoft : colors.text,
               }}
             >
@@ -1367,12 +1399,12 @@ export default function CameraScreen() {
             style={[
               chip,
               {
-                height: 42,
+                height: 38,
                 flexDirection: 'row',
                 alignItems: 'center',
-                gap: 5,
-                paddingHorizontal: 11,
-                borderRadius: 21,
+                gap: 4,
+                paddingHorizontal: 8,
+                borderRadius: 19,
                 borderColor: captureFps !== 8 ? colors.accent : colors.chipBorder,
                 backgroundColor: captureFps !== 8 ? colors.accentTint : colors.chipBg,
               },
@@ -1381,9 +1413,9 @@ export default function CameraScreen() {
             <Text
               style={{
                 fontFamily: fonts.monoBold,
-                fontSize: 10,
+                fontSize: 9.5,
                 color: captureFps !== 8 ? colors.accentSoft : colors.text,
-                letterSpacing: 0.5,
+                letterSpacing: 0.4,
               }}
             >
               🎞️ {captureFps === 8 ? '8 FPS' : `${captureFps} FPS`}
@@ -1405,10 +1437,10 @@ export default function CameraScreen() {
                 flexShrink: 1,
                 minWidth: 0,
                 marginLeft: 8,
-                height: 42,
-                paddingVertical: 8,
+                height: 38,
+                paddingVertical: 7,
                 paddingHorizontal: 14,
-                borderRadius: 21,
+                borderRadius: 19,
               },
             ]}
           >
@@ -1442,10 +1474,11 @@ export default function CameraScreen() {
               alignItems: 'center',
               gap: 7,
               flexShrink: 1,
-              marginLeft: 6,
-              paddingVertical: 8,
+              marginLeft: 8,
+              height: 38,
+              paddingVertical: 7,
               paddingHorizontal: 14,
-              borderRadius: 999,
+              borderRadius: 19,
               backgroundColor: colors.accentTint,
               borderWidth: 1,
               borderColor: colors.accent,
@@ -1460,28 +1493,52 @@ export default function CameraScreen() {
       <View
         style={{
           position: 'absolute',
-          top: 74,
+          top: 78,
           left: 18,
           flexDirection: 'row',
           alignItems: 'center',
           gap: 8,
+          zIndex: 998,
         }}
       >
         <Pressable
-          onPress={() => router.push('/mode-select')}
+          onPress={() => {
+            if (activeMode === 'quick') {
+              setFilmPickerOpen((o) => !o)
+            } else {
+              router.push('/mode-select')
+            }
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={`Film stock: ${effectiveFilmName}`}
           style={[
             chip,
             {
               flexDirection: 'row',
               alignItems: 'center',
-              gap: 8,
-              paddingVertical: 7,
-              paddingHorizontal: 11,
-              borderRadius: 10,
+              gap: 7,
+              height: 38,
+              paddingVertical: 6,
+              paddingHorizontal: 10,
+              borderRadius: 19,
+              borderColor: filmPickerOpen ? colors.accent : colors.chipBorder,
+              backgroundColor: filmPickerOpen ? colors.accentTint : colors.chipBg,
             },
           ]}
         >
-          {activeMode === 'roll' ? (
+          {currentThumbnailUri ? (
+            <Image
+              source={{ uri: currentThumbnailUri }}
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: 4,
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.2)',
+              }}
+              contentFit="cover"
+            />
+          ) : activeMode === 'roll' ? (
             <IconFilm size={15} color={colors.text} />
           ) : (
             <IconCamera size={15} color={colors.text} />
@@ -1499,7 +1556,7 @@ export default function CameraScreen() {
           {activeMode === 'roll' && activeRoll !== null && (
             <>
               <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-              <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
+              <Text style={{ fontFamily: fonts.mono, fontSize: 9.5, color: colors.textSoft }} numberOfLines={1}>
                 {effectiveFilmName.toUpperCase()}
               </Text>
               {activeRoll.aspect !== 'full' && (
@@ -1510,18 +1567,128 @@ export default function CameraScreen() {
           {activeMode === 'quick' && (
             <>
               <View style={{ width: 1, height: 12, backgroundColor: 'rgba(255,255,255,0.2)' }} />
-              <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textSoft }} numberOfLines={1}>
+              <Text style={{ fontFamily: fonts.mono, fontSize: 9.5, color: colors.textSoft }} numberOfLines={1}>
                 {effectiveFilmName.toUpperCase()}
+              </Text>
+              <Text style={{ fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft, marginLeft: 1 }}>
+                {filmPickerOpen ? '▲' : '▼'}
               </Text>
             </>
           )}
         </Pressable>
       </View>
 
+      {/* Floating Quick-mode Film Stock selection dropdown with thumbnails */}
+      {filmPickerOpen && activeMode === 'quick' && (
+        <View
+          style={{
+            position: 'absolute',
+            top: 122,
+            left: 18,
+            width: 270,
+            borderRadius: 14,
+            overflow: 'hidden',
+            backgroundColor: 'rgba(18, 18, 22, 0.95)',
+            borderWidth: 1,
+            borderColor: colors.chipBorder,
+            paddingVertical: 6,
+            zIndex: 999,
+            elevation: 10,
+          }}
+        >
+          <View style={{ paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.08)', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Text style={{ fontFamily: fonts.monoBold, fontSize: 9, letterSpacing: tracking(0.12, 9), color: colors.accentSoft }}>
+              QUICK MINT FILM STOCKS
+            </Text>
+            <Pressable onPress={() => setFilmPickerOpen(false)}>
+              <Text style={{ fontFamily: fonts.mono, fontSize: 10, color: colors.textSoft }}>✕</Text>
+            </Pressable>
+          </View>
+
+          {filmCatalogue.slice(0, 6).map((stock) => {
+            const isSelected = effectiveFilm.filmStockId === stock.filmStockId
+            const thumb = stock.previewImageUrls?.[0] ?? FILMSTOCK_THUMBNAILS[stock.filmStockId]
+            return (
+              <Pressable
+                key={stock.filmStockId}
+                onPress={() => handleSelectQuickStock(stock)}
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  gap: 10,
+                  paddingHorizontal: 10,
+                  paddingVertical: 7,
+                  backgroundColor: isSelected ? 'rgba(255,255,255,0.08)' : 'transparent',
+                }}
+              >
+                {thumb ? (
+                  <Image
+                    source={{ uri: thumb }}
+                    style={{
+                      width: 38,
+                      height: 25,
+                      borderRadius: 4,
+                      borderWidth: 1,
+                      borderColor: isSelected ? colors.accent : colors.chipBorder,
+                    }}
+                    contentFit="cover"
+                  />
+                ) : (
+                  <View
+                    style={{
+                      width: 38,
+                      height: 25,
+                      borderRadius: 4,
+                      backgroundColor: stock.baseMode === 'bw' ? '#666' : colors.accentTint,
+                    }}
+                  />
+                )}
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      fontFamily: fonts.sansBold,
+                      fontSize: 12,
+                      color: isSelected ? colors.accentSoft : colors.text,
+                    }}
+                    numberOfLines={1}
+                  >
+                    {stock.displayName}
+                  </Text>
+                  <Text style={{ fontFamily: fonts.mono, fontSize: 8, color: colors.textSoft }}>
+                    {stock.baseMode === 'bw' ? 'B&W' : 'COLOR'} {stock.evergreen ? '• HOUSE' : '• DEMO'}
+                  </Text>
+                </View>
+                {isSelected ? (
+                  <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: colors.accentSoft }}>✓</Text>
+                ) : null}
+              </Pressable>
+            )
+          })}
+
+          <Pressable
+            onPress={() => {
+              setFilmPickerOpen(false)
+              router.push('/mode-select')
+            }}
+            style={{
+              paddingVertical: 8,
+              alignItems: 'center',
+              borderTopWidth: 1,
+              borderTopColor: 'rgba(255,255,255,0.08)',
+              marginTop: 4,
+            }}
+          >
+            <Text style={{ fontFamily: fonts.mono, fontSize: 9, color: colors.textMuted }}>
+              ALL FILM STOCKS & ROLLS →
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
       {/* EXP dial — frames remaining, counts down like a film counter */}
       {activeMode === 'roll' && activeRoll !== null && (
         <View
-          style={[roundChip(52), { position: 'absolute', top: 74, right: 18, borderColor: 'rgba(255,255,255,0.16)' }]}
+          style={[roundChip(52), { position: 'absolute', top: 78, right: 18, borderColor: 'rgba(255,255,255,0.16)' }]}
         >
           <Text style={{ fontFamily: fonts.monoBold, fontSize: 18, lineHeight: 20, color: colors.text }}>
             {remainingExp}
@@ -1542,7 +1709,7 @@ export default function CameraScreen() {
 
       {/* Quick-mode aspect dropdown — collapsed shows the current ratio */}
       {activeMode === 'quick' && (
-        <View pointerEvents="box-none" style={{ position: 'absolute', top: 74, right: 18, alignItems: 'flex-end' }}>
+        <View pointerEvents="box-none" style={{ position: 'absolute', top: 78, right: 18, alignItems: 'flex-end' }}>
           <Pressable
             onPress={() => setAspectMenuOpen((o) => !o)}
             style={[
@@ -1738,7 +1905,7 @@ export default function CameraScreen() {
             onPressIn={handleShutterPressIn}
             onPressOut={handleShutterPressOut}
             onPress={handleShutterPress}
-            disabled={isCapturing || !controlsReady}
+            disabled={isCapturing || rollIsFull || activeRoll?.developed}
             style={{
               width: 82,
               height: 82,
@@ -1747,7 +1914,7 @@ export default function CameraScreen() {
               borderColor: isCranking ? '#f39c12' : colors.accent,
               alignItems: 'center',
               justifyContent: 'center',
-              opacity: isCapturing || !controlsReady || rollIsFull || activeRoll?.developed ? 0.5 : 1,
+              opacity: isCapturing || rollIsFull || activeRoll?.developed ? 0.5 : 1,
               transform: [{ scale: isCranking ? 1.08 : 1 }],
             }}
           >

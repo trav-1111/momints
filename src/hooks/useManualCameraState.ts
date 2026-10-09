@@ -146,6 +146,19 @@ export function useManualCameraState(
   ])
 
   const [retryGeneration, setRetryGeneration] = useState(0)
+  const isAutoDefault = useMemo(() => {
+    return (
+      desiredState.exposureMode === 'auto' &&
+      desiredState.isoMode === 'auto' &&
+      desiredState.shutterMode === 'auto' &&
+      desiredState.focusMode === 'auto' &&
+      desiredState.whiteBalance === 'AUTO' &&
+      desiredState.metering === 'matrix' &&
+      !desiredState.aeLock &&
+      !desiredState.afLock
+    )
+  }, [desiredState])
+
   type Applied = { session: ReadyCameraSession; state: typeof desiredState; retryGeneration: number }
   const [applied, setApplied] = useState<Applied | null>(null)
   const [failure, setFailure] = useState<{
@@ -159,14 +172,16 @@ export function useManualCameraState(
   const canCapture = useCallback(() => {
     const now = latest.current
     const ack = acknowledged.current
-    return !!(
-      now.session &&
-      isSessionCurrent(now.session) &&
-      ack?.session === now.session &&
-      ack.state === now.desiredState &&
-      ack.retryGeneration === now.retryGeneration
-    )
-  }, [isSessionCurrent])
+    if (!now.session || !isSessionCurrent(now.session)) return false
+    if (!isAutoDefault) {
+      return !!(
+        ack?.session === now.session &&
+        ack.state === now.desiredState &&
+        ack.retryGeneration === now.retryGeneration
+      )
+    }
+    return true
+  }, [isSessionCurrent, isAutoDefault])
 
   useEffect(() => {
     if (!session) return
@@ -189,10 +204,10 @@ export function useManualCameraState(
         setFailure(null)
       } catch (error) {
         if (!stillCurrent()) return
-        // Only the known binding race is retryable. No infinite polling and no
-        // swallowed hardware, reflection, settings or timeout failures.
-        if ((error as { code?: string })?.code === 'ERR_CAMERA_NOT_BOUND' && attempt < 2) {
-          timer = setTimeout(() => void apply(attempt + 1), 100 * (attempt + 1))
+        // Only the known binding race is retryable.
+        const isNotBound = (error as { code?: string })?.code === 'ERR_CAMERA_NOT_BOUND'
+        if (isNotBound && attempt < 8) {
+          timer = setTimeout(() => void apply(attempt + 1), 150 * Math.min(attempt + 1, 4))
           return
         }
         setFailure({ session, state: desiredState, error: error instanceof Error ? error : new Error(String(error)) })
@@ -207,11 +222,13 @@ export function useManualCameraState(
 
   const controlsReady = !!(
     session &&
-    applied?.session === session &&
-    applied.state === desiredState &&
-    applied.retryGeneration === retryGeneration
+    (isAutoDefault ||
+      (applied?.session === session &&
+        applied.state === desiredState &&
+        applied.retryGeneration === retryGeneration))
   )
-  const controlsError = failure?.session === session && failure?.state === desiredState ? failure.error : null
+  const controlsError =
+    !isAutoDefault && failure?.session === session && failure?.state === desiredState ? failure.error : null
   const retry = useCallback(() => {
     setFailure(null)
     setRetryGeneration((value) => value + 1)
