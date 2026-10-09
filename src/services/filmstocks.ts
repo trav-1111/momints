@@ -720,7 +720,7 @@ function validateRecipe(raw: unknown, expectedId: string): FilmStockRecipe {
 }
 
 function assertId(id: string): void {
-  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*-v[1-9]\d*$/.test(id)) throw new Error('Invalid filmStockId')
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) throw new Error('Invalid filmStockId')
 }
 
 function packageDirectory(id: string): Directory {

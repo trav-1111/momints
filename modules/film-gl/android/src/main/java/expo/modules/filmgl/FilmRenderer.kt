@@ -44,7 +44,7 @@ class FilmRenderer(private val context: Context) {
     return value.toFloat()
   }
   private fun recipe(options: FilmGlOptionsRecord): JSONObject {
-    require(options.filmStockId.matches(Regex("^[a-z0-9]+(?:-[a-z0-9]+)*-v[1-9][0-9]*$"))) { "Invalid film ID" }
+    require(options.filmStockId.matches(Regex("^[a-z0-9]+(?:-[a-z0-9]+)*$"))) { "Invalid film ID" }
     require(hash(options.recipeJson.toByteArray(Charsets.UTF_8)) == options.recipeSha256) { "Recipe checksum mismatch" }
     val recipe = JSONObject(options.recipeJson)
     require(recipe.getString("filmStockId") == options.filmStockId) { "Recipe identity mismatch" }

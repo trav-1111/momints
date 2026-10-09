@@ -160,7 +160,7 @@ function parseFrame(raw: unknown, version: 1 | 2): StoredRollFrame | null {
       ? { location: String((frame.meta as Record<string, unknown>).location) }
       : undefined
   const filmStockId =
-    typeof frame.filmStockId === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*-v[1-9]\d*$/.test(frame.filmStockId)
+    typeof frame.filmStockId === 'string' && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(frame.filmStockId)
       ? frame.filmStockId
       : undefined
   const artifact = parseArtifact(frame.artifact)
@@ -250,7 +250,7 @@ async function upgradeLegacyManifest(
   fallbackFilmStockId?: string,
 ): Promise<RollVaultManifest> {
   if (manifest.version === 2) return manifest
-  if (!fallbackFilmStockId || !/^[a-z0-9]+(?:-[a-z0-9]+)*-v[1-9]\d*$/.test(fallbackFilmStockId)) {
+  if (!fallbackFilmStockId || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(fallbackFilmStockId)) {
     throw new Error('The legacy roll is missing its immutable film identity.')
   }
   const directory = directoryForRoll(manifest.rollId)
