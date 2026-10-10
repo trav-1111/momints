@@ -44,14 +44,14 @@ export const KinoBanners: React.FC<KinoBannersProps> = ({
           >
             <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#e74c3c' }} />
             <Text style={{ fontFamily: fonts.monoBold, fontSize: 12, color: '#fff' }}>
-              🎞️ KINO CRANKING ({captureFps} FPS) · {crankCount} FRAMES (
+              ⚡ BURST SHOOTING ({captureFps} FPS) · {crankCount} FRAMES (
               {(crankCount / captureFps).toFixed(1)}s)
             </Text>
           </View>
         </View>
       )}
 
-      {/* LomoKino Developing Banner */}
+      {/* Burst Developing Banner */}
       {kinoDevelopingCount !== null && (
         <View
           pointerEvents="none"
@@ -78,7 +78,7 @@ export const KinoBanners: React.FC<KinoBannersProps> = ({
           >
             <ActivityIndicator size="small" color={colors.accent} />
             <Text style={{ fontFamily: fonts.monoBold, fontSize: 11, color: colors.text }}>
-              DEVELOPING {kinoDevelopingCount} KINO FRAMES...
+              DEVELOPING {kinoDevelopingCount} BURST FRAMES...
             </Text>
           </View>
         </View>

@@ -368,3 +368,16 @@ export function IconGrid(p: IconProps) {
     </IconBase>
   )
 }
+
+/** Zoom — magnifying glass with plus indicator. */
+export function IconZoom(p: IconProps) {
+  return (
+    <IconBase {...p}>
+      <Circle cx="10.5" cy="10.5" r="6" />
+      <Line x1="15" y1="15" x2="20" y2="20" />
+      <Line x1="10.5" y1="8" x2="10.5" y2="13" />
+      <Line x1="8" y1="10.5" x2="13" y2="10.5" />
+    </IconBase>
+  )
+}
+

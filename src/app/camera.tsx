@@ -40,6 +40,7 @@ import { AspectFramingOverlay } from '../components/AspectFramingOverlay'
 import { CompositionGridOverlay, type GridMode } from '../components/CompositionGridOverlay'
 import { FocusReticle } from '../components/FocusReticle'
 import ManualControls from '../components/ManualControls'
+import { ZoomSlider } from '../components/ZoomSlider'
 import { KinoBanners } from '../features/kino'
 import { LongExposureBanner } from '../features/long-exposure'
 import {
@@ -84,6 +85,7 @@ import {
   IconGrid,
   IconMint,
   IconPin,
+  IconZoom,
 } from '../components/icons'
 
 const QUICK_ASPECTS: { value: AspectRatio; label: string }[] = [
@@ -202,6 +204,7 @@ export default function CameraScreen() {
   // (manual ISO/shutter/focus/WB) mounts underneath, gated by TIER2_ENABLED.
   const [proOpen, setProOpen] = useState(false)
   const [rawMode, setRawMode] = useState(false)
+  const [showZoomSlider, setShowZoomSlider] = useState(false)
   const [ev, setEv] = useState(0)
   const {
     isMxActive,
@@ -774,8 +777,8 @@ export default function CameraScreen() {
           ])
         }
       } catch (err) {
-        console.error('[Kino] failed to develop frames:', err)
-        Alert.alert('Error', 'Failed to develop some Kino frames.')
+        console.error('[Burst] failed to develop frames:', err)
+        Alert.alert('Error', 'Failed to develop some burst frames.')
       } finally {
         setKinoDevelopingCount(null)
         setIsCapturing(false)
@@ -1299,7 +1302,7 @@ export default function CameraScreen() {
       </GestureDetector>
 
       {/* Zoom Indicator */}
-      {zoom > 1.1 && (
+      {zoom > 1.1 && !showZoomSlider && (
         <View
           style={[
             chip,
@@ -1362,6 +1365,24 @@ export default function CameraScreen() {
             ]}
           >
             <IconGrid size={17} color={gridMode !== 'off' ? colors.accentSoft : colors.text} />
+          </Pressable>
+
+          <Pressable
+            onPress={() => {
+              setShowZoomSlider((s) => !s)
+              Haptics.selectionAsync()
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`Zoom slider: ${showZoomSlider ? 'On' : 'Off'}`}
+            style={[
+              roundChip(38),
+              {
+                borderColor: showZoomSlider ? colors.accent : colors.chipBorder,
+                backgroundColor: showZoomSlider ? colors.accentTint : colors.chipBg,
+              },
+            ]}
+          >
+            <IconZoom size={17} color={showZoomSlider ? colors.accentSoft : colors.text} />
           </Pressable>
 
           <Pressable
@@ -1735,12 +1756,32 @@ export default function CameraScreen() {
         </View>
       )}
 
+      {/* Zoom Slider — accessible in default mode and pro mode */}
+      {showZoomSlider && (
+        <View
+          style={{
+            position: 'absolute',
+            left: 18,
+            right: 18,
+            bottom: 135,
+            zIndex: 10,
+          }}
+        >
+          <ZoomSlider
+            zoom={zoom}
+            minZoom={minZoom}
+            maxZoom={maxZoom}
+            onZoomChange={setZoom}
+          />
+        </View>
+      )}
+
       {/* Pro mode strip — persistent M · ISO · S · EV · WB · AF value strip
           pinned above the shutter row, one parameter expanded at a time.
           See ManualControls.tsx for the design source and the adjustments
           made from it for this camera's real (coupled) exposure model. */}
       {proOpen && TIER2_ENABLED && (
-        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 145 }}>
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: showZoomSlider ? 188 : 145 }}>
           <ManualControls
             controls={manualCamera}
             ev={ev}
@@ -1749,7 +1790,7 @@ export default function CameraScreen() {
             maxExposure={maxExposure}
           />
 
-          {/* Pro format, multi-exposure & Kino cadence accessory toggles */}
+          {/* Pro format, multi-exposure & Burst cadence accessory toggles */}
           <View
             style={{
               flexDirection: 'row',
@@ -1826,14 +1867,14 @@ export default function CameraScreen() {
               </Text>
             </Pressable>
 
-            {/* Kino Cadence Selector Chip */}
+            {/* Burst Cadence Selector Chip */}
             <Pressable
               onPress={() => {
                 cycleKinoMode()
                 Vibration.vibrate(25)
               }}
               accessibilityRole="button"
-              accessibilityLabel={`Kino Frame Rate: ${kinoEnabled ? `${captureFps} FPS` : 'Off'}`}
+              accessibilityLabel={`Burst Frame Rate: ${kinoEnabled ? `${captureFps} FPS` : 'Off'}`}
               style={[
                 chip,
                 {
@@ -1856,7 +1897,7 @@ export default function CameraScreen() {
                   color: kinoEnabled ? colors.accentSoft : colors.text,
                 }}
               >
-                {kinoEnabled ? `🎞️ ${captureFps} FPS` : 'KINO'}
+                {kinoEnabled ? `⚡ ${captureFps} FPS` : 'BURST'}
               </Text>
             </Pressable>
           </View>
@@ -1972,7 +2013,7 @@ export default function CameraScreen() {
               }}
               hitSlop={12}
               accessibilityRole="button"
-              accessibilityLabel={`Kino Frame Rate: ${captureFps} FPS`}
+              accessibilityLabel={`Burst Frame Rate: ${captureFps} FPS`}
             >
               <View
                 style={{
@@ -1996,7 +2037,7 @@ export default function CameraScreen() {
                     color: isCranking ? '#f39c12' : colors.textSoft,
                   }}
                 >
-                  {isCranking ? 'CRANKING' : `HOLD FOR KINO · ${captureFps} FPS`}
+                  {isCranking ? 'BURSTING' : `HOLD FOR BURST · ${captureFps} FPS`}
                 </Text>
               </View>
             </Pressable>

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "scheme": "momints",
+    "scheme": "momints-v2qa",
     "userInterfaceStyle": "dark",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -12,11 +12,11 @@
     "web": {
       "output": "static"
     },
-    "name": "Momints",
-    "slug": "momints",
+    "name": "Momints V2 QA",
+    "slug": "momints-v2-qa",
     "version": "1.0.0",
     "android": {
-      "package": "com.momints.app",
+      "package": "com.momints.v2qa",
       "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
