@@ -524,7 +524,10 @@ export async function mintNFTBatch(
      * crash-safety record here (see useMint.ts) is guaranteed that write has
      * actually happened before any transaction goes out.
      */
-    onItemSigned?: (id: string, info: { signature: string; mintAddress: string }) => void | Promise<void>
+    onItemSigned?: (
+      id: string,
+      info: { signature: string; mintAddress: string; lastValidBlockHeight: string },
+    ) => void | Promise<void>
   },
   deps: BatchMintDeps,
   onItemResult?: (result: BatchMintItemResult) => void,
@@ -600,6 +603,7 @@ export async function mintNFTBatch(
     for (let i = 0; i < signedTxs.length; i++) {
       await onItemSigned(items[i].id, {
         signature: getSignatureFromTransaction(signedTxs[i]),
+        lastValidBlockHeight: String(blockhash.lastValidBlockHeight),
         mintAddress: built[i].mintAddress,
       })
     }

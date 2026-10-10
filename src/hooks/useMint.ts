@@ -389,7 +389,7 @@ export function useMint() {
             status: 'confirming',
             signature: check.signature,
             mintAddress: check.assetAddress,
-            note: 'Mint submitted · finalizing on Arweave (usually 8–12 min)',
+            note: 'Signed attempt awaiting verification · checking the same receipt before any new payment',
           })
           void startPendingFinalizePolling().catch(() => {})
         } else {
@@ -462,7 +462,7 @@ export function useMint() {
               // mintNFTBatch before it sends anything — see its onItemSigned
               // doc — so the write has actually happened, not just started,
               // before the transaction that spends the fee goes out.
-              onItemSigned: async (photoId, { signature, mintAddress }) => {
+              onItemSigned: async (photoId, { signature, mintAddress, lastValidBlockHeight }) => {
                 const quick = quickByPhotoId.get(photoId)
                 const sourceItem = itemByPhotoId.get(photoId)
                 if (quick && sourceItem) {
@@ -471,6 +471,7 @@ export function useMint() {
                   await recordPendingFinalize({
                     stagingKey: quick.stagingKey,
                     signature,
+                    lastValidBlockHeight,
                     assetAddress: mintAddress,
                     photoId,
                     history: {

@@ -23,7 +23,12 @@ function wrangler(args, { json = false } = {}) {
       stateRoot,
       ...args,
     ],
-    { cwd: workerRoot, encoding: 'utf8', shell: false },
+    {
+      cwd: workerRoot,
+      encoding: 'utf8',
+      shell: false,
+      env: { ...process.env, WRANGLER_SEND_METRICS: 'false', WRANGLER_LOG_PATH: join(stateRoot, 'logs') },
+    },
   )
   if (result.status !== 0) {
     throw new Error(`Wrangler D1 command failed:\n${result.stdout}\n${result.stderr}`)
@@ -50,6 +55,8 @@ try {
   wrangler(['--file', join(workerRoot, 'tests', 'fixtures', 'pre-contract-legacy.sql'), '--yes'])
   wrangler(['--file', join(workerRoot, 'migrations', '0009_roll_frame_contract.sql'), '--yes'])
   wrangler(['--file', join(workerRoot, 'migrations', '0010_quick_image_artifact.sql'), '--yes'])
+  wrangler(['--file', join(workerRoot, 'migrations', '0011_roll_purchase_recovery.sql'), '--yes'])
+  wrangler(['--file', join(workerRoot, 'migrations', '0012_quick_recovery_evidence.sql'), '--yes'])
 
   const query = [
     'SELECT r.protocol_version, r.auth_hash,',
@@ -77,7 +84,23 @@ try {
     quick_height: null,
     quick_hash: null,
   })
-  console.log('Verified synthetic pre-contract rows through migrations 0009 and 0010.')
+  const recovery = wrangler(
+    [
+      '--command',
+      'SELECT film_stock_id, aspect, fee_lamports, close_reason FROM rolls; SELECT payment_state, verify_attempts FROM quick_mints; SELECT COUNT(*) AS n FROM roll_creations; SELECT COUNT(*) AS n FROM job_heartbeats',
+      '--json',
+    ],
+    { json: true },
+  )
+  assert.equal(recovery[0].results[0].film_stock_id, null)
+  assert.equal(recovery[0].results[0].close_reason, null)
+  assert.equal(recovery[1].results[0].payment_state, 'UNKNOWN')
+  assert.equal(recovery[1].results[0].verify_attempts, 0)
+  assert.equal(recovery[2].results[0].n, 0)
+  assert.equal(recovery[3].results[0].n, 0)
+  console.log(
+    'Verified synthetic pre-contract rows through migrations 0009–0012; historical payment state remains unknown.',
+  )
 } finally {
   await rm(stateRoot, { recursive: true, force: true })
 }

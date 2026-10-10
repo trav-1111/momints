@@ -17,7 +17,8 @@
   "version": "1.0.0",
   "scripts": {
     "agent:check": "tsc --noEmit && npm run test:fast",
-    "test:fast": "node --test tests/privacy.test.cjs tests/roll-authorization.test.cjs tests/wallet-auth-cache.test.cjs tests/on-chain-portfolio.test.cjs tests/assetlinks.test.cjs tests/kino-settings.test.cjs tests/focus-lock-and-pro.test.cjs tests/camera-readiness.test.cjs tests/camera-raw.test.cjs",
+    "test:fast": "node --test tests/privacy.test.cjs tests/roll-authorization.test.cjs tests/wallet-auth-cache.test.cjs tests/on-chain-portfolio.test.cjs tests/assetlinks.test.cjs tests/kino-settings.test.cjs tests/focus-lock-and-pro.test.cjs tests/camera-readiness.test.cjs tests/camera-raw.test.cjs tests/roll-payment-recovery.test.cjs tests/roll-server-recovery.test.cjs tests/recovery-operations.test.cjs tests/recovery-db.test.cjs tests/roll-session-recovery.test.cjs",
+    "test:recovery": "node --test tests/roll-payment-recovery.test.cjs tests/roll-server-recovery.test.cjs tests/recovery-operations.test.cjs tests/recovery-db.test.cjs tests/roll-session-recovery.test.cjs",
     "test:privacy": "node --test tests/privacy.test.cjs",
     "test:roll-vault": "node --test tests/roll-vault.test.cjs",
     "test:wallet-domain": "node --test tests/wallet-domain.test.cjs",

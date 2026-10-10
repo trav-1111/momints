@@ -117,6 +117,10 @@ export async function getSignatureStatus(rpcUrl: string, signature: string): Pro
   return result.value[0] ?? null
 }
 
+export async function getFinalizedBlockHeight(rpcUrl: string): Promise<number> {
+  return rpcCall<number>(rpcUrl, 'getBlockHeight', [{ commitment: 'finalized' }])
+}
+
 /**
  * Send a signed transaction and poll until 'confirmed' (or better). Throws on
  * on-chain error or timeout. A timeout does NOT mean the transaction failed —

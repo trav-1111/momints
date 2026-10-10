@@ -42,10 +42,14 @@ export function RollCard({ roll, mintedCount = 0, onMint, onDiscard }: RollCardP
 
   const confirmDiscard = () => {
     if (!onDiscard) return
-    Alert.alert('Discard roll', `Delete "${roll.name}" and its ${count} frame(s) without minting?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Discard', style: 'destructive', onPress: onDiscard },
-    ])
+    Alert.alert(
+      'Discard roll',
+      `Delete "${roll.name}" and its ${count} frame(s) without minting? This permanently forfeits the paid roll's unused exposures.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Discard', style: 'destructive', onPress: onDiscard },
+      ],
+    )
   }
 
   return (

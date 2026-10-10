@@ -1,7 +1,7 @@
 // The ONLY module that talks to Solana/Metaplex directly. Everything above it
 // works through the functions exported here, so devnet -> mainnet (or an RPC
 // provider change) is a swap inside this directory, not a refactor.
-import { keypairIdentity, type Umi } from '@metaplex-foundation/umi'
+import { createSignerFromKeypair, keypairIdentity, type Umi } from '@metaplex-foundation/umi'
 import { base58 } from '@metaplex-foundation/umi/serializers'
 import { ConfigError, type ValidatedEnv } from '../env'
 
@@ -23,6 +23,21 @@ export async function createWorkerUmi(env: ValidatedEnv): Promise<Umi> {
 
 export function signatureToBase58(signature: Uint8Array): string {
   return base58.deserialize(signature)[0]
+}
+
+/** Stable collection identity across retries. Domain-separated HMAC prevents
+ * exposing or persisting either the funding seed or the child secret key. */
+export async function rollCollectionSigner(umi: Umi, feeSignature: string) {
+  if (!('secretKey' in umi.identity) || !(umi.identity.secretKey instanceof Uint8Array)) {
+    throw new ConfigError('Roll creation requires the configured Worker keypair identity')
+  }
+  const key = await crypto.subtle.importKey('raw', umi.identity.secretKey, { name: 'HMAC', hash: 'SHA-256' }, false, [
+    'sign',
+  ])
+  const seed = new Uint8Array(
+    await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`momints:roll-collection:v1:${feeSignature}`)),
+  )
+  return createSignerFromKeypair(umi, umi.eddsa.createKeypairFromSeed(seed))
 }
 
 /**

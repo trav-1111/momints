@@ -138,7 +138,8 @@ export async function checkFundingBalance(deps: MonitorDeps): Promise<FundingChe
   const summary = describeSnapshot(snapshot)
 
   if (snapshot.level === previousLevel) {
-    // Nothing to say. Still bump the row so updated_at proves the cron ran.
+    // Refresh the recorded alert context. Job execution uses job_heartbeats;
+    // delivery failures deliberately leave this hysteresis state unchanged.
     await deps.alerts.record(FUNDING_ALERT_KEY, snapshot.level, summary)
     return {
       snapshot,

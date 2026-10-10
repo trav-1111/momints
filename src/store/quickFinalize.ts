@@ -1,10 +1,10 @@
 import { Paths, File } from 'expo-file-system'
 import { finalizeQuickMint } from '../services/quickMintApi'
-import { RollApiError } from '../services/rollApi'
 import { tryPermanentQuickImage } from '../services/permanentAsset'
 import { historyHydrated, useMintQueue, type MintFilmUsed } from './mintQueue'
 import type { AspectRatio } from './session'
 import { mergePendingDrain } from './pendingFinalizeGuard.cjs'
+import { quickAttemptDidNotLand } from '../services/quickAttemptOutcome'
 
 /**
  * Pending quick-mint finalizes, persisted across app launches.
@@ -17,8 +17,8 @@ import { mergePendingDrain } from './pendingFinalizeGuard.cjs'
  *
  * mintQueue.ts persists only *history*, not in-flight work, so it cannot serve
  * this purpose. An entry is written the instant a signature exists (before the
- * transaction is even sent) and removed only once the Worker has definitively
- * accepted or refused it.
+ * transaction is even sent) and removed only after finalization or a conclusive
+ * chain outcome that permits a fresh attempt.
  */
 
 const STORAGE_KEY = 'quick-finalize'
@@ -26,6 +26,7 @@ const STORAGE_KEY = 'quick-finalize'
 export interface PendingFinalize {
   stagingKey: string
   signature: string
+  lastValidBlockHeight?: string
   assetAddress: string
   /**
    * The mint queue photoId this entry is for — the correlator checkPriorAttempt
@@ -66,8 +67,8 @@ function file(): File {
 }
 
 function parse(raw: unknown): PendingFinalize[] {
-  if (!Array.isArray(raw)) return []
-  return raw.filter(
+  if (!Array.isArray(raw)) throw new Error('Saved mint receipts are unreadable. Resolve them before another payment.')
+  const entries = raw.filter(
     (e): e is PendingFinalize =>
       e !== null &&
       typeof e === 'object' &&
@@ -84,6 +85,9 @@ function parse(raw: unknown): PendingFinalize[] {
           typeof e.history.artist === 'string' &&
           typeof e.history.capturedAt === 'number')),
   )
+  if (entries.length !== raw.length)
+    throw new Error('A saved mint receipt is invalid. Resolve it before another payment.')
+  return entries
 }
 
 async function load(): Promise<PendingFinalize[]> {
@@ -92,7 +96,7 @@ async function load(): Promise<PendingFinalize[]> {
     const f = file()
     cache = f.exists ? parse(JSON.parse(await f.text())) : []
   } catch {
-    cache = []
+    throw new Error('Could not read saved mint receipts. Resolve local storage before another payment.')
   }
   return cache
 }
@@ -100,13 +104,11 @@ async function load(): Promise<PendingFinalize[]> {
 /** Serialized so concurrent chunk items cannot interleave read-modify-write. */
 function persist(next: PendingFinalize[]): Promise<void> {
   cache = next
-  writing = writing.then(async () => {
-    try {
+  writing = writing
+    .catch(() => {})
+    .then(async () => {
       file().write(JSON.stringify(next))
-    } catch {
-      // Non-critical: the in-memory copy still drains this session.
-    }
-  })
+    })
   return writing
 }
 
@@ -116,28 +118,25 @@ function persist(next: PendingFinalize[]): Promise<void> {
  * Called as soon as the signature exists — deliberately BEFORE the transaction
  * is sent, because the confirm wait is the longest window in which the app can
  * die holding a paid mint nobody knows about. A recorded entry for a
- * transaction that never landed is harmless: finalize refuses it and it is
- * dropped.
- *
- * NEVER REJECTS, even though the call site (useMint.ts's onItemSigned) now
- * awaits this — awaiting is there to guarantee the write has actually
- * happened before the transaction that spends the fee is sent, not to let a
- * failure here propagate. Failing to persist is bad — it costs the
- * crash-safety net for this one mint — but it must not also break the mint
- * that is currently succeeding.
+ * transaction that never landed can be cleared after finalized chain reads.
+ * A failed write rejects and stops broadcast: an in-memory receipt is not
+ * sufficient protection against a paid mint disappearing after restart.
  */
 export async function recordPendingFinalize(entry: Omit<PendingFinalize, 'createdAt' | 'attempts'>): Promise<void> {
-  try {
-    const pending = await load()
-    if (pending.some((e) => e.stagingKey === entry.stagingKey)) return
-    const next = [...pending, { ...entry, createdAt: Date.now(), attempts: 0 }].slice(-MAX_PENDING)
-    await persist(next)
-  } catch (err) {
-    console.warn(`[quickFinalize] could not record ${entry.assetAddress}:`, err)
+  const pending = await load()
+  const existing = pending.find((e) => e.stagingKey === entry.stagingKey)
+  if (existing) {
+    if (existing.signature !== entry.signature || existing.assetAddress !== entry.assetAddress)
+      throw new Error('This image already has a different signed attempt. Recover the original receipt.')
+    await persist(pending)
+    return
   }
+  if (pending.length >= MAX_PENDING) throw new Error('Resolve pending mint receipts before signing more photographs.')
+  const next = [...pending, { ...entry, createdAt: Date.now(), attempts: 0 }]
+  await persist(next)
 }
 
-/** NEVER REJECTS, for the same reason as recordPendingFinalize. */
+/** Cleanup is best effort; failure leaves the receipt available for recovery. */
 export async function clearPendingFinalize(stagingKey: string): Promise<void> {
   try {
     const pending = await load()
@@ -150,18 +149,6 @@ export async function clearPendingFinalize(stagingKey: string): Promise<void> {
 
 export async function countPendingFinalizes(): Promise<number> {
   return (await load()).length
-}
-
-/**
- * A failure is only worth retrying if it left the mint finalizable.
- *
- * 402 (fee not verifiable), 404 (the stage was reaped) and 409 (this payment
- * already bought a different upload) are the Worker's definitive answers —
- * re-POSTing them forever would never change the outcome. Everything else,
- * including the 503/504 that `resumable` covers, is worth another pass.
- */
-function isDefinitive(err: unknown): boolean {
-  return err instanceof RollApiError && (err.status === 402 || err.status === 404 || err.status === 409)
 }
 
 export interface DrainResult {
@@ -220,7 +207,7 @@ export async function drainPendingFinalizes(): Promise<DrainResult> {
       }
       finalized++
     } catch (err) {
-      if (isDefinitive(err)) {
+      if (await quickAttemptDidNotLand(entry)) {
         // Nothing more this app can do; keeping it would just re-POST forever.
         console.warn(`[quickFinalize] dropping ${entry.assetAddress}: ${err instanceof Error ? err.message : err}`)
         continue
@@ -261,12 +248,9 @@ export function startPendingFinalizePolling(): Promise<DrainResult> {
 }
 
 /**
- * Solana blockhash validity is ~150 slots (~60-90s at typical slot times).
- * Comfortably past that, a still-unresolved signature can never land — its
- * blockhash has expired, so a NEW mint attempt is safe again. Short of that,
- * it may yet land, so checkPriorAttempt refuses to let a fresh mint proceed.
+ * A blockhash expiring prevents future landing, but does not prove a prior
+ * transaction never landed. Keep the receipt until chain reads resolve it.
  */
-const RECOVERY_WINDOW_MS = 3 * 60 * 1000
 
 export type PriorAttemptCheck =
   | { action: 'none' }
@@ -294,11 +278,8 @@ export type PriorAttemptCheck =
  *   - no prior entry: `none`, a fresh mint is exactly as safe as it always was.
  *   - finalize succeeds: `resolved` — the prior attempt landed and is now
  *     finalizing; report it as the successful mint it always was, don't mint again.
- *   - finalize definitively rejects it, or the recovery window has passed
- *     with no resolution: `clear` — the prior attempt is confirmed dead (or
- *     someone else already resolved it), a fresh mint is safe.
- *   - finalize says "not visible yet" and we're still inside the recovery
- *     window: `wait` — it may still land; do not mint again yet.
+ *   - finalized chain reads prove failure/expired absence: `clear`.
+ *   - any unresolved outcome, regardless of age or HTTP error: `wait`.
  */
 export async function checkPriorAttempt(photoId: string): Promise<PriorAttemptCheck> {
   const pending = await load()
@@ -326,8 +307,8 @@ export async function checkPriorAttempt(photoId: string): Promise<PriorAttemptCh
           ? { imageHash: result.imageHash, width: result.width, height: result.height }
           : entry.history?.artifact,
     }
-  } catch (err) {
-    if (isDefinitive(err) || Date.now() - entry.createdAt >= RECOVERY_WINDOW_MS) {
+  } catch {
+    if (await quickAttemptDidNotLand(entry)) {
       await clearPendingFinalize(entry.stagingKey)
       return { action: 'clear' }
     }

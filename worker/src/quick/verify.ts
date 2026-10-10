@@ -129,9 +129,9 @@ export async function verifyQuickMintPayment(
     if (!req.skr.quoteExpiresAt) {
       return reject(`No $SKR quote was ever issued for ${req.assetAddress} — call POST /skr/quote before finalizing`)
     }
-    if (Date.parse(req.skr.quoteExpiresAt) < Date.now()) {
-      return reject(`The $SKR quote for ${req.assetAddress} expired at ${req.skr.quoteExpiresAt} — re-quote and retry`)
-    }
+    if (tx.blockTime === null) return retry('Payment block time is not available yet')
+    if (tx.blockTime * 1000 > Date.parse(req.skr.quoteExpiresAt))
+      return reject('The SKR payment landed after its original quote expired; preserve the receipt for support')
     const skrVerdict = checkSkrTransfer(tx, {
       treasurySkrAta: req.skr.treasurySkrAta,
       requiredAtomic: req.skr.requiredAtomic,

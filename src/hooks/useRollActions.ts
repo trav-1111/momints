@@ -7,6 +7,7 @@ import { isWorkerRollEnabled } from '../config/rollApi'
 import { deleteCapture } from '../services/imagePrivacy'
 import { discardRollVault } from '../services/rollVault'
 import { deleteRollCapability } from '../services/rollCapability'
+import { acknowledgeRollPurchase, getPendingRollPurchase } from '../services/rollCreation'
 
 /**
  * Discarding a roll touches the session store, the photo store / filesystem,
@@ -34,7 +35,10 @@ export function useRollActions() {
           const wallet = account?.address.toString()
           if (!wallet) throw new Error('Connect the roll wallet to close this roll on the backend.')
           await ensureWorkerRollAuthorization(roll.collectionAddress, wallet, signMessage)
-          await completeWorkerRoll(roll.collectionAddress)
+          await completeWorkerRoll(roll.collectionAddress, 'user-discard')
+          const pending = await getPendingRollPurchase(wallet)
+          if (pending?.collectionAddress === roll.collectionAddress && pending.signature)
+            await acknowledgeRollPurchase(wallet, pending.signature)
           await deleteRollCapability(roll.collectionAddress)
         } catch (err) {
           // Never block the local discard on a backend hiccup — the roll can

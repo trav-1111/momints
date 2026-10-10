@@ -94,6 +94,9 @@ export async function request<T>(path: string, init: RequestInit, timeoutMs: num
 // ─── Create a roll ────────────────────────────────────────────────────────────
 
 export interface CreateRollBody {
+  quoteId?: string
+  aspect?: 'full' | '1:1' | '4:3' | '16:9'
+  filmMode?: 'color' | 'bw'
   wallet: string
   size: 12 | 24
   /** Immutable recipe identity selected before loading the roll. */
@@ -122,10 +125,30 @@ export interface CreateRollResponse {
   metadataUri: string
   feeLamports: number
   signature: string
-  status: 'OPEN'
+  status: 'OPEN' | 'COMPLETE'
   mintedCount: number
   fundingWarning: string | null
   filmStockId: string
+}
+
+export interface RollPurchaseQuote {
+  quoteId: string
+  amount: number
+  expiresAt: string
+  treasurySkrAta?: string
+}
+
+export function prepareWorkerRoll(body: {
+  wallet: string
+  size: 12 | 24
+  payment: 'SOL' | 'SKR'
+  rollCapability: string
+}): Promise<RollPurchaseQuote> {
+  return request(
+    '/rolls/quote',
+    { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) },
+    READ_TIMEOUT_MS,
+  )
 }
 
 export function createWorkerRoll(body: CreateRollBody): Promise<CreateRollResponse> {
@@ -330,11 +353,14 @@ export interface CompleteRollResponse {
  * discarded roll — or one with a frame that never minted — needs this to avoid
  * blocking every future roll. Idempotent.
  */
-export async function completeWorkerRoll(collectionAddress: string): Promise<CompleteRollResponse> {
+export async function completeWorkerRoll(
+  collectionAddress: string,
+  reason: 'user-discard' | 'user-close-unused' = 'user-close-unused',
+): Promise<CompleteRollResponse> {
   const headers = await rollAuthorization(collectionAddress)
   return request<CompleteRollResponse>(
     `/rolls/${collectionAddress}/complete`,
-    { method: 'POST', headers },
+    { method: 'POST', headers: { ...headers, 'content-type': 'application/json' }, body: JSON.stringify({ reason }) },
     READ_TIMEOUT_MS,
   )
 }
@@ -355,6 +381,9 @@ export interface WorkerFrameSummary {
 }
 
 export interface WorkerRollDetail extends OpenRollSummary {
+  filmStockId?: string | null
+  filmMode?: 'color' | 'bw' | null
+  aspect?: 'full' | '1:1' | '4:3' | '16:9' | null
   wallet: string
   artist: string
   skrIdentity: string

@@ -223,22 +223,51 @@ function renderHealth(data) {
       cronBadge(data.crons.feeRecompute.lastAttemptOk, formatAgo(data.crons.feeRecompute.lastAttemptAt)),
     ]),
     el('div', { class: 'stat' }, [
-      el('span', { class: 'label', text: 'Monitor + sweep (6h)' }),
+      el('span', { class: 'label', text: 'Monitor attempt (6h)' }),
       cronBadge(
-        data.crons.treasuryMonitorAndSweep.level !== 'critical',
-        `${formatAgo(data.crons.treasuryMonitorAndSweep.lastRunAt)} · ${data.crons.treasuryMonitorAndSweep.level}`,
+        data.crons.jobs?.find((job) => job.job === 'treasury-monitor')?.last_attempt_ok === 1,
+        formatAgo(data.crons.treasuryMonitorAndSweep.lastRunAt),
       ),
     ]),
   ])
+  for (const job of data.crons.jobs ?? []) {
+    cronsCard.appendChild(
+      statRow(
+        job.job,
+        `${formatAgo(job.last_attempt_at)} · ${job.last_attempt_ok === 1 ? 'ok' : job.last_attempt_ok === 0 ? 'failed' : 'running'}`,
+        job.last_attempt_ok === 0 ? 'bad' : undefined,
+      ),
+    )
+  }
+  cronsCard.appendChild(
+    statRow(
+      'Discord alerts',
+      data.notifications?.discordWebhookConfigured ? 'Configured' : 'Not configured',
+      data.notifications?.discordWebhookConfigured ? undefined : 'warn',
+    ),
+  )
+  cronsCard.appendChild(
+    statRow(
+      'Recorded funding alert level',
+      `${data.crons.treasuryMonitorAndSweep.level} · ${formatAgo(data.notifications?.lastAlertStateAt)}`,
+    ),
+  )
 
   const stuckCard = el('div', { class: 'card' }, [
     el('h3', { text: 'Needs attention' }),
     statRow(
-      'Deferred quick mints',
+      'Deferred quick attempts',
       String(data.quickMints.deferredPendingRecovery),
       data.quickMints.deferredPendingRecovery > 0 ? 'warn' : undefined,
     ),
-    statRow('DEAD quick mints', String(data.quickMints.dead), data.quickMints.dead > 0 ? 'bad' : undefined),
+    statRow(
+      'Quick mints needing review',
+      String(data.quickRecovery?.review ?? data.quickMints.dead),
+      (data.quickRecovery?.review ?? data.quickMints.dead) > 0 ? 'bad' : undefined,
+    ),
+    statRow('Payment unverified', String(data.quickRecovery?.unknown ?? '—')),
+    statRow('Payment verified, upload pending', String(data.quickRecovery?.confirmed ?? '—')),
+    statRow('Verification rejected', String(data.quickRecovery?.rejected ?? '—')),
     statRow('Stuck roll handoffs', String(data.rolls.stuckHandoffs), data.rolls.stuckHandoffs > 0 ? 'warn' : undefined),
   ])
 

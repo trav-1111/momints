@@ -48,7 +48,13 @@ interface PersistedSession {
 
 interface SessionStore extends PersistedSession {
   selectQuickMode: () => void
-  startRoll: (name: string, size: RollSize, film: FilmSettings, aspect: AspectRatio) => boolean
+  startRoll: (
+    name: string,
+    size: RollSize,
+    film: FilmSettings,
+    aspect: AspectRatio,
+    collectionAddress?: string,
+  ) => boolean
   resumeRoll: () => void
   addFrameToRoll: (photoId: string) => void
   developRoll: () => void
@@ -178,7 +184,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => {
     },
 
     // One roll at a time — refuse a new roll while one is in progress.
-    startRoll: (name, size, film, aspect) => {
+    startRoll: (name, size, film, aspect, collectionAddress) => {
       if (get().activeRoll) return false
       const newRoll: ActiveRoll = {
         id: uuidv4(),
@@ -189,6 +195,7 @@ export const useSessionStore = create<SessionStore>()((set, get) => {
         frameIds: [],
         startedAt: Date.now(),
         developed: false,
+        collectionAddress,
       }
       commit({ hasSetMode: true, activeMode: 'roll', activeRoll: newRoll })
       return true

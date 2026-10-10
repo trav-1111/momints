@@ -11,8 +11,14 @@ export class ManualSink implements TreasurySink {
 
   async record(amountLamports: number, context: TreasuryRecordContext): Promise<void> {
     await this.db
-      .prepare('INSERT INTO treasury_entries (amount_lamports, context) VALUES (?, ?)')
-      .bind(amountLamports, JSON.stringify(context))
+      .prepare(
+        'INSERT INTO treasury_entries (amount_lamports, context, receipt_key) VALUES (?, ?, ?) ON CONFLICT(receipt_key) WHERE receipt_key IS NOT NULL DO NOTHING',
+      )
+      .bind(
+        amountLamports,
+        JSON.stringify(context),
+        context.kind === 'roll_fee' && context.feeSignature ? `roll:${context.feeSignature}` : null,
+      )
       .run()
   }
 

@@ -1,6 +1,6 @@
-import { useState, useCallback, useEffect } from 'react'
-import { View, Text, Pressable, TextInput, ScrollView, ActivityIndicator, Alert } from 'react-native'
-import { useRouter } from 'expo-router'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import { View, Text, Pressable, TextInput, ScrollView, ActivityIndicator, Alert, AppState } from 'react-native'
+import { useRouter, useFocusEffect } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useSessionStore } from '../store/session'
 import type { AppMode, AspectRatio } from '../store/session'
@@ -25,6 +25,12 @@ import { IconCamera, IconFilm } from '../components/icons'
 import { FilmStockPicker } from '../components/FilmStockPicker'
 import { DEFAULT_COLOR_FILM_ID, ensureFilmStockRecipe, type FilmStockCatalogueItem } from '../services/filmstocks'
 import { quickEligible, useFilmStockStore } from '../store/filmstocks'
+import {
+  acknowledgeRollPurchase,
+  cancelUnpaidRollPurchase,
+  getPendingRollPurchase,
+  type RollPurchase,
+} from '../services/rollCreation'
 
 const CREATE_PHASE_LABEL: Record<CreateRollPhase, string> = {
   cover: 'Rendering cover…',
@@ -99,7 +105,7 @@ export default function ModeSelectScreen() {
   const { account, connect, signMessage } = useMobileWallet()
   const walletAddress = account?.address?.toString() ?? null
   const { domain } = useWalletDomain(walletAddress)
-  const { createRoll, phase, error: createError, isCreating } = useCreateRoll()
+  const { createRoll, recoverRoll, phase, error: createError, isCreating } = useCreateRoll()
   const { mintRoll } = useMintRoll()
   const { discardRoll } = useRollActions()
 
@@ -147,7 +153,7 @@ export default function ModeSelectScreen() {
     if (!activeRoll) return
     Alert.alert(
       'Discard roll',
-      `Delete "${activeRoll.name}" and its ${activeRoll.frameIds.length} frame(s) without minting?`,
+      `Delete "${activeRoll.name}" and its ${activeRoll.frameIds.length} frame(s) without minting? This permanently forfeits the paid roll's remaining unused exposures.`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -166,25 +172,42 @@ export default function ModeSelectScreen() {
   // or the app's session was cleared. It silently blocks every new roll, so
   // surface it with a way out.
   const [strandedRoll, setStrandedRoll] = useState<OpenRollSummary | null>(null)
+  const [pendingPurchase, setPendingPurchase] = useState<RollPurchase | null>(null)
   const [isClosingStranded, setIsClosingStranded] = useState(false)
+  const currentWallet = useRef(walletAddress)
+  currentWallet.current = walletAddress
 
   const refreshStrandedRoll = useCallback(async () => {
     if (!isWorkerRollEnabled() || !walletAddress) {
       setStrandedRoll(null)
+      setPendingPurchase(null)
       return
     }
     try {
+      const purchase = await getPendingRollPurchase(walletAddress)
+      if (currentWallet.current !== walletAddress) return
+      setPendingPurchase(purchase)
       const open = await getOpenWorkerRoll(walletAddress)
+      if (currentWallet.current !== walletAddress) return
       setStrandedRoll(open && open.collectionAddress !== activeRoll?.collectionAddress ? open : null)
     } catch {
-      // Offline or backend down — nothing actionable to show.
-      setStrandedRoll(null)
+      // Offline does not erase an already-discovered paid roll or receipt.
     }
   }, [walletAddress, activeRoll?.collectionAddress])
 
+  useFocusEffect(
+    useCallback(() => {
+      void refreshStrandedRoll()
+      const listener = AppState.addEventListener('change', (state) => {
+        if (state === 'active') void refreshStrandedRoll()
+      })
+      return () => listener.remove()
+    }, [refreshStrandedRoll]),
+  )
   useEffect(() => {
-    refreshStrandedRoll()
-  }, [refreshStrandedRoll])
+    setStrandedRoll(null)
+    setPendingPurchase(null)
+  }, [walletAddress])
 
   // Roll fees are cost-plus and recompute every 3h (worker/src/fees/compute.ts)
   // — fetched here so what's shown before paying tracks the same number
@@ -249,20 +272,49 @@ export default function ModeSelectScreen() {
     }
   }, [payWithSkr, walletAddress, rollSize])
 
-  const handleFinishStranded = useCallback(async () => {
+  const closeStranded = useCallback(async () => {
     if (!strandedRoll || isClosingStranded) return
     setIsClosingStranded(true)
     try {
       if (!walletAddress) throw new Error('Connect the roll wallet first.')
       await ensureWorkerRollAuthorization(strandedRoll.collectionAddress, walletAddress, signMessage)
       await completeWorkerRoll(strandedRoll.collectionAddress)
+      const pending = await getPendingRollPurchase(walletAddress)
+      if (pending?.collectionAddress === strandedRoll.collectionAddress && pending.signature)
+        await acknowledgeRollPurchase(walletAddress, pending.signature)
       setStrandedRoll(null)
+      await refreshStrandedRoll()
     } catch (err) {
       Alert.alert('Could not finish roll', err instanceof Error ? err.message : String(err))
     } finally {
       setIsClosingStranded(false)
     }
-  }, [strandedRoll, isClosingStranded, walletAddress, signMessage])
+  }, [strandedRoll, isClosingStranded, walletAddress, signMessage, refreshStrandedRoll])
+
+  const handleFinishStranded = useCallback(() => {
+    if (!strandedRoll) return
+    Alert.alert(
+      'Close this paid roll?',
+      `Closing ${strandedRoll.name} permanently forfeits its ${strandedRoll.size - strandedRoll.mintedCount} unused exposures. Existing minted frames remain. Recover the roll to keep shooting instead.`,
+      [
+        { text: 'Keep roll', style: 'cancel' },
+        {
+          text: 'Close and forfeit',
+          style: 'destructive',
+          onPress: () => {
+            void closeStranded()
+          },
+        },
+      ],
+    )
+  }, [strandedRoll, closeStranded])
+
+  const handleRecover = useCallback(async () => {
+    if (isCreating || isClosingStranded) return
+    const restored = await recoverRoll(strandedRoll?.collectionAddress)
+    await refreshStrandedRoll()
+    if (restored) router.replace('/camera')
+  }, [isCreating, isClosingStranded, recoverRoll, strandedRoll, refreshStrandedRoll, router])
 
   const handleLoadCamera = useCallback(async () => {
     if (selectedMode === 'quick') {
@@ -305,6 +357,7 @@ export default function ModeSelectScreen() {
       aspect,
       payment: payWithSkr && skrQuoteAmount !== null ? 'SKR' : 'SOL',
     })
+    await refreshStrandedRoll()
     if (created) router.replace('/camera')
   }, [
     selectedMode,
@@ -320,6 +373,7 @@ export default function ModeSelectScreen() {
     payWithSkr,
     skrQuoteAmount,
     selectQuickMode,
+    refreshStrandedRoll,
     router,
   ])
 
@@ -397,16 +451,60 @@ export default function ModeSelectScreen() {
             </Text>
           </Pressable>
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 6 }}>
-            <Pressable
-              onPress={handleDiscardRoll}
-              hitSlop={8}
-              style={{ paddingVertical: 4, paddingHorizontal: 10 }}
-            >
-              <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.redSoft }}>
-                Discard roll
-              </Text>
+            <Pressable onPress={handleDiscardRoll} hitSlop={8} style={{ paddingVertical: 4, paddingHorizontal: 10 }}>
+              <Text style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.redSoft }}>Discard roll</Text>
             </Pressable>
           </View>
+        </View>
+      )}
+
+      {pendingPurchase && !hasRoll && (
+        <View style={{ padding: 14, borderColor: colors.yellow, borderWidth: 1, borderRadius: 12, marginBottom: 16 }}>
+          <Text style={{ color: colors.text, fontFamily: fonts.sansSemiBold }}>Saved roll purchase</Text>
+          <Text selectable style={{ color: colors.textSecondary, marginTop: 8 }}>
+            {pendingPurchase.signature
+              ? `Payment receipt: ${pendingPurchase.signature}. Recover this purchase without paying again.`
+              : pendingPurchase.state === 'prepared'
+                ? 'Your original roll settings are saved. Continuing an unpaid purchase will ask your wallet to approve its payment.'
+                : 'The wallet request was interrupted before a receipt was saved. Resolve that request before another payment.'}
+          </Text>
+          <Pressable onPress={handleRecover} disabled={isCreating} style={{ paddingVertical: 12 }}>
+            <Text style={{ color: colors.accent, fontFamily: fonts.monoBold }}>
+              {isCreating
+                ? 'CHECKING…'
+                : pendingPurchase.state === 'prepared'
+                  ? 'CONTINUE UNPAID PURCHASE'
+                  : 'RECOVER PAYMENT'}
+            </Text>
+          </Pressable>
+          {pendingPurchase.state === 'prepared' && (
+            <Pressable
+              disabled={isCreating}
+              onPress={() => {
+                if (!walletAddress) return
+                Alert.alert(
+                  'Cancel unpaid purchase?',
+                  'No roll fee has been sent for this saved purchase. Cancel it to choose different settings or payment currency.',
+                  [
+                    { text: 'Keep purchase', style: 'cancel' },
+                    {
+                      text: 'Cancel purchase',
+                      onPress: () => {
+                        void cancelUnpaidRollPurchase(walletAddress)
+                          .then(refreshStrandedRoll)
+                          .catch((err) =>
+                            Alert.alert('Could not cancel', err instanceof Error ? err.message : String(err)),
+                          )
+                      },
+                    },
+                  ],
+                )
+              }}
+              style={{ paddingVertical: 10 }}
+            >
+              <Text style={{ color: colors.textSecondary, fontFamily: fonts.mono }}>CANCEL UNPAID PURCHASE</Text>
+            </Pressable>
+          )}
         </View>
       )}
 
@@ -449,8 +547,11 @@ export default function ModeSelectScreen() {
             </View>
           </View>
           <Text style={{ fontFamily: fonts.sans, fontSize: 11.5, color: colors.textSecondary, marginTop: 10 }}>
-            This roll is still open and blocks new ones. Finishing it keeps every frame already minted.
+            This paid roll is still open. Recover it to keep its unused exposures. Closing it permanently forfeits them.
           </Text>
+          <Pressable onPress={handleRecover} disabled={isCreating || isClosingStranded} style={{ paddingVertical: 12 }}>
+            <Text style={{ color: colors.accent, fontFamily: fonts.monoBold }}>RECOVER ROLL</Text>
+          </Pressable>
           <Pressable
             onPress={handleFinishStranded}
             disabled={isClosingStranded}
@@ -472,7 +573,7 @@ export default function ModeSelectScreen() {
                 color: isClosingStranded ? colors.textMuted : colors.bg,
               }}
             >
-              {isClosingStranded ? 'FINISHING…' : 'FINISH ROLL'}
+              {isClosingStranded ? 'CLOSING…' : 'CLOSE ROLL…'}
             </Text>
           </Pressable>
         </View>

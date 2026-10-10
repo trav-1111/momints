@@ -76,6 +76,8 @@ export async function stageRollCapability(wallet: string, capability: string): P
 }
 
 export async function bindStagedRollCapability(wallet: string, collectionAddress: string): Promise<boolean> {
+  // Public open-roll discovery must never replace a known collection secret.
+  if (await getRollCapability(collectionAddress)) return false
   const pendingKey = keyForWallet(wallet)
   const capability = await SecureStore.getItemAsync(pendingKey, options)
   if (capability === null) return false

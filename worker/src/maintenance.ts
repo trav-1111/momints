@@ -20,6 +20,7 @@ const BLOCKED_HTTP_ROUTE_KINDS = new Set([
   'ops-test-alert',
   'ops-sweep-quick-mints',
   'create-roll',
+  'quote-roll',
   'mint-frame',
   'authorize-roll',
   'complete-roll',

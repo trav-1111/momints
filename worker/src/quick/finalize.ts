@@ -8,6 +8,7 @@ import type { TreasurySink } from '../providers/types'
 import { deriveAta } from '../skr/ata'
 import { SKR_MINT_ADDRESS } from '../skr/config'
 import { verifyQuickMintPayment } from './verify'
+import { preserveQuickAttempt } from './preserve'
 
 /**
  * Fallback for quick_mints rows STAGED before migrations/0007_fee_cache.sql
@@ -26,6 +27,7 @@ export interface FinalizeQuickMintRequest {
 
 export interface FinalizeQuickMintDeps {
   db: RollDb
+  bucket: R2Bucket
   queue: Queue<QuickFinalizeMessage>
   treasury: TreasurySink
   rpcUrl: string
@@ -122,6 +124,11 @@ export async function finalizeQuickMint(
   // discoverable server-side. See recordFinalizeAttempt's doc: this is what a
   // real incident was missing — a deferral used to leave signature/asset_address
   // NULL forever, recoverable only if the calling client itself came back. ----
+  if (
+    (row.signature && row.signature !== req.signature) ||
+    (row.asset_address && row.asset_address !== req.assetAddress)
+  )
+    throw new HttpError(409, 'This image already has a different signed attempt. Recover its original receipt.')
   try {
     await db.recordFinalizeAttempt(row.id, req.assetAddress, req.signature)
   } catch (err) {
@@ -159,6 +166,11 @@ export async function finalizeQuickMint(
   })
 
   if (!verdict.ok) {
+    await db.recordQuickVerification(
+      row.id,
+      verdict.retryable ? 'UNKNOWN' : 'REJECTED',
+      verdict.retryable ? 'RPC_PENDING' : 'VERIFICATION_REJECTED',
+    )
     if (verdict.retryable) {
       // Deliberately leaves the stage intact: the mint may well be valid and
       // simply not visible yet, and tearing it down would strand a paid mint.
@@ -194,6 +206,11 @@ export async function finalizeQuickMint(
     })
     throw new HttpError(402, `Quick mint refused: ${verdict.reason}`)
   }
+
+  await db.recordQuickVerification(row.id, 'CONFIRMED', null)
+  // Only a verified payment may buy retention outside the public staging
+  // quota/lifecycle. A forged signature must not create unbounded R2 storage.
+  await preserveQuickAttempt(db, deps.bucket, row)
 
   // ---- Claim: the single transition from "free" to "we owe an upload". ----
   let claimed: boolean

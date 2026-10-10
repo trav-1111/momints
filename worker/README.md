@@ -4,6 +4,8 @@
 
 This is an operator runbook for the existing mainnet service, not permission to use its resources. Reviewers should use [independent setup](../docs/REVIEWER-SETUP.md) and `.dev.vars.example` with their own credentials. The checked-in default Wrangler config binds Momints production D1, R2 and rate-limit namespaces; deployment, remote migration, activation, recovery and secret commands below are **owner/operator-only**. Never run the deployed synthetic staging suite against production. Ordinary local tests, catalogue validation, isolated local migration-upgrade tests and `bundle-size` dry-run are non-spending; they do not prove paid mint readiness.
 
+Paid-roll recovery requires migrations 0011–0012 before this Worker and its new client are activated. Read [the implementation and rollout](../docs/ROLL-PAYMENT-RECOVERY-IMPLEMENTATION-2026-10-11.md), including the R2 `quick-recovery/` lifecycle check and the limit on rolling back creation checkpoints.
+
 Filmstock catalogue, immutable recipe delivery, and stateless developed-roll unlock reconstruction are documented in [`../docs/FILMSTOCKS.md`](../docs/FILMSTOCKS.md). The filmstock subsystem adds no D1 user or entitlement records.
 
 Filmstock operators should start from `filmstock-package-template/`. `npm run publish:filmstock` validates and compiles a 33-point sRGB `.cube`; `npm run schedule:filmstock` changes a returning stock's availability; and `npm run deploy` performs immutable R2 preflight, a maintenance-mode Worker deployment, and production asset smoke tests. See the linked contract before using the lower-level `deploy:worker` command.
@@ -628,8 +630,10 @@ curl -H "Authorization: Bearer $OPS_AUTH_TOKEN" "$WORKER_URL/ops/status"
 
 `/ops/status` reports the current level, roll headroom, balance, the
 thresholds, and `wouldPost` — what the next cron run would do. Cron activity
-shows up in `wrangler tail` as `[ops] cron …`, and `ops_alert_state.updated_at`
-is bumped on every run, so a stale timestamp means the cron itself stopped.
+shows up in `wrangler tail` as `[ops] cron …`. The dashboard reads independent
+`job_heartbeats` attempt/success timestamps for each scheduled job.
+`ops_alert_state.updated_at` describes delivered alert hysteresis; it can stay
+old when Discord is missing or notification delivery fails, even while cron runs.
 
 > Both routes require `Authorization: Bearer <OPS_AUTH_TOKEN>` — they read
 > funding-wallet internals and `/ops/test-alert` can trigger a real Discord

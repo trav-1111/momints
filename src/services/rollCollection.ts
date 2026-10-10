@@ -1,6 +1,9 @@
 import { publicKey, transactionBuilder } from '@metaplex-foundation/umi'
 import { toWeb3JsTransaction } from '@metaplex-foundation/umi-web3js-adapters'
 import { getTransactionDecoder, type Transaction } from '@solana/transactions'
+import { getSignatureFromTransaction } from '@solana/kit'
+import type { SignedRollPayment } from './rollCreation'
+import type { RollPurchaseQuote } from './rollApi'
 import {
   createMintUmi,
   deriveOwnerSkrAta,
@@ -17,21 +20,27 @@ import { SKR_DECIMALS, SKR_MINT_ADDRESS } from '../config/skr'
 
 /**
  * Pay the prepaid roll fee on its own. The Worker creates the collection
- * separately once this lands — its key is the on-chain authority, so the fee
- * can't ride along in that transaction.
+ * separately once this lands. The shooter owns the collection; the Worker
+ * receives a scoped minting delegate.
  *
  * The fee moves BEFORE the roll exists. Callers must surface the returned
  * signature if roll creation then fails, so a charge without a roll is
  * traceable and refundable.
  *
- * The fee is fetched from the Worker HERE, at the moment of payment — not
- * read from a value the mode-select screen captured on mount. Roll fees are
- * cost-plus and recompute every 3h (worker/src/fees/compute.ts); the Worker's
- * own verify.ts checks this exact same live cache when the transaction lands
- * moments later, so paying anything else risks a rejection.
+ * New callers use an immutable server-issued purchase quote, saved before
+ * signing. Legacy callers without a quote still fetch the live fee here.
  */
+type RollPaymentParams = {
+  walletAddress: string
+  size: PrepaidRollSize
+  rpc?: string
+  onPhase?: MintPhaseCallback
+  quote?: RollPurchaseQuote
+  onSigned?: (receipt: SignedRollPayment) => Promise<void>
+}
+
 export async function payRollFee(
-  params: { walletAddress: string; size: PrepaidRollSize; rpc?: string; onPhase?: MintPhaseCallback },
+  params: RollPaymentParams,
   deps: MintNFTDeps,
 ): Promise<{ signature: string; feeLamports: number }> {
   const { walletAddress, size, rpc, onPhase } = params
@@ -40,8 +49,8 @@ export async function payRollFee(
   if (!ROLL_TREASURY_ADDRESS) {
     throw new Error('Roll treasury not configured — set EXPO_PUBLIC_ROLL_TREASURY in .env and restart Expo')
   }
-  const fees = await getWorkerFees()
-  const feeLamports = size === 12 ? fees.rollFee12Lamports : fees.rollFee24Lamports
+  const fees = params.quote ? null : await getWorkerFees()
+  const feeLamports = params.quote?.amount ?? (size === 12 ? fees!.rollFee12Lamports : fees!.rollFee24Lamports)
 
   const { umi, walletPk } = createMintUmi(walletAddress, rpc)
   const blockhash = await umi.rpc.getLatestBlockhash()
@@ -55,6 +64,8 @@ export async function payRollFee(
   const kitTx = getTransactionDecoder().decode(web3Tx.serialize())
 
   onPhase?.('signing')
+  if (params.quote && Date.parse(params.quote.expiresAt) <= Date.now())
+    throw new Error('Roll quote expired before signing. No payment was sent; retry to refresh it.')
   let signedTx: Transaction
   try {
     signedTx = await signTransaction(kitTx)
@@ -63,6 +74,13 @@ export async function payRollFee(
     throw new Error(`Roll payment: wallet sign failed: ${base}`, { cause: e instanceof Error ? e : undefined })
   }
 
+  if (params.quote && Date.parse(params.quote.expiresAt) <= Date.now())
+    throw new Error('Roll quote expired during wallet approval. No payment was sent; retry to refresh it.')
+  await params.onSigned?.({
+    signature: getSignatureFromTransaction(signedTx),
+    blockhash: blockhash.blockhash,
+    lastValidBlockHeight: String(blockhash.lastValidBlockHeight),
+  })
   onPhase?.('confirming')
   const signature = await sendAndConfirm(client, signedTx)
   return { signature, feeLamports }
@@ -83,13 +101,19 @@ export class SkrQuoteUnavailableError extends Error {}
  * transaction is always seconds old, by construction.
  */
 export async function paySkrRollFee(
-  params: { walletAddress: string; size: PrepaidRollSize; rpc?: string; onPhase?: MintPhaseCallback },
+  params: RollPaymentParams,
   deps: MintNFTDeps,
 ): Promise<{ signature: string; skrAmount: number }> {
   const { walletAddress, size, rpc, onPhase } = params
   const { client, signTransaction } = deps
 
-  const quote = await quoteSkrFee({ context: 'roll', wallet: walletAddress, size })
+  const quote = params.quote
+    ? {
+        skrAmount: params.quote.amount,
+        treasurySkrAta: params.quote.treasurySkrAta!,
+        expiresAt: params.quote.expiresAt,
+      }
+    : await quoteSkrFee({ context: 'roll', wallet: walletAddress, size })
   if (isSkrQuoteUnavailable(quote)) {
     throw new SkrQuoteUnavailableError(quote.reason)
   }
@@ -115,6 +139,8 @@ export async function paySkrRollFee(
   const kitTx = getTransactionDecoder().decode(web3Tx.serialize())
 
   onPhase?.('signing')
+  if (params.quote && Date.parse(params.quote.expiresAt) <= Date.now())
+    throw new Error('Roll quote expired before signing. No payment was sent; retry to refresh it.')
   let signedTx: Transaction
   try {
     signedTx = await signTransaction(kitTx)
@@ -123,6 +149,13 @@ export async function paySkrRollFee(
     throw new Error(`Roll payment: wallet sign failed: ${base}`, { cause: e instanceof Error ? e : undefined })
   }
 
+  if (params.quote && Date.parse(params.quote.expiresAt) <= Date.now())
+    throw new Error('Roll quote expired during wallet approval. No payment was sent; retry to refresh it.')
+  await params.onSigned?.({
+    signature: getSignatureFromTransaction(signedTx),
+    blockhash: blockhash.blockhash,
+    lastValidBlockHeight: String(blockhash.lastValidBlockHeight),
+  })
   onPhase?.('confirming')
   const signature = await sendAndConfirm(client, signedTx)
   return { signature, skrAmount: quote.skrAmount }

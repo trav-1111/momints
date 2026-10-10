@@ -4,6 +4,28 @@
 
 ---
 
+## Session 2026-10-11: Paid Roll Recovery Implementation and QA Update
+
+* **Agent / Author:** Codex / Trav
+* **Branch / Scope:** `codex/submission-v2-candidate`; owner approved applying the incident fix and updating the connected Seeker. Client journal, Worker receipt checkpoints, additive migrations, quick evidence/retention, closure audits and independent job/dashboard health implemented. Existing incident remedies remain separate; no production deployment or recovery spending yet.
+* **Verified Truth:** New purchases persist original terms/capability and signed receipt before broadcast. Replay authenticates the same receipt, resumes one deterministic collection, and never silently reopens COMPLETE rolls. Empty OPEN rolls restore original settings; existing local frames survive and remote pending indices block unsafe frame reuse. Unknown quick attempts retain receipts and receive review state instead of age-only death; verified-paid image bytes copy outside staging expiry before queueing.
+* **Verification:** App and Worker TypeScript pass. New recovery regressions 33/33; fast suite 97/104 and full app suite 168/175, with the same seven baseline camera/privacy failures. Existing Worker tests 39/39. Isolated Wrangler D1 upgrade through 0012 passes. Worker dry bundle 4902.11 KiB / gzip 1266.26 KiB. Changed-file lint has zero errors; two existing array-style warnings remain. No paid hardware test performed.
+* **Rollout Preflight:** Read-only R2 check confirms object expiration is scoped to `quick-staging/`; `quick-recovery/` is excluded without changing lifecycle rules. Active Worker remains `95ac9894-4830-4c64-8e3d-d8f86ad17338`. Existing filmstock validation fails for an Amber runtime LUT immutable-lock mismatch; this fix does not change filmstock assets. Deployment must review that guard and apply migrations 0011–0012 before activation. Connected Seeker `SM02G406193022` currently has V2 QA versionCode 1.
+* **Open / Next:** Build the frozen commit with existing V2 QA signing identity, update in place preserving app data, and record artifact/launch evidence. See [implementation and concrete rollout](../ROLL-PAYMENT-RECOVERY-IMPLEMENTATION-2026-10-11.md). Tester’s already-revoked 0/12 roll still requires an explicitly authorized remedy; no database-only reopen. No push or paid transaction is part of this local implementation.
+
+---
+
+## Session 2026-10-11: Paid Roll Recovery Investigation and Fix Plan
+
+- **Agent / Author:** Codex / Trav
+- **Branch / Scope:** `codex/submission-v2-candidate` at `b4d501a`; investigation and planning only. Owner identifies the tester's build as this branch; exact APK provenance was not provided. No application/Worker implementation, production record, signing, spending, notification, deployment, commit, or push changes.
+- **Verified Truth:** Tester paid 0.084038086 SOL at 00:03:54 Brisbane time; Martha collection `BmDiPataB7L7UPJZNj1dsL1HkNsyyA1KNfg6vH6qhSE9` created at 00:04:00. D1 currently COMPLETE with 0/12 frames; delegate handoff landed at 00:06:00. Owner reports no shooting allowance/open-roll UI after payment. The closure initiator and original response failure remain unconfirmed; do not attribute closure to the tester. Current null open-roll response is consistent with COMPLETE, not proof of a SQL query defect.
+- **Dashboard Correlation:** Three of six deferred quick attempts belong to tester; three plus the DEAD row belong to another wallet. All seven have null signature-history results on configured and independent public mainnet RPCs, no direct asset accounts, and no upload checkpoints. Not seven confirmed paid mints. Stuck July handoff belongs to treasury wallet; collection absent on current mainnet, provenance unresolved. Both cron schedules/production consumers are enabled. Missing Discord configuration plus a critical-to-low funding transition can leave alert-state timestamp stale; it is not a reliable cron heartbeat.
+- **Feedback / Verification:** Ignored `.expo/roll-investigation-2026-10-11/repro-paid-roll.cjs` runs real code with mocked native/payment/network boundaries; five deliberately red tests reproduce receipt masking, second-payment/capability replacement on null-open retry, used-receipt 409, false heartbeat, and quick retry clearing unresolved attempts after three minutes on transient 503. Existing `agent:check` remains 64/71 with the same seven camera/privacy baseline failures. Read-only Cloudflare incident telemetry query returned HTTP 403/code 10000; no historical request trace obtained.
+- **Plan / Next:** Read [the investigation and phased fix plan](../ROLL-PAYMENT-RECOVERY-INVESTIGATION-2026-10-11.md) before implementing roll recovery or triaging these dashboard records. Priorities: durable payment operation before broadcast; authenticated idempotent server replay/checkpoints; restore OPEN rolls to shooting; separate close from recovery; retain unresolved quick receipts; independent job/alert status. Tester's current revoked delegate means a database-only reopen is insufficient. Proposed refund/credit/delegate restoration and production recovery remain unexecuted. Raw private snapshots/Worker source stay ignored.
+
+---
+
 ## Session 2026-10-10: Original V2 History Recovery
 
 * **Agent / Author:** Codex / Trav

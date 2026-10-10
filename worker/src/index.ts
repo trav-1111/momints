@@ -45,6 +45,9 @@ import { finalizeQuickMint, type FinalizeQuickMintRequest } from './quick/finali
 import { releaseQuickStage, stageQuickMint } from './quick/stage'
 import { redriveDeferredFinalizes, sweepQuickMints } from './quick/sweep'
 import { createRoll, type CreateRollRequest } from './rolls/create'
+import { RollCreationStore } from './rolls/creationStore'
+import { prepareRollPurchase } from './rolls/purchaseQuote'
+import { JobHeartbeatStore, withJobHeartbeat } from './ops/heartbeat'
 import { completeAuthorizedRoll } from './rolls/complete'
 import { isRollSize } from './rolls/config'
 import { mintFrame, summarizeFrames } from './rolls/frames'
@@ -119,6 +122,8 @@ See README.md for request shapes and the operator runbook.
  */
 class WorkerContext {
   readonly db: RollDb
+  readonly creations: RollCreationStore
+  readonly jobs: JobHeartbeatStore
   readonly treasury: ManualSink
   readonly opsAlerts: OpsAlertStore
   /** Cost-plus fee cache (fees/cache.ts) — a plain D1 read, always cheap; never triggers a live recompute. */
@@ -127,6 +132,8 @@ class WorkerContext {
 
   constructor(readonly env: ValidatedEnv) {
     this.db = new RollDb(env.DB)
+    this.creations = new RollCreationStore(env.DB)
+    this.jobs = new JobHeartbeatStore(env.DB)
     this.treasury = new ManualSink(env.DB)
     this.opsAlerts = new OpsAlertStore(env.DB)
     this.feeCache = new FeeCache(env.DB)
@@ -154,6 +161,9 @@ class WorkerContext {
 }
 
 async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<Response> {
+  const limit = await ctx.env.ROLL_MUTATION_LIMITER.limit({ key: `roll-purchase:${connectingIp(request)}` })
+  if (!limit.success)
+    throw new HttpError(429, 'Roll purchase rate limit exceeded. Retry the same saved purchase shortly.')
   let body: CreateRollRequest
   try {
     body = (await request.json()) as CreateRollRequest
@@ -171,9 +181,10 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
       'QUICK_TREASURY_ADDRESS is not set. Put the treasury address in wrangler.toml [vars] — rolls cannot verify fee payment without it.',
     )
   }
-  const result = await createRoll(
+  const result = await (new URL(request.url).pathname === '/rolls/quote' ? prepareRollPurchase : createRoll)(
     {
       db: ctx.db,
+      creations: ctx.creations,
       rpcUrl: ctx.env.SOLANA_RPC_URL,
       treasury: ctx.treasury,
       treasuryAddress: ctx.env.QUICK_TREASURY_ADDRESS,
@@ -181,9 +192,9 @@ async function handleCreateRoll(ctx: WorkerContext, request: Request): Promise<R
       getUmi: () => createWorkerUmi(ctx.env),
       getSeams: () => ctx.storageSeams(),
     },
-    body,
+    body as CreateRollRequest & { payment: 'SOL' | 'SKR' },
   )
-  return json(result, 201)
+  return json(result, 'replayed' in result && result.replayed ? 200 : 201)
 }
 
 async function handleMintFrame(ctx: WorkerContext, request: Request, collectionAddress: string): Promise<Response> {
@@ -258,6 +269,9 @@ async function handleGetRoll(ctx: WorkerContext, request: Request, collectionAdd
     status: roll.status,
     developedOnChain: roll.minted_count === roll.size && roll.handoff_signature !== null,
     createdAt: roll.created_at,
+    filmStockId: roll.film_stock_id ?? null,
+    filmMode: roll.film_mode ?? null,
+    aspect: roll.aspect ?? null,
     frames: summarizeFrames(frames),
   })
 }
@@ -315,9 +329,22 @@ async function handleCompleteRoll(ctx: WorkerContext, request: Request, collecti
   const roll = await authorizeRollRequest(ctx.db, request, collectionAddress)
   const limit = await ctx.env.ROLL_MUTATION_LIMITER.limit({ key: collectionAddress })
   if (!limit.success) throw new HttpError(429, 'Roll completion rate limit exceeded')
+  const text = await request.text()
+  let reason = 'legacy-client-close'
+  if (text) {
+    let body: { reason?: unknown }
+    try {
+      body = JSON.parse(text) as typeof body
+    } catch {
+      throw new HttpError(400, 'Roll close reason must be JSON')
+    }
+    if (!body || (body.reason !== 'user-discard' && body.reason !== 'user-close-unused'))
+      throw new HttpError(400, 'Invalid roll close reason')
+    reason = body.reason
+  }
   const result = await completeAuthorizedRoll(
     {
-      closeRoll: (address) => ctx.db.closeRoll(address),
+      closeRoll: (address) => ctx.db.closeRoll(address, reason),
       // Non-fatal and safe to call unconditionally: a no-op if already handed
       // off, and another attempt if an earlier response was lost mid-handoff.
       retryHandoff: (address) =>
@@ -398,6 +425,7 @@ async function handleFinalizeQuickMint(ctx: WorkerContext, request: Request): Pr
   const result = await finalizeQuickMint(
     {
       db: ctx.db,
+      bucket: ctx.env.QUICK_STAGING,
       queue: ctx.env.QUICK_FINALIZE,
       treasury: ctx.treasury,
       rpcUrl: ctx.env.SOLANA_RPC_URL,
@@ -717,6 +745,7 @@ async function handleOpsSweepQuickMints(ctx: WorkerContext): Promise<Response> {
   const env = validateQuickEnv(ctx.env)
   const result = await redriveDeferredFinalizes({
     db: ctx.db,
+    bucket: ctx.env.QUICK_STAGING,
     queue: ctx.env.QUICK_FINALIZE,
     treasury: ctx.treasury,
     rpcUrl: ctx.env.SOLANA_RPC_URL,
@@ -750,7 +779,13 @@ async function handleOpsDashboardWallets(ctx: WorkerContext): Promise<Response> 
 }
 
 async function handleOpsDashboardHealth(ctx: WorkerContext): Promise<Response> {
-  const result = await getHealthSnapshot({ db: ctx.db, feeCache: ctx.feeCache, opsAlerts: ctx.opsAlerts })
+  const result = await getHealthSnapshot({
+    db: ctx.db,
+    feeCache: ctx.feeCache,
+    opsAlerts: ctx.opsAlerts,
+    jobs: ctx.jobs,
+    discordWebhookConfigured: !!ctx.env.DISCORD_WEBHOOK_URL,
+  })
   return json(result)
 }
 
@@ -773,6 +808,7 @@ type Route =
   | { kind: 'ops-recompute-fees' }
   | { kind: 'ops-sweep-quick-mints' }
   | { kind: 'create-roll' }
+  | { kind: 'quote-roll' }
   | { kind: 'open-roll' }
   | { kind: 'get-roll'; collection: string }
   | { kind: 'mint-frame'; collection: string }
@@ -802,6 +838,7 @@ function matchRoute(method: string, path: string): Route | null {
   if (method === 'GET' && path === '/ops/recompute-fees') return { kind: 'ops-recompute-fees' }
   if (method === 'GET' && path === '/ops/sweep-quick-mints') return { kind: 'ops-sweep-quick-mints' }
   if (method === 'POST' && path === '/rolls') return { kind: 'create-roll' }
+  if (method === 'POST' && path === '/rolls/quote') return { kind: 'quote-roll' }
   if (method === 'GET' && path === '/rolls/open') return { kind: 'open-roll' }
   if (method === 'POST' && path === '/quick/stage') return { kind: 'stage-quick' }
   if (method === 'POST' && path === '/quick/finalize') return { kind: 'finalize-quick' }
@@ -954,6 +991,7 @@ export default {
             requireOpsAuth(ctx, request)
             return await handleOpsSweepQuickMints(ctx)
           case 'create-roll':
+          case 'quote-roll':
             return await handleCreateRoll(ctx, request)
           case 'open-roll':
             return await handleGetOpenRoll(ctx, url)
@@ -1114,8 +1152,12 @@ export default {
     // cron runs.
     if (controller.cron === FEE_RECOMPUTE_CRON) {
       try {
-        const turbo = buildTurboClient(ctx.env)
-        const result = await runFeeRecompute({ env: ctx.env, cache: ctx.feeCache, turbo })
+        const result = await withJobHeartbeat(
+          ctx.jobs,
+          'fee-recompute',
+          () => runFeeRecompute({ env: ctx.env, cache: ctx.feeCache, turbo: buildTurboClient(ctx.env) }),
+          (value) => value.ok,
+        )
         console.log(`[fees] cron ${controller.cron} · recompute ${result.ok ? 'ok' : 'FAILED'} — ${result.note}`)
         for (const note of result.alertNotes) {
           console.log(`[fees] cron ${controller.cron} · ${note}`)
@@ -1130,11 +1172,17 @@ export default {
     }
 
     try {
-      const { checks } = await runTreasuryMonitor({
-        env: ctx.env,
-        alerts: ctx.opsAlerts,
-        getFunding: async () => (await ctx.storageSeams()).funding,
-      })
+      const { checks } = await withJobHeartbeat(
+        ctx.jobs,
+        'treasury-monitor',
+        () =>
+          runTreasuryMonitor({
+            env: ctx.env,
+            alerts: ctx.opsAlerts,
+            getFunding: async () => (await ctx.storageSeams()).funding,
+          }),
+        (value) => value.checks.every((check) => check.ok),
+      )
       for (const check of checks) {
         console.log(`[ops] cron ${controller.cron} · ${check.key}: ${check.ok ? 'ok' : 'FAILED'} — ${check.note}`)
       }
@@ -1146,7 +1194,9 @@ export default {
     }
 
     try {
-      const result = await sweepQuickMints({ db: ctx.db, bucket: env.QUICK_STAGING, queue: env.QUICK_FINALIZE })
+      const result = await withJobHeartbeat(ctx.jobs, 'quick-sweep', () =>
+        sweepQuickMints({ db: ctx.db, bucket: env.QUICK_STAGING, queue: env.QUICK_FINALIZE }),
+      )
       console.log(
         `[quick:sweep] reaped ${result.orphansReaped} orphaned stage(s), re-drove ${result.stalledRedriven} stalled finalize(s)`,
       )
@@ -1165,20 +1215,23 @@ export default {
     // caught and logged rather than thrown, so a half-configured quick flow
     // never takes the rest of this cron run down with it.
     try {
-      const quickEnv = validateQuickEnv(ctx.env)
-      const result = await redriveDeferredFinalizes({
-        db: ctx.db,
-        queue: env.QUICK_FINALIZE,
-        treasury: ctx.treasury,
-        rpcUrl: ctx.env.SOLANA_RPC_URL,
-        placeholderUri: quickEnv.QUICK_PLACEHOLDER_URI,
-        treasuryAddress: quickEnv.QUICK_TREASURY_ADDRESS,
-        getUmi: () => createWorkerUmi(ctx.env),
-        alert: discordAlerts(env),
+      const result = await withJobHeartbeat(ctx.jobs, 'deferred-finalize', () => {
+        const quickEnv = validateQuickEnv(ctx.env)
+        return redriveDeferredFinalizes({
+          db: ctx.db,
+          bucket: ctx.env.QUICK_STAGING,
+          queue: env.QUICK_FINALIZE,
+          treasury: ctx.treasury,
+          rpcUrl: ctx.env.SOLANA_RPC_URL,
+          placeholderUri: quickEnv.QUICK_PLACEHOLDER_URI,
+          treasuryAddress: quickEnv.QUICK_TREASURY_ADDRESS,
+          getUmi: () => createWorkerUmi(ctx.env),
+          alert: discordAlerts(env),
+        })
       })
       console.log(
         `[quick:sweep] deferred finalizes — attempted ${result.attempted}, completed ${result.completed}, ` +
-          `still deferred ${result.stillDeferred}, gave up ${result.gaveUp}`,
+          `still deferred ${result.stillDeferred}, needs review ${result.needsReview}`,
       )
     } catch (err) {
       console.error(
@@ -1191,23 +1244,31 @@ export default {
     // mintFrame: retries any COMPLETE roll whose delegate revoke never landed.
     // Per-roll, not per-batch — one stuck roll must not block the rest.
     try {
-      const stalled = await ctx.db.listStalledRollHandoffs(50)
-      let revoked = 0
-      for (const roll of stalled) {
-        try {
-          await revokeRollDelegate(
-            { db: ctx.db, rpcUrl: ctx.env.SOLANA_RPC_URL, getUmi: () => createWorkerUmi(ctx.env) },
-            roll,
-          )
-          revoked++
-        } catch (err) {
-          console.error(
-            `[handoff:sweep] revoke failed for ${roll.collection_address}:`,
-            err instanceof Error ? err.message : String(err),
-          )
-        }
-      }
-      console.log(`[handoff:sweep] revoked ${revoked}/${stalled.length} stalled roll delegate(s)`)
+      await withJobHeartbeat(
+        ctx.jobs,
+        'roll-handoff',
+        async () => {
+          const stalled = await ctx.db.listStalledRollHandoffs(50)
+          let revoked = 0
+          for (const roll of stalled) {
+            try {
+              await revokeRollDelegate(
+                { db: ctx.db, rpcUrl: ctx.env.SOLANA_RPC_URL, getUmi: () => createWorkerUmi(ctx.env) },
+                roll,
+              )
+              revoked++
+            } catch (err) {
+              console.error(
+                `[handoff:sweep] revoke failed for ${roll.collection_address}:`,
+                err instanceof Error ? err.message : String(err),
+              )
+            }
+          }
+          console.log(`[handoff:sweep] revoked ${revoked}/${stalled.length} stalled roll delegate(s)`)
+          return revoked === stalled.length
+        },
+        (value) => value,
+      )
     } catch (err) {
       console.error(
         `[handoff:sweep] scheduled run (${controller.cron}) failed:`,

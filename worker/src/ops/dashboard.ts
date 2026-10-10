@@ -16,6 +16,7 @@ import { SKR_MINT_ADDRESS } from '../skr/config'
 import { getWorkerPublicKey } from '../solana/client'
 import { getSolBalance, getTokenAccountBalance } from '../solana/confirm'
 import { FUNDING_ALERT_KEY, readFundingSnapshot, type AlertLevel } from './monitor'
+import type { JobHeartbeat, JobHeartbeatStore } from './heartbeat'
 
 // Three narrow dependency shapes, one per function below — deliberately NOT
 // one shared "DashboardDeps" bag: the three snapshots barely overlap in what
@@ -99,16 +100,13 @@ export interface HealthSnapshot {
       lastAttemptNote: string | null
       computedAt: string
     }
-    /**
-     * ops_alert_state.updated_at is written on EVERY run of the 6h cron
-     * (treasury monitor + the quick-mint/roll-handoff sweeps run in the same
-     * scheduled() dispatch) whether or not the level changed — see
-     * checkFundingBalance's own doc comment on why that makes it a reliable
-     * "did the cron run" signal, distinct from whether it alerted.
-     */
+    /** Real attempt timestamp; funding level is the last delivered alert state. */
     treasuryMonitorAndSweep: { lastRunAt: string | null; level: AlertLevel }
+    jobs: JobHeartbeat[]
   }
+  notifications: { discordWebhookConfigured: boolean; lastAlertStateAt: string | null }
   quickMints: { deferredPendingRecovery: number; dead: number }
+  quickRecovery: { unknown: number; confirmed: number; rejected: number; review: number }
   rolls: { stuckHandoffs: number }
   fees: {
     quickFeeLamports: number
@@ -124,17 +122,21 @@ export interface HealthDeps {
   db: RollDb
   feeCache: FeeCache
   opsAlerts: OpsAlertStore
+  jobs: JobHeartbeatStore
+  discordWebhookConfigured: boolean
 }
 
 export async function getHealthSnapshot(deps: HealthDeps): Promise<HealthSnapshot> {
   const { db, feeCache, opsAlerts } = deps
 
-  const [feeRow, alertState, quickCounts, deferred, stuckHandoffs] = await Promise.all([
+  const [feeRow, alertState, quickCounts, deferred, stuckHandoffs, jobs, quickRecovery] = await Promise.all([
     feeCache.get(),
     opsAlerts.get(FUNDING_ALERT_KEY),
     db.getQuickMintCounts(null),
     db.getDeferredQuickMintCount(),
     db.getStuckRollHandoffCount(),
+    deps.jobs.list(),
+    db.getQuickRecoveryCounts(),
   ])
   if (!feeRow) {
     throw new ConfigError('fee_cache has no row — re-run migrations (0007_fee_cache.sql seeds it).')
@@ -156,11 +158,17 @@ export async function getHealthSnapshot(deps: HealthDeps): Promise<HealthSnapsho
         computedAt: feeRow.computedAt,
       },
       treasuryMonitorAndSweep: {
-        lastRunAt: alertState?.updated_at ?? null,
+        lastRunAt: jobs.find((job) => job.job === 'treasury-monitor')?.last_attempt_at ?? null,
         level: alertState?.last_level ?? 'healthy',
       },
+      jobs,
+    },
+    notifications: {
+      discordWebhookConfigured: deps.discordWebhookConfigured,
+      lastAlertStateAt: alertState?.updated_at ?? null,
     },
     quickMints: { deferredPendingRecovery: deferred, dead },
+    quickRecovery,
     rolls: { stuckHandoffs },
     fees: {
       quickFeeLamports: feeRow.quickFeeLamports,

@@ -34,6 +34,10 @@ export interface RollRow {
   protocol_version: number
   /** SHA-256 of the per-roll bearer capability; the plaintext is device-only. */
   auth_hash: string | null
+  film_stock_id?: string | null
+  film_mode?: 'color' | 'bw' | null
+  aspect?: string | null
+  fee_lamports?: number | null
 }
 
 export interface OpsAlertStateRow {
@@ -60,6 +64,10 @@ export interface FrameRow {
 }
 
 export interface QuickMintRow {
+  payment_state?: 'UNKNOWN' | 'CONFIRMED' | 'REJECTED'
+  recovery_reason?: string | null
+  verify_attempts?: number
+  last_verify_at?: string | null
   id: string
   wallet: string
   metadata_json: string
@@ -136,10 +144,12 @@ export class RollDb {
    * partial unique index in 0001_init.sql). Nothing is deleted: minted frames
    * and their on-chain assets are untouched.
    */
-  async closeRoll(collectionAddress: string): Promise<void> {
+  async closeRoll(collectionAddress: string, reason = 'legacy-client-close'): Promise<void> {
     await this.db
-      .prepare("UPDATE rolls SET status = 'COMPLETE' WHERE collection_address = ? AND status = 'OPEN'")
-      .bind(collectionAddress)
+      .prepare(
+        "UPDATE rolls SET status = 'COMPLETE', close_reason = ?, closed_by = 'capability-holder', closed_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE collection_address = ? AND status = 'OPEN'",
+      )
+      .bind(reason, collectionAddress)
       .run()
   }
 
@@ -205,12 +215,16 @@ export class RollDb {
     skrFeeAtomic?: number
     protocolVersion: number
     authHash: string
+    filmStockId?: string
+    filmMode?: 'color' | 'bw'
+    aspect?: string
+    feeLamports?: number
   }): Promise<void> {
     await this.db
       .prepare(
         `INSERT INTO rolls
-           (collection_address, wallet, name, size, artist, skr_identity, cover_uri, metadata_uri, create_signature, fee_signature, fee_currency, skr_fee_atomic, protocol_version, auth_hash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (collection_address, wallet, name, size, artist, skr_identity, cover_uri, metadata_uri, create_signature, fee_signature, fee_currency, skr_fee_atomic, protocol_version, auth_hash, film_stock_id, film_mode, aspect, fee_lamports)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         roll.collectionAddress,
@@ -227,6 +241,10 @@ export class RollDb {
         roll.skrFeeAtomic ?? null,
         roll.protocolVersion,
         roll.authHash,
+        roll.filmStockId ?? null,
+        roll.filmMode ?? null,
+        roll.aspect ?? null,
+        roll.feeLamports ?? null,
       )
       .run()
   }
@@ -392,7 +410,10 @@ export class RollDb {
            status = CASE
              WHEN (SELECT COUNT(*) FROM frames
                    WHERE collection_address = ?1 AND status = 'MINTED') >= size
-             THEN 'COMPLETE' ELSE status END
+             THEN 'COMPLETE' ELSE status END,
+           close_reason = CASE WHEN (SELECT COUNT(*) FROM frames WHERE collection_address = ?1 AND status = 'MINTED') >= size THEN COALESCE(close_reason,'full-roll-minted') ELSE close_reason END,
+           closed_by = CASE WHEN (SELECT COUNT(*) FROM frames WHERE collection_address = ?1 AND status = 'MINTED') >= size THEN COALESCE(closed_by,'worker') ELSE closed_by END,
+           closed_at = CASE WHEN (SELECT COUNT(*) FROM frames WHERE collection_address = ?1 AND status = 'MINTED') >= size THEN COALESCE(closed_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) ELSE closed_at END
          WHERE collection_address = ?1`,
       )
       .bind(collectionAddress)
@@ -618,6 +639,46 @@ export class RollDb {
     }
   }
 
+  async recordQuickVerification(
+    id: string,
+    state: 'UNKNOWN' | 'CONFIRMED' | 'REJECTED',
+    reason: string | null,
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        "UPDATE quick_mints SET payment_state=?, recovery_reason=CASE WHEN ?='UNKNOWN' AND recovery_reason='REVIEW_REQUIRED' THEN recovery_reason ELSE ? END, verify_attempts=verify_attempts+1, last_verify_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+      )
+      .bind(state, state, reason, id)
+      .run()
+  }
+
+  async preserveQuickStaging(id: string, oldKey: string, newKey: string): Promise<void> {
+    await this.db
+      .prepare('UPDATE quick_mints SET staging_key=? WHERE id=? AND staging_key=?')
+      .bind(newKey, id, oldKey)
+      .run()
+  }
+
+  async getQuickRecoveryCounts(): Promise<{ unknown: number; confirmed: number; rejected: number; review: number }> {
+    return (
+      (await this.db
+        .prepare(
+          `SELECT
+      COALESCE(SUM(CASE WHEN signature IS NOT NULL AND payment_state='UNKNOWN' THEN 1 ELSE 0 END),0) AS unknown,
+      COALESCE(SUM(CASE WHEN status!='FINALIZED' AND payment_state='CONFIRMED' THEN 1 ELSE 0 END),0) AS confirmed,
+      COALESCE(SUM(CASE WHEN payment_state='REJECTED' THEN 1 ELSE 0 END),0) AS rejected,
+      COALESCE(SUM(CASE WHEN recovery_reason='REVIEW_REQUIRED' OR status='DEAD' THEN 1 ELSE 0 END),0) AS review
+      FROM quick_mints`,
+        )
+        .first<{ unknown: number; confirmed: number; rejected: number; review: number }>()) ?? {
+        unknown: 0,
+        confirmed: 0,
+        rejected: 0,
+        review: 0,
+      }
+    )
+  }
+
   /**
    * STAGED rows WITH a recorded signature: a finalize was attempted (most
    * often verify's "not visible to the RPC yet" deferral) but never
@@ -627,7 +688,9 @@ export class RollDb {
    */
   async listDeferredFinalizeQuickMints(beforeIso: string, limit: number): Promise<QuickMintRow[]> {
     const result = await this.db
-      .prepare("SELECT * FROM quick_mints WHERE status = 'STAGED' AND signature IS NOT NULL AND created_at < ? LIMIT ?")
+      .prepare(
+        "SELECT * FROM quick_mints WHERE status = 'STAGED' AND signature IS NOT NULL AND created_at < ? ORDER BY COALESCE(last_verify_at,created_at), id LIMIT ?",
+      )
       .bind(beforeIso, limit)
       .all<QuickMintRow>()
     return result.results

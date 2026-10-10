@@ -21,18 +21,15 @@ export interface RollVerifyRequest {
   treasury: string
   size: RollSize
   /**
-   * The CURRENT cost-plus roll fee for `size` (fee_cache, read once by the
-   * caller and reused for both this check and the treasury record). Unlike a
-   * quick mint, a roll has no stage step to snapshot a fee at — the app fetches
-   * GET /fees and pays immediately before calling this, so the live-at-verify
-   * value is what the app's payment is checked against. The race this leaves
-   * (a recompute landing in the seconds between the app's fetch and this
-   * request) is the same one the app's "read fees at confirmation" display
-   * rule already minimizes — see README "Cost-plus fee pricing".
+   * Server-issued purchase quote for new clients; the current fee cache is
+   * only the compatibility fallback for clients without a quote ID. A verified
+   * creation checkpoint never re-prices the receipt on a later retry.
    *
    * Ignored when `skr` is set — the fee moved in $SKR, not SOL, in that case.
    */
   requiredLamports: number
+  quoteCreatedAt?: string
+  quoteExpiresAt?: string
   /** Present only when this roll's fee is being paid in $SKR — see quick/verify.ts's identical field for the shape rationale. */
   skr?: {
     treasurySkrAta: string
@@ -47,7 +44,9 @@ export interface RollVerifyRequest {
  * transfer. "I couldn't check yet" must never collapse into "this is invalid"
  * — the first should be retried with the same signature, the second refused.
  */
-export type RollVerifyResult = { ok: true; feeLamports: number } | { ok: false; retryable: boolean; reason: string }
+export type RollVerifyResult =
+  | { ok: true; feeLamports: number; paidAt?: number }
+  | { ok: false; retryable: boolean; reason: string }
 
 function retry(reason: string): RollVerifyResult {
   return { ok: false, retryable: true, reason }
@@ -93,14 +92,22 @@ export async function verifyRollFeePayment(rpcUrl: string, req: RollVerifyReques
     return reject(`Transaction ${req.signature} was paid by ${feePayer ?? 'nobody'}, not by ${req.wallet}`)
   }
 
+  const expiresAt = req.quoteExpiresAt ?? req.skr?.quoteExpiresAt
+  if (expiresAt) {
+    // Compare against the chain's payment time, never the retry's wall clock.
+    if (tx.blockTime === null) return retry('Payment block time is not available yet')
+    const paidAt = tx.blockTime * 1000
+    // Block timestamps are estimates, not the HTTP server's precise clock.
+    if (paidAt > Date.parse(expiresAt) || (req.quoteCreatedAt && paidAt < Date.parse(req.quoteCreatedAt) - 60000)) {
+      return reject('Payment landed outside its original quote window; preserve the receipt for support')
+    }
+  }
+
   if (req.skr) {
     if (!req.skr.quoteExpiresAt) {
       return reject(
         `No $SKR quote was ever issued for wallet ${req.wallet} — call POST /skr/quote before creating the roll`,
       )
-    }
-    if (Date.parse(req.skr.quoteExpiresAt) < Date.now()) {
-      return reject(`The $SKR quote for wallet ${req.wallet} expired at ${req.skr.quoteExpiresAt} — re-quote and retry`)
     }
     const skrVerdict = checkSkrTransfer(tx, {
       treasurySkrAta: req.skr.treasurySkrAta,
@@ -109,7 +116,7 @@ export async function verifyRollFeePayment(rpcUrl: string, req: RollVerifyReques
     if (!skrVerdict.ok) {
       return reject(`Transaction ${req.signature}: ${skrVerdict.reason}`)
     }
-    return { ok: true, feeLamports: 0 }
+    return { ok: true, feeLamports: 0, paidAt: tx.blockTime === null ? undefined : tx.blockTime * 1000 }
   }
 
   const required = req.requiredLamports
@@ -123,5 +130,5 @@ export async function verifyRollFeePayment(rpcUrl: string, req: RollVerifyReques
     )
   }
 
-  return { ok: true, feeLamports: received }
+  return { ok: true, feeLamports: received, paidAt: tx.blockTime === null ? undefined : tx.blockTime * 1000 }
 }
