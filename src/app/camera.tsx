@@ -1782,7 +1782,7 @@ export default function CameraScreen() {
             position: 'absolute',
             left: 18,
             right: 18,
-            bottom: 132,
+            bottom: 135,
             zIndex: 10,
           }}
         >
@@ -1800,7 +1800,7 @@ export default function CameraScreen() {
           See ManualControls.tsx for the design source and the adjustments
           made from it for this camera's real (coupled) exposure model. */}
       {proOpen && TIER2_ENABLED && (
-        <View style={{ position: 'absolute', left: 0, right: 0, bottom: showZoomSlider ? 202 : 145 }}>
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: showZoomSlider ? 188 : 145 }}>
           <ManualControls
             controls={manualCamera}
             ev={ev}

@@ -66,7 +66,6 @@ export function ZoomSlider({
           updateFromPosition(evt.nativeEvent.locationX)
         },
         onPanResponderMove: (evt) => {
-          // Calculate relative position inside the track
           const relativeX = evt.nativeEvent.pageX - trackPageX.current
           updateFromPosition(relativeX)
         },
@@ -88,7 +87,7 @@ export function ZoomSlider({
 
   return (
     <View style={[styles.container, style]}>
-      {/* Top Row: Preset Buttons & Live Readout */}
+      {/* Top Row: Preset Buttons & Live Readout (Slim) */}
       <View style={styles.topRow}>
         <View style={styles.presetsRow}>
           {presets.map((p) => {
@@ -117,7 +116,7 @@ export function ZoomSlider({
         </View>
       </View>
 
-      {/* Bottom Row: Continuous Scrubbing Track */}
+      {/* Bottom Row: Continuous Scrubbing Track (Slim 16px) */}
       <View
         ref={trackRef}
         onLayout={handleTrackLayout}
@@ -158,18 +157,18 @@ export function ZoomSlider({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: 'rgba(8, 10, 18, 0.88)',
+    backgroundColor: 'rgba(8, 10, 18, 0.90)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.14)',
-    borderRadius: 16,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 6,
-    gap: 8,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.45,
+    shadowRadius: 6,
+    elevation: 5,
+    gap: 4,
   },
   topRow: {
     flexDirection: 'row',
@@ -179,12 +178,12 @@ const styles = StyleSheet.create({
   presetsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   presetChip: {
-    paddingVertical: 3,
-    paddingHorizontal: 8,
-    borderRadius: 10,
+    paddingVertical: 2,
+    paddingHorizontal: 7,
+    borderRadius: 8,
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.12)',
@@ -195,7 +194,7 @@ const styles = StyleSheet.create({
   },
   presetText: {
     fontFamily: fonts.mono,
-    fontSize: 11,
+    fontSize: 10,
     color: colors.textSoft,
   },
   presetTextActive: {
@@ -203,19 +202,19 @@ const styles = StyleSheet.create({
     color: '#000',
   },
   readoutBadge: {
-    paddingVertical: 2,
-    paddingHorizontal: 8,
-    borderRadius: 8,
+    paddingVertical: 1,
+    paddingHorizontal: 6,
+    borderRadius: 6,
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
   },
   readoutText: {
     fontFamily: fonts.monoBold,
-    fontSize: 12,
+    fontSize: 11,
     color: colors.accentSoft,
     letterSpacing: 0.5,
   },
   trackContainer: {
-    height: 24,
+    height: 16,
     justifyContent: 'center',
     position: 'relative',
   },
@@ -229,7 +228,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 0,
     right: 0,
-    height: 14,
+    height: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -239,32 +238,32 @@ const styles = StyleSheet.create({
     width: 1.5,
   },
   minorTickMark: {
-    height: 6,
+    height: 4,
   },
   majorTickMark: {
-    height: 12,
+    height: 8,
     backgroundColor: colors.text,
   },
   scrubberThumb: {
     position: 'absolute',
-    top: 2,
-    width: 20,
-    height: 20,
-    marginLeft: -10,
+    top: 0,
+    width: 16,
+    height: 16,
+    marginLeft: -8,
     alignItems: 'center',
     justifyContent: 'center',
   },
   thumbCenter: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
     backgroundColor: colors.accent,
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: '#FFF',
     shadowColor: colors.accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.8,
-    shadowRadius: 4,
+    shadowRadius: 3,
     elevation: 3,
   },
 })
