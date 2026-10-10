@@ -240,6 +240,14 @@ test('concurrent receipt replays cannot create two collections', async () => {
   assert.equal(h.counts.fees, 1)
 })
 
+test('an unpaid purchase resumed days later uses the verified payment day instead of stranding its receipt', async () => {
+  const h = creationHarness()
+  const result = await h.create(h.deps, { ...h.request, localDate: '2020-01-01' })
+  assert.equal(result.name, `${new Date().toISOString().slice(0, 10)}.01`)
+  assert.equal(result.status, 'OPEN')
+  assert.equal(h.counts.sends, 1)
+})
+
 test('real Umi derives a stable domain-separated collection signer and round-trips a signed create transaction', async () => {
   const { createUmi } = require('@metaplex-foundation/umi-bundle-defaults')
   const { keypairIdentity, publicKey } = require('@metaplex-foundation/umi')

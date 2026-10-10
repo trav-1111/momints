@@ -84,6 +84,34 @@ test('actual SQL records one treasury entry per roll receipt across retries', as
   }
 })
 
+test('a roll committed while another receipt verifies cannot admit a second creation', async () => {
+  const { sqlite, db } = database()
+  try {
+    const load = sourceLoader()
+    const rolls = new (load('worker/src/db/index.ts').RollDb)(db)
+    const store = new (load('worker/src/rolls/creationStore.ts').RollCreationStore)(db)
+    await rolls.insertRoll({
+      collectionAddress: 'first-collection',
+      protocolVersion: 2,
+      authHash: 'hash',
+      wallet: 'wallet',
+      name: '2026-10-11.01',
+      size: 12,
+      artist: 'Original',
+      skrIdentity: 'wallet',
+      coverUri: 'cover',
+      metadataUri: 'metadata',
+      createSignature: 'create',
+      feeSignature: 'paid',
+    })
+    await assert.rejects(store.reserve('late-receipt', { wallet: 'wallet', name: 'second' }), (e) => e.status === 409)
+    assert.equal(await store.get('late-receipt'), null)
+    assert.equal(await store.hasPendingWallet('wallet'), false)
+  } finally {
+    sqlite.close()
+  }
+})
+
 test('roll persistence includes immutable recovery settings and closure audits remain idempotent', async () => {
   const { sqlite, db } = database()
   try {

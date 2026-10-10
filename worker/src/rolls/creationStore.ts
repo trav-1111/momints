@@ -72,10 +72,15 @@ export class RollCreationStore {
     try {
       await this.db
         .prepare(
-          'INSERT INTO roll_creations (fee_signature,wallet,data) VALUES (?,?,?) ON CONFLICT(fee_signature) DO NOTHING',
+          "INSERT INTO roll_creations (fee_signature,wallet,data) SELECT ?,?,? WHERE NOT EXISTS (SELECT 1 FROM rolls WHERE wallet = ? AND status = 'OPEN') ON CONFLICT(fee_signature) DO NOTHING",
         )
-        .bind(signature, data.wallet, JSON.stringify(data))
+        .bind(signature, data.wallet, JSON.stringify(data), data.wallet)
         .run()
+      if (!(await this.get(signature)))
+        throw new HttpError(
+          409,
+          'This wallet already has an open roll. Preserve this receipt for support; do not pay again.',
+        )
     } catch (err) {
       if (!(err instanceof Error) || !err.message.includes('UNIQUE constraint failed')) throw err
       if (!(await this.get(signature)))

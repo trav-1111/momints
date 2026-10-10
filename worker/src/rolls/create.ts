@@ -129,7 +129,9 @@ function dateLabel(local: string | undefined, reference: number) {
     !Number.isFinite(stamp) ||
     Math.abs(stamp - Date.parse(day + 'T00:00:00Z')) > 86400000
   )
-    throw new HttpError(400, 'localDate must match the original payment day (within one day)')
+    // A prepared purchase may sit unpaid for days before its quote refreshes.
+    // Its stale display date cannot strand a newly verified payment.
+    return day
   return local
 }
 
