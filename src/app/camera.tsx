@@ -688,7 +688,7 @@ export default function CameraScreen() {
 
     const rawSnapshots: string[] = []
     const isRoll = activeMode === 'roll' && activeRoll !== null
-    const maxRollFrames = activeRoll ? activeRoll.size - activeRoll.frameIds.length : 36
+    const maxRollFrames = activeRoll ? activeRoll.size - activeRoll.frameIds.length : 24
     const kinoSeqId = `kino-${Date.now()}`
 
     // Initial mechanical crank pulse
@@ -701,7 +701,7 @@ export default function CameraScreen() {
         if (isRoll && rawSnapshots.length >= maxRollFrames) {
           break
         }
-        if (rawSnapshots.length >= 36) {
+        if (rawSnapshots.length >= 24) {
           break
         }
 

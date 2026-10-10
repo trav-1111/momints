@@ -438,7 +438,7 @@ function AperturePanel({ controls }: { controls: ManualCameraState }) {
         />
       </View>
       <Text style={styles.capabilityNote}>
-        {auto ? 'Auto: Native f/1.7 fixed aperture without computational DoF.' : dofDescription}
+        {auto ? 'Auto: Native f/1.7 fixed aperture' : dofDescription}
       </Text>
     </View>
   )
