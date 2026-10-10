@@ -709,7 +709,7 @@ export default function ManualControls({
   setEv,
   minExposure,
   maxExposure,
-  showLightMeter = true,
+  showLightMeter = false,
 }: Props) {
   const [activeParam, setActiveParam] = useState<ParamKey | null>(null)
   const {
