@@ -57,6 +57,7 @@ export function useManualCameraState(
   // 'manual': emulated f-stop (f/1.2 - f/16), driving focal bracketing / DfD bokeh.
   const [apertureMode, setApertureMode] = useState<AutoManualMode>('auto')
   const [apertureValue, setApertureValue] = useState<number>(1.8)
+  const [apertureGain, setApertureGain] = useState<number>(0)
 
   const [whiteBalance, setWhiteBalance] = useState<WhiteBalancePresetName>('AUTO')
   const [meteringMode, setMeteringMode] = useState<MeteringMode>('matrix')
@@ -139,6 +140,7 @@ export function useManualCameraState(
 
   const canIndependentExposure = hasIsoPriority && hasShutterPriority
   const fullyManual = isoMode === 'manual' && shutterMode === 'manual'
+  const isEvEnabled = isoMode === 'auto' && shutterMode === 'auto' && exposureMode === 'auto' && !fullyManual
 
   const desiredState = useMemo(() => {
     const activeExp = exposurePoint ?? lockPoint ?? meteringPoint
@@ -270,6 +272,7 @@ export function useManualCameraState(
     setFocusMode('auto')
     setApertureMode('auto')
     setApertureValue(1.8)
+    setApertureGain(0)
     setWhiteBalance('AUTO')
     setMeteringMode('matrix')
     setLockMode('none')
@@ -293,6 +296,9 @@ export function useManualCameraState(
     setApertureMode,
     apertureValue,
     setApertureValue,
+    apertureGain,
+    setApertureGain,
+    isEvEnabled,
     focusMode,
     setFocusMode,
     manualFocusDiopters,

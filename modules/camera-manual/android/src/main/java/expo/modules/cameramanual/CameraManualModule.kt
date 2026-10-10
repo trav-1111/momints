@@ -207,8 +207,27 @@ class CameraManualModule : Module() {
 
     // --- Exposure (ISO / Shutter & preview clamping) ---
     if (isManualExposure) {
-      val targetIso = state.iso ?: 400
-      val targetShutter = state.shutterNs ?: 16_666_667L
+      val sceneEv = liveTtlEv ?: if (ambientLux > 0.05f) {
+        (Math.log(ambientLux.toDouble() / 2.5) / Math.log(2.0)).coerceIn(-4.0, 18.0)
+      } else {
+        6.0
+      }
+
+      val targetIso = state.iso ?: run {
+        val userShutter = state.shutterNs ?: 16_666_667L
+        val tSec = userShutter / 1_000_000_000.0
+        val aperture = 1.7
+        val calculatedIso = (aperture * aperture * 100.0) / (tSec * Math.pow(2.0, sceneEv))
+        calculatedIso.toInt().coerceIn(100, 11470)
+      }
+
+      val targetShutter = state.shutterNs ?: run {
+        val aperture = 1.7
+        val tSec = (aperture * aperture * 100.0) / (targetIso.toDouble() * Math.pow(2.0, sceneEv))
+        val ns = (tSec * 1_000_000_000.0).toLong()
+        ns.coerceIn(125_000L, 50_000_000L)
+      }
+
       val previewShutter = targetShutter.coerceAtMost(100_000_000L)
       val ceiling = maxFrameDuration(camera) ?: targetShutter
 

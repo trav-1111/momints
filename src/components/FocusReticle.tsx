@@ -15,6 +15,7 @@ interface Props {
   isHolding: boolean
   holdProgress: Animated.Value
   ev: number
+  evEnabled?: boolean
   minExposure?: number
   maxExposure?: number
   onEvChange: (newEv: number) => void
@@ -45,6 +46,7 @@ export function FocusReticle({
   isHolding,
   holdProgress,
   ev,
+  evEnabled = true,
   minExposure = -2,
   maxExposure = 2,
   onEvChange,
@@ -275,61 +277,63 @@ export function FocusReticle({
             </View>
           )}
 
-          {/* EV Vertical Slider Track attached to Exposure Reticle */}
-          <View
-            style={[
-              styles.sliderTrackContainer,
-              {
-                left: sliderLeft,
-                top: (currentExpBoxSize - SLIDER_HEIGHT) / 2,
-              },
-            ]}
-            pointerEvents="box-none"
-          >
-            {/* Guide Rail */}
-            <View style={styles.verticalRail} />
-            <View style={styles.zeroTick} />
-
-            {/* Draggable Sun Knob */}
+          {/* EV Vertical Slider Track attached to Exposure Reticle (omitted when EV setting is not enabled) */}
+          {evEnabled && (
             <View
-              {...evPanResponder.panHandlers}
               style={[
-                styles.sunKnobWrapper,
+                styles.sliderTrackContainer,
                 {
-                  transform: [{ translateY: knobTravel }],
+                  left: sliderLeft,
+                  top: (currentExpBoxSize - SLIDER_HEIGHT) / 2,
                 },
               ]}
+              pointerEvents="box-none"
             >
-              <Pressable
-                onPress={() => {
-                  if (ev !== 0) {
-                    Haptics.selectionAsync()
-                    onEvChange(0)
-                  }
-                }}
-                style={styles.sunKnob}
-              >
-                <Animated.View style={hudRotateStyle}>
-                  <IconSun size={17} color={ev !== 0 ? colors.accent : '#FFF'} strokeWidth={1.8} />
-                </Animated.View>
-              </Pressable>
+              {/* Guide Rail */}
+              <View style={styles.verticalRail} />
+              <View style={styles.zeroTick} />
 
-              {/* EV Readout Badge */}
-              {Math.abs(ev) > 0.05 && (
-                <Animated.View
-                  style={[
-                    styles.evBadge,
-                    isSliderOnLeft ? { right: 36, left: undefined } : { left: 36 },
-                    hudRotateStyle,
-                  ]}
+              {/* Draggable Sun Knob */}
+              <View
+                {...evPanResponder.panHandlers}
+                style={[
+                  styles.sunKnobWrapper,
+                  {
+                    transform: [{ translateY: knobTravel }],
+                  },
+                ]}
+              >
+                <Pressable
+                  onPress={() => {
+                    if (ev !== 0) {
+                      Haptics.selectionAsync()
+                      onEvChange(0)
+                    }
+                  }}
+                  style={styles.sunKnob}
                 >
-                  <Text style={styles.evBadgeText} numberOfLines={1}>
-                    {ev > 0 ? `+${ev.toFixed(1)}` : ev.toFixed(1)}
-                  </Text>
-                </Animated.View>
-              )}
+                  <Animated.View style={hudRotateStyle}>
+                    <IconSun size={17} color={ev !== 0 ? colors.accent : '#FFF'} strokeWidth={1.8} />
+                  </Animated.View>
+                </Pressable>
+
+                {/* EV Readout Badge */}
+                {Math.abs(ev) > 0.05 && (
+                  <Animated.View
+                    style={[
+                      styles.evBadge,
+                      isSliderOnLeft ? { right: 36, left: undefined } : { left: 36 },
+                      hudRotateStyle,
+                    ]}
+                  >
+                    <Text style={styles.evBadgeText} numberOfLines={1}>
+                      {ev > 0 ? `+${ev.toFixed(1)}` : ev.toFixed(1)}
+                    </Text>
+                  </Animated.View>
+                )}
+              </View>
             </View>
-          </View>
+          )}
         </View>
       )}
     </Animated.View>

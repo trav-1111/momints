@@ -531,9 +531,17 @@ export default function CameraScreen() {
         captureUri = blendedUri
       }
 
-      // Emulated Depth of Field (Aperture / Bokeh)
-      if (manualCamera.apertureMode === 'manual' && manualCamera.apertureValue <= 3.5) {
-        const dofUri = await renderEmulatedDepthOfField(captureUri, manualCamera.apertureValue, focusPoint)
+      // Emulated Depth of Field (Aperture / Bokeh & photometric gain)
+      if (
+        manualCamera.apertureMode === 'manual' &&
+        (manualCamera.apertureValue <= 3.5 || (manualCamera.apertureGain ?? 0) > 0)
+      ) {
+        const dofUri = await renderEmulatedDepthOfField(
+          captureUri,
+          manualCamera.apertureValue,
+          focusPoint,
+          manualCamera.apertureGain ?? 0,
+        )
         if (dofUri !== captureUri) {
           deleteCapture(captureUri)
           captureUri = dofUri
@@ -861,15 +869,11 @@ export default function CameraScreen() {
     }
   }, [flash, invalidateCamera])
 
-  // Manual ISO+shutter together (fullyManual, i.e. AE_MODE_OFF) dominates the
-  // visual result — leaving EV bias "active" underneath it is a confusing
-  // extra dial with no visible effect, so zero it out the moment both go
-  // manual. EV bias and metering both still function during a single-axis
-  // priority mode (ISO-priority or shutter-priority), since AE_MODE stays ON
-  // in those states — only disabled here for the fully-manual case.
+  // Manual control overrides turn AE off in the camera HAL, making EV bias
+  // non-functional. Zero out ev whenever EV is not enabled.
   useEffect(() => {
-    if (manualCamera.fullyManual) setEv(0)
-  }, [manualCamera.fullyManual])
+    if (!manualCamera.isEvEnabled) setEv(0)
+  }, [manualCamera.isEvEnabled])
 
   useEffect(() => {
     return () => {
@@ -1278,6 +1282,7 @@ export default function CameraScreen() {
               isHolding={isHoldingFocus}
               holdProgress={holdProgress}
               ev={ev}
+              evEnabled={manualCamera.isEvEnabled}
               minExposure={minExposure}
               maxExposure={maxExposure}
               onEvChange={(newEv) => {

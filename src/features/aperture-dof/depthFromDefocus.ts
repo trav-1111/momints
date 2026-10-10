@@ -37,16 +37,31 @@ export function getApertureBlurRadius(fNumber: number): number {
  * @param baseUri URI of the sharp in-focus base exposure.
  * @param fNumber Emulated aperture value (1.2 to 16.0).
  * @param focusPoint Normalized (0..1) focal plane anchor, defaults to center (0.5, 0.5).
- * @returns URI of the processed frame with emulated depth-of-field.
+/**
+ * Applies on-device computational depth-of-field and optical bokeh emulation
+ * to a captured photo frame using Skia GPU surface rendering.
+ *
+ * @param baseUri URI of the sharp in-focus base exposure.
+ * @param fNumber Emulated aperture value (1.2 to 16.0).
+ * @param focusPoint Normalized (0..1) focal plane anchor, defaults to center (0.5, 0.5).
+ * @param gainEv Optional digital exposure gain boost in EV (0.0 to +3.0).
+ * @returns URI of the processed frame with emulated depth-of-field and exposure gain.
  */
 export async function renderEmulatedDepthOfField(
   baseUri: string,
   fNumber: number,
   focusPoint: { x: number; y: number } | null = null,
+  gainEv: number = 0,
 ): Promise<string> {
   const blurRadius = getApertureBlurRadius(fNumber)
-  // If stopped down to f/4.0+, no extra blur is needed — return base image
-  if (blurRadius <= 1) {
+  // Photometric aperture gain: a physical f/1.2 lens gathers 2.0x more photons than native f/1.7!
+  // f/1.2 -> +1.0 EV (2.0x); f/1.4 -> +0.56 EV (1.47x); f/1.7+ -> 1.0x (native)
+  const opticalGain = fNumber < 1.7 ? (1.7 * 1.7) / (fNumber * fNumber) : 1.0
+  const totalMultiplier = opticalGain * Math.pow(2, gainEv)
+  const needsGain = Math.abs(totalMultiplier - 1.0) > 0.02
+
+  // If stopped down and no gain boost, return base image directly
+  if (blurRadius <= 1 && !needsGain) {
     return baseUri
   }
 
@@ -71,41 +86,59 @@ export async function renderEmulatedDepthOfField(
 
   const canvas = surface.getCanvas()
 
-  // 1. Render background with optical bokeh blur filter
+  const gainFilter = needsGain
+    ? Skia.ColorFilter.MakeMatrix([
+        totalMultiplier, 0, 0, 0, 0,
+        0, totalMultiplier, 0, 0, 0,
+        0, 0, totalMultiplier, 0, 0,
+        0, 0, 0, 1, 0,
+      ])
+    : null
+
+  // 1. Render background with optical bokeh blur filter and photometric gain
   const blurPaint = Skia.Paint()
-  const blurFilter = Skia.ImageFilter.MakeBlur(blurRadius, blurRadius, 0)
-  blurPaint.setImageFilter(blurFilter)
+  if (blurRadius > 0) {
+    const blurFilter = Skia.ImageFilter.MakeBlur(blurRadius, blurRadius, 0)
+    blurPaint.setImageFilter(blurFilter)
+  }
+  if (gainFilter) {
+    blurPaint.setColorFilter(gainFilter)
+  }
   canvas.drawImage(baseImg, 0, 0, blurPaint)
 
   // 2. Composite the sharp subject plane back over the focal center
-  // Focus point anchor in pixel coordinates
-  const fx = (focusPoint?.x ?? 0.5) * width
-  const fy = (focusPoint?.y ?? 0.5) * height
-  const subjectRadius = Math.min(width, height) * 0.38
+  if (blurRadius > 1) {
+    const fx = (focusPoint?.x ?? 0.5) * width
+    const fy = (focusPoint?.y ?? 0.5) * height
+    const subjectRadius = Math.min(width, height) * 0.38
 
-  // Radial falloff mask for the in-focus subject plane
-  const radialShader = Skia.Shader.MakeRadialGradient(
-    { x: fx, y: fy },
-    subjectRadius,
-    [
-      Skia.Color('rgba(255, 255, 255, 1.0)'),
-      Skia.Color('rgba(255, 255, 255, 0.85)'),
-      Skia.Color('rgba(255, 255, 255, 0.0)'),
-    ],
-    [0.0, 0.65, 1.0],
-    0,
-  )
+    // Radial falloff mask for the in-focus subject plane
+    const radialShader = Skia.Shader.MakeRadialGradient(
+      { x: fx, y: fy },
+      subjectRadius,
+      [
+        Skia.Color('rgba(255, 255, 255, 1.0)'),
+        Skia.Color('rgba(255, 255, 255, 0.85)'),
+        Skia.Color('rgba(255, 255, 255, 0.0)'),
+      ],
+      [0.0, 0.65, 1.0],
+      0,
+    )
 
-  const subjectPaint = Skia.Paint()
-  // Save layer with radial alpha mask to smoothly isolate sharp subject
-  canvas.saveLayer()
-  canvas.drawImage(baseImg, 0, 0)
+    const subjectPaint = Skia.Paint()
+    if (gainFilter) {
+      subjectPaint.setColorFilter(gainFilter)
+    }
+    // Save layer with radial alpha mask to smoothly isolate sharp subject
+    canvas.saveLayer(subjectPaint)
+    canvas.drawImage(baseImg, 0, 0)
 
-  const maskPaint = Skia.Paint()
-  maskPaint.setShader(radialShader)
-  maskPaint.setBlendMode(BlendMode.DstIn)
-  canvas.drawRect(Skia.XYWHRect(0, 0, width, height), maskPaint)
-  canvas.restore()
+    const maskPaint = Skia.Paint()
+    maskPaint.setShader(radialShader)
+    maskPaint.setBlendMode(BlendMode.DstIn)
+    canvas.drawRect(Skia.XYWHRect(0, 0, width, height), maskPaint)
+    canvas.restore()
+  }
 
   surface.flush()
 

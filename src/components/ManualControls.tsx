@@ -313,6 +313,12 @@ function IsoPanel({ controls }: { controls: ManualCameraState }) {
         hapticStep={1}
         labels={ISO_NOTCHES.map((n) => {
           const isSelected = !auto && manualIso === n
+          const labelText =
+            n >= 10000
+              ? `${Math.round(n / 1000)}k`
+              : n >= 1000
+                ? `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}k`
+                : `${n}`
           return (
             <Text
               key={n}
@@ -321,7 +327,7 @@ function IsoPanel({ controls }: { controls: ManualCameraState }) {
                 isSelected && { color: colors.accent, fontFamily: fonts.monoBold },
               ]}
             >
-              {n}
+              {labelText}
             </Text>
           )
         })}
@@ -382,19 +388,29 @@ function ShutterPanel({ controls }: { controls: ManualCameraState }) {
   )
 }
 
+const GAIN_OPTIONS = [
+  { value: 0, label: 'NORM' },
+  { value: 0.7, label: '+0.7 EV' },
+  { value: 1.3, label: '+1.3 EV' },
+  { value: 2.0, label: '+2.0 EV' },
+]
+
 function AperturePanel({ controls }: { controls: ManualCameraState }) {
-  const { apertureMode, setApertureMode, apertureValue, setApertureValue } = controls
+  const { apertureMode, setApertureMode, apertureValue, setApertureValue, apertureGain, setApertureGain } = controls
   const auto = apertureMode === 'auto'
   const apIndex = Math.max(0, APERTURE_STOPS.indexOf(apertureValue as ApertureStop))
 
   let dofDescription = 'NATIVE · OPTICAL SHARPNESS'
   if (!auto) {
+    const opticalGainStr = apertureValue < 1.7 ? ` (+${apertureValue <= 1.2 ? '1.0' : '0.6'} EV OPTICAL)` : ''
+    const digitalGainStr = apertureGain > 0 ? ` (+${apertureGain.toFixed(1)} EV BOOST)` : ''
+    const gainSuffix = `${opticalGainStr}${digitalGainStr}`
     if (apertureValue <= 2.8) {
-      dofDescription = 'BOKEH · SHALLOW DOF (FOCAL BRACKET)'
+      dofDescription = `BOKEH · SHALLOW DOF${gainSuffix}`
     } else if (apertureValue >= 11.0) {
-      dofDescription = 'DEEP DOF · EXTENDED MACRO STACK'
+      dofDescription = `DEEP DOF · EXTENDED MACRO STACK${digitalGainStr}`
     } else {
-      dofDescription = 'NATIVE · OPTICAL SHARPNESS'
+      dofDescription = `NATIVE · OPTICAL SHARPNESS${gainSuffix}`
     }
   }
 
@@ -437,6 +453,32 @@ function AperturePanel({ controls }: { controls: ManualCameraState }) {
           })}
         />
       </View>
+
+      {!auto && (
+        <View style={styles.gainRow}>
+          <Text style={styles.gainRowLabel}>LIGHT GAIN</Text>
+          <View style={styles.gainChipsContainer}>
+            {GAIN_OPTIONS.map((opt) => {
+              const active = Math.abs((apertureGain ?? 0) - opt.value) < 0.1
+              return (
+                <Pressable
+                  key={opt.value}
+                  onPress={() => {
+                    Haptics.selectionAsync()
+                    setApertureGain(opt.value)
+                  }}
+                  style={[styles.gainChip, active && styles.gainChipActive]}
+                >
+                  <Text style={[styles.gainChipText, active && styles.gainChipTextActive]}>
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              )
+            })}
+          </View>
+        </View>
+      )}
+
       <Text style={styles.capabilityNote}>
         {auto ? 'Auto: Native f/1.7 fixed aperture' : dofDescription}
       </Text>
@@ -685,12 +727,15 @@ export default function ManualControls({
   } = controls
   const canFocus = maxFocusDiopters != null && maxFocusDiopters > 0
 
+  const isEvDisabled = !controls.isEvEnabled || fullyManual
+
   // EV and metering only affect a running AE algorithm — if exposure went
-  // fully manual while one of their panels happened to be open, collapse it
+  // manual while one of their panels happened to be open, collapse it
   // rather than leave a dead panel showing.
   useEffect(() => {
-    if (fullyManual && (activeParam === 'EV' || activeParam === 'M')) setActiveParam(null)
-  }, [fullyManual, activeParam])
+    if (isEvDisabled && activeParam === 'EV') setActiveParam(null)
+    if (fullyManual && activeParam === 'M') setActiveParam(null)
+  }, [isEvDisabled, fullyManual, activeParam])
 
   const toggle = (key: ParamKey) => {
     Haptics.selectionAsync()
@@ -706,8 +751,8 @@ export default function ManualControls({
           {activeParam === 'ISO' && <IsoPanel controls={controls} />}
           {activeParam === 'S' && <ShutterPanel controls={controls} />}
           {activeParam === 'AP' && <AperturePanel controls={controls} />}
-          {activeParam === 'EV' && (
-            <EvPanel ev={ev} setEv={setEv} minExposure={minExposure} maxExposure={maxExposure} dim={fullyManual} />
+          {activeParam === 'EV' && !isEvDisabled && (
+            <EvPanel ev={ev} setEv={setEv} minExposure={minExposure} maxExposure={maxExposure} dim={isEvDisabled} />
           )}
           {activeParam === 'WB' && <WhiteBalancePanel controls={controls} />}
           {activeParam === 'AF' && <FocusPanel controls={controls} onAutoSelected={() => setActiveParam(null)} />}
@@ -749,18 +794,24 @@ export default function ManualControls({
             </Text>
           </View>
         </Pressable>
-        <Pressable style={styles.stripCol} onPress={() => toggle('EV')} disabled={fullyManual}>
+        <Pressable
+          style={styles.stripCol}
+          onPress={() => {
+            if (!isEvDisabled) toggle('EV')
+          }}
+          disabled={isEvDisabled}
+        >
           <Text
             style={[
               styles.stripLabel,
               activeParam === 'EV' && styles.stripLabelActive,
-              fullyManual && styles.stripDisabled,
+              isEvDisabled && styles.stripDisabled,
             ]}
           >
             EV
           </Text>
           <View style={styles.stripValueRow}>
-            <Text style={[styles.stripValueText, fullyManual && styles.stripDisabled]}>{formatEv(ev)}</Text>
+            <Text style={[styles.stripValueText, isEvDisabled && styles.stripDisabled]}>{formatEv(ev)}</Text>
           </View>
         </Pressable>
         <Pressable style={styles.stripCol} onPress={() => toggle('WB')}>
@@ -947,4 +998,43 @@ const styles = StyleSheet.create({
 
   wbGrid: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 6 },
   wbItem: { alignItems: 'center', padding: 8 },
+
+  gainRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 8,
+    paddingTop: 4,
+  },
+  gainRowLabel: {
+    fontFamily: fonts.mono,
+    fontSize: 10,
+    color: colors.textSoft,
+    letterSpacing: 0.8,
+  },
+  gainChipsContainer: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  gainChip: {
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 4,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  gainChipActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  gainChipText: {
+    fontFamily: fonts.mono,
+    fontSize: 11,
+    color: colors.textSoft,
+  },
+  gainChipTextActive: {
+    fontFamily: fonts.monoBold,
+    color: '#000',
+  },
 })
