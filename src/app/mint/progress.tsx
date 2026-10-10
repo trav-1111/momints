@@ -681,21 +681,18 @@ export default function MintProgressScreen() {
       <View style={{ padding: 22, paddingBottom: 26 }}>
         {allComplete || canLeaveWhileFinalizing ? (
           <>
-            {canLeaveWhileFinalizing && (
-              <Text
-                style={{
-                  fontFamily: fonts.mono,
-                  fontSize: 10.5,
-                  lineHeight: 16,
-                  color: colors.textSecondary,
-                  textAlign: 'center',
-                  marginBottom: 12,
-                }}
-              >
-                Your mint is safely recorded. Arweave usually takes 8–12 minutes to make the permanent image available.
-                You can return to the camera and check again later.
-              </Text>
-            )}
+            <Text
+              style={{
+                fontFamily: fonts.sans,
+                fontSize: 12,
+                lineHeight: 17,
+                color: colors.textSecondary,
+                textAlign: 'center',
+                marginBottom: 12,
+              }}
+            >
+              The mint has succeeded on Solana and will be viewable in your wallet soon.
+            </Text>
             <Pressable
               onPress={handleFinish}
               style={{

@@ -379,8 +379,7 @@ export function FilmStockPicker({ purpose, selectedId, onSelect }: Props) {
               color: colors.textSecondary,
             }}
           >
-            Momints Film Stocks are released in limited collectible seasons. Completing and developing a full roll
-            during the release window permanently verifies and unlocks the stock to your Solana wallet.
+            Mint a roll to keep the filmstock before it’s gone.
           </Text>
         </View>
       )}
