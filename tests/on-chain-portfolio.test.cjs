@@ -190,3 +190,122 @@ test('mergeMintPortfolio deduplicates by mint address and sorts newest first', (
   assert.equal(merged[2].id, 'MintAAA')
   assert.equal(merged[2].transactionSignature, 'sig111') // enriched from local
 })
+
+test('history excludes Core roll collections and burnt assets while retaining their photographs', async () => {
+  const content = { metadata: { name: 'Roll', symbol: 'MOMINTS' } }
+  const { service } = setup(
+    mockDasSuccess([
+      { id: 'roll-cover', interface: 'MplCoreCollection', content },
+      { id: 'burnt-photo', interface: 'MplCoreAsset', burnt: true, content },
+      { id: 'frame', interface: 'MplCoreAsset', content },
+      { id: 'quickshot', interface: 'MplCoreAsset', content: { metadata: { name: 'L', symbol: 'MOMINT' } } },
+    ]),
+  )
+  const result = await service.fetchUserOnChainMints(WALLET)
+  assert.deepEqual(
+    result.items.map((item) => item.id),
+    ['frame', 'quickshot'],
+  )
+})
+
+test('history requests creation order and reads beyond the first 100 owned assets', async () => {
+  const pages = []
+  const { service } = setup(async (_url, options) => {
+    const { params } = JSON.parse(options.body)
+    pages.push(params)
+    return mockDasSuccess(
+      params.page === 1
+        ? Array.from({ length: 100 }, (_, i) => ({ id: `other-${i}`, content: { metadata: { name: 'Other' } } }))
+        : [{ id: 'last-photo', interface: 'MplCoreAsset', content: { metadata: { name: 'L', symbol: 'MOMINTS' } } }],
+    )
+  })
+  const result = await service.fetchUserOnChainMints(WALLET)
+  assert.deepEqual(
+    result.items.map((item) => item.id),
+    ['last-photo'],
+  )
+  assert.deepEqual(
+    pages.map((page) => page.page),
+    [1, 2],
+  )
+  assert.ok(pages.every((page) => page.sortBy?.sortBy === 'created' && page.sortBy?.sortDirection === 'desc'))
+})
+
+test('metadata documents are never used as image thumbnails', async () => {
+  const { service } = setup(
+    mockDasSuccess([
+      {
+        id: 'metadata-only',
+        content: {
+          json_uri: 'https://arweave.net/metadata',
+          metadata: { symbol: 'MOMINTS' },
+          files: [{ uri: 'https://arweave.net/metadata', mime: 'application/json' }],
+        },
+      },
+      {
+        id: 'image-file',
+        content: {
+          metadata: { symbol: 'MOMINTS' },
+          files: [
+            { uri: 'https://arweave.net/metadata', mime: 'application/json' },
+            { uri: 'ar://photo', mime: 'image/jpeg' },
+          ],
+        },
+      },
+    ]),
+  )
+  const result = await service.fetchUserOnChainMints(WALLET)
+  assert.equal(result.items[0].imageUri, '')
+  assert.equal(result.items[1].imageUri, 'https://arweave.net/photo')
+})
+
+test('portfolio preserves indexer creation order instead of sorting human-readable capture times', async () => {
+  const { service } = setup(
+    mockDasSuccess([
+      {
+        id: 'newest',
+        content: {
+          metadata: {
+            name: 'L',
+            symbol: 'MOMINTS',
+            attributes: [{ trait_type: 'Captured', value: '10:06 PM · Saturday' }],
+          },
+        },
+      },
+      {
+        id: 'older',
+        content: {
+          metadata: {
+            name: 'Old',
+            symbol: 'MOMINTS',
+            attributes: [{ trait_type: 'Captured', value: '2026-10-01T12:00:00Z' }],
+          },
+        },
+      },
+    ]),
+  )
+  const result = await service.fetchUserOnChainMints(WALLET)
+  assert.deepEqual(
+    service.mergeMintPortfolio(result.items, []).map((item) => item.id),
+    ['newest', 'older'],
+  )
+})
+
+test('verified local history enriches a stale indexed thumbnail without mutating cached assets', () => {
+  const { service } = setup(mockDasSuccess([]))
+  const indexed = Object.freeze({ id: 'photo', name: 'L', imageUri: '', mintedAt: '', source: 'chain' })
+  const local = {
+    id: 'capture',
+    mintAddress: 'photo',
+    title: 'L',
+    imageUri: 'https://arweave.net/permanent-photo',
+    transactionSignature: 'sig',
+    mintedAt: '2026-10-10T12:00:00Z',
+  }
+  const merged = service.mergeMintPortfolio([indexed], [local])
+  assert.equal(merged[0].imageUri, local.imageUri)
+  assert.equal(merged[0].transactionSignature, 'sig')
+  assert.equal(merged[0].mintedAt, local.mintedAt)
+  assert.equal(indexed.imageUri, '')
+  assert.equal(indexed.transactionSignature, undefined)
+})

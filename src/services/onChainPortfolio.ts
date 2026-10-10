@@ -17,6 +17,8 @@ export interface UserMintAsset {
   collectionAddress?: string
   attributes?: { trait_type: string; value: string }[]
   source?: 'chain' | 'local' | 'reconciled'
+  /** Position in the indexer's creation-descending portfolio, across pages. */
+  chainOrder?: number
 }
 
 export interface PortfolioFetchResult {
@@ -29,6 +31,7 @@ export interface PortfolioFetchResult {
 interface DasItem {
   id: string
   interface?: string
+  burnt?: boolean
   content?: {
     json_uri?: string
     metadata?: {
@@ -123,12 +126,14 @@ function extractFilmStock(attributes?: { trait_type?: string; value?: unknown }[
  * Determines whether a DAS asset represents a Momints photo NFT.
  */
 function isMomintsAsset(item: DasItem): boolean {
+  // A roll collection is the album/cover, not an exposure owned by the shooter.
+  if (item.interface === 'MplCoreCollection' || item.burnt) return false
   const metadata = item.content?.metadata
   const name = metadata?.name || ''
   const symbol = metadata?.symbol || ''
   const attributes = metadata?.attributes || []
 
-  if (symbol.toUpperCase() === 'MOMINTS') return true
+  if (['MOMINT', 'MOMINTS'].includes(symbol.toUpperCase())) return true
   if (name.toLowerCase().startsWith('momints')) return true
 
   for (const attr of attributes) {
@@ -146,7 +151,7 @@ function isMomintsAsset(item: DasItem): boolean {
 /**
  * Converts a raw DAS item into a typed UserMintAsset.
  */
-function parseDasItemToUserAsset(item: DasItem): UserMintAsset {
+function parseDasItemToUserAsset(item: DasItem, chainOrder: number): UserMintAsset {
   const metadata = item.content?.metadata
   const name = metadata?.name || `Momints #${item.id.slice(0, 4)}`
   const attributes = (metadata?.attributes || []).map((a) => ({
@@ -154,7 +159,8 @@ function parseDasItemToUserAsset(item: DasItem): UserMintAsset {
     value: String(a.value ?? ''),
   }))
 
-  const rawImage = item.content?.links?.image || item.content?.files?.[0]?.uri || item.content?.json_uri || ''
+  const rawImage =
+    item.content?.links?.image || item.content?.files?.find((file) => file.mime?.startsWith('image/'))?.uri || ''
   const imageUri = normalizeArweaveUrl(rawImage)
 
   let rollName: string | undefined
@@ -187,10 +193,13 @@ function parseDasItemToUserAsset(item: DasItem): UserMintAsset {
     frameNumber,
     artist,
     location,
-    mintedAt: capturedAtStr || new Date().toISOString(),
+    // Captured is often display text ("10:06 PM · Saturday"), not a sortable
+    // timestamp. Preserve it for display; creation order comes from the RPC.
+    mintedAt: capturedAtStr || '',
     collectionAddress,
     attributes,
     source: 'chain',
+    chainOrder,
   }
 }
 
@@ -225,42 +234,57 @@ export async function fetchUserOnChainMints(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
 
   try {
-    const payload = {
-      jsonrpc: '2.0',
-      id: 'momints-portfolio-query',
-      method: 'getAssetsByOwner',
-      params: {
-        ownerAddress: cleanAddress,
-        page: 1,
-        limit: 100,
-        displayOptions: {
-          showFungible: false,
-          showNativeBalance: false,
+    const items: DasItem[] = []
+    const seen = new Set<string>()
+    const pageSize = 100
+    for (let page = 1; ; page++) {
+      const payload = {
+        jsonrpc: '2.0',
+        id: 'momints-portfolio-query',
+        method: 'getAssetsByOwner',
+        params: {
+          ownerAddress: cleanAddress,
+          page,
+          limit: pageSize,
+          sortBy: { sortBy: 'created', sortDirection: 'desc' },
+          displayOptions: {
+            showFungible: false,
+            showNativeBalance: false,
+          },
         },
-      },
+      }
+
+      const response = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      })
+
+      if (!response.ok) {
+        throw new Error(`DAS query failed with HTTP status ${response.status}`)
+      }
+
+      const data = (await response.json()) as DasResponse
+
+      if (data.error) {
+        throw new Error(`DAS RPC error: ${data.error.message} (code ${data.error.code})`)
+      }
+
+      const batch = data.result?.items || []
+      const previousCount = seen.size
+      for (const item of batch) {
+        if (!seen.has(item.id)) {
+          seen.add(item.id)
+          items.push(item)
+        }
+      }
+      if (batch.length < pageSize) break
+      if (seen.size === previousCount) throw new Error('DAS pagination did not advance')
     }
-
-    const response = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify(payload),
-      signal: controller.signal,
-    })
-
-    if (!response.ok) {
-      throw new Error(`DAS query failed with HTTP status ${response.status}`)
-    }
-
-    const data = (await response.json()) as DasResponse
-
-    if (data.error) {
-      throw new Error(`DAS RPC error: ${data.error.message} (code ${data.error.code})`)
-    }
-
-    const items = data.result?.items || []
     const momintsAssets = items.filter(isMomintsAsset).map(parseDasItemToUserAsset)
 
     // Update in-memory cache
@@ -308,7 +332,7 @@ export function mergeMintPortfolio(onChainMints: UserMintAsset[], localHistory: 
 
   // 1. Add on-chain items first (authoritative permanent records)
   for (const onChain of onChainMints) {
-    resultMap.set(onChain.id, onChain)
+    resultMap.set(onChain.id, { ...onChain })
   }
 
   // 2. Overlay / insert local history items (may have local thumbnails or recent unindexed mints)
@@ -326,6 +350,13 @@ export function mergeMintPortfolio(onChainMints: UserMintAsset[], localHistory: 
       }
       if (!existing.artist && local.artist) {
         existing.artist = local.artist
+      }
+      if (!existing.imageUri && local.imageUri) {
+        existing.imageUri = normalizeArweaveUrl(local.imageUri)
+        existing.arweaveUri = local.imageUri.includes('arweave') ? local.imageUri : undefined
+      }
+      if (!Number.isFinite(Date.parse(existing.mintedAt)) && Number.isFinite(Date.parse(local.mintedAt))) {
+        existing.mintedAt = local.mintedAt
       }
     } else {
       // Local mint not yet indexed by DAS
@@ -353,6 +384,11 @@ export function mergeMintPortfolio(onChainMints: UserMintAsset[], localHistory: 
 
   // Sort newest first
   merged.sort((a, b) => {
+    if (a.chainOrder !== undefined && b.chainOrder !== undefined) return a.chainOrder - b.chainOrder
+    // Unindexed local records appear first; all indexed records retain the
+    // RPC's creation order regardless of display-only capture time strings.
+    if (a.chainOrder !== undefined) return 1
+    if (b.chainOrder !== undefined) return -1
     const timeA = Date.parse(a.mintedAt) || 0
     const timeB = Date.parse(b.mintedAt) || 0
     return timeB - timeA

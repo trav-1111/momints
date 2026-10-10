@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useMemo } from 'react'
+import { useCallback, useState, useMemo } from 'react'
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import {
   ViewStyle,
 } from 'react-native'
 import { Image } from 'expo-image'
-import { useRouter } from 'expo-router'
+import { useFocusEffect, useRouter } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
 import { useMintQueue } from '../store/mintQueue'
 import { drainPendingFinalizes } from '../store/quickFinalize'
@@ -63,7 +63,7 @@ export default function PastMintsScreen() {
 
       try {
         const [dasResult, roll, quick] = await Promise.all([
-          fetchUserOnChainMints(walletAddress, { forceRefresh: isPullToRefresh }),
+          fetchUserOnChainMints(walletAddress, { forceRefresh: true }),
           reconcileActiveRollFrames(walletAddress),
           drainPendingFinalizes(),
         ])
@@ -94,9 +94,11 @@ export default function PastMintsScreen() {
     await loadPortfolio(true)
   }, [loadPortfolio])
 
-  useEffect(() => {
-    void loadPortfolio(false)
-  }, [loadPortfolio])
+  useFocusEffect(
+    useCallback(() => {
+      void loadPortfolio(false)
+    }, [loadPortfolio]),
+  )
 
   // Merge on-chain assets with local pending history
   const mergedItems = useMemo(() => {
@@ -153,7 +155,7 @@ export default function PastMintsScreen() {
 
   const formatDate = (ts: string) => {
     const d = new Date(ts)
-    if (isNaN(d.getTime())) return ts
+    if (isNaN(d.getTime())) return ts || 'Date unavailable'
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
   }
 
