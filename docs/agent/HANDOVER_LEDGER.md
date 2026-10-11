@@ -4,6 +4,17 @@
 
 ---
 
+## Session 2026-10-11: Review Badge APK Build, Device Update and Drive Replacement
+
+* **Agent / Author:** Codex / Trav
+* **Authorization / Source:** Owner requested commit, push and updated APK, then replacing the previous APK in the shared Drive folder. Assessment notes committed separately as `90551a1`; UI deletion committed/pushed as `16c28cc176efbf44814a953f42deaa0a000113f8` on `codex/submission-v2-candidate`. Unrelated untracked research preserved. No camera policy, Worker or production-record changes.
+* **Artifact:** Built from frozen committed source with the existing QA identity. Standalone non-debuggable arm64 `com.momints.v2qa`, versionName 1.0.0/versionCode 1; 73,021,938 bytes. APK SHA-256 `910498e4faf73855c0de8d57f9ae861eea121f672f1d6dd589763b94619048ae`; certificate `fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c`. Ignored artifact `.expo/submission-candidate-apk-20261001/momints-hackathon-only-debug-signed-16c28cc1-arm64.apk`; build receipt `build-16c28cc1.json` in the same directory. QA/hackathon signing identity, not the dApp Store release artifact.
+* **Verification / Device:** Artifact audit confirms baseline Hermes bundle contains the badge text and the new bundle omits it (UTF-8/UTF-16 checked), exported review source hash matches the build receipt, production public API/treasury are present, fine-location permission absent, trusted certificate/package/ABI/embedded JS checks pass. ADB in-place install on `SM02G406193022` succeeded; installed base.apk SHA-256 matches. Cold history launch Status ok, 278 ms. No uninstall/data clear, new capture, paid flow or visual burst-retest performed. Fast suite retains the same seven camera/privacy baseline failures.
+* **Drive:** Updated existing file `1scLDnA2MBaw4Er4ONKu0NIt8ijZiDHH6` in folder `1K0kwhF01PWVq61XPSnTUr5M3zzdKMI0j` using Google Drive in-place content replacement, renamed to the new APK name. Readback at 11:11:58 Brisbane confirms 73,021,938 bytes, same ID/folder and same permission metadata. Existing [shared APK link](https://drive.google.com/file/d/1scLDnA2MBaw4Er4ONKu0NIt8ijZiDHH6/view?usp=drivesdk) now serves the new build. Other historical APKs were not modified.
+* **Next / Limits:** Tester should update in place to retain app data. Historical COMPLETE 0/12 roll restoration remains separately pending; this UI-only APK does not perform delegate restoration or backend reopening. Camera release-hardening findings remain documented separately.
+
+---
+
 ## Session 2026-10-11: Remove Obsolete Review Kino Badge
 
 * **Agent / Author:** Codex / Trav
