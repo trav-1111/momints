@@ -4,6 +4,34 @@
 
 ---
 
+## Session 2026-10-11: Remove Obsolete Review Kino Badge
+
+* **Agent / Author:** Codex / Trav
+* **Scope / Change:** Owner requested deleting the orange Kino sequence badge from Quick burst review. Removed only the conditional badge JSX from `src/app/review.tsx`; existing action badges, photo state and mint/capture logic are unchanged.
+* **Verification Boundary:** Source diff is the requested deletion. No new tests for this visual removal; required fast verification retains the known camera/privacy baseline. No device visual verification, APK rebuild/install, commit or push performed in this task.
+
+---
+
+## Session 2026-10-11: Camera Readiness Partner Feedback Reassessment
+
+* **Agent / Author:** Codex / Trav
+* **Scope:** Analyze camera partner's explanation against current source at `36d5421`. Documentation and ignored diagnostic probes only; no camera implementation, maintained test expectations, APK or deployment changes.
+* **Verified Truth:** Focused readiness/privacy suite remains 22/29 with the same seven failures. New controlled-promise probes confirm intended fresh-auto readiness and nine-attempt timing; stale-session rejection and visible timeout/retry recovery pass with nondefault white balance.
+* **Relevant Remaining Behavior:** After acknowledged manual settings, `reset()` immediately allows capture while auto application is pending. Rejecting that reset with a timeout suppresses the error and leaves capture permitted. Two proposed safety assertions fail. This proves hook behavior, not incorrect physical exposure; native still configuration is attempted before preview acknowledgment, and its reflection failure can be swallowed. Fresh auto and same-session reset need distinct contracts.
+* **Next:** Revise obsolete retry/UI/copy expectations, retain manual/session/error invariants and add reset-transition and burst lifecycle coverage. Kino currently gates at entry but not after recipe download or per snapshot; existing Kino tests concern settings rather than lifecycle. Updated [camera findings](../CAMERA-READINESS-FINDINGS-2026-10-10.md) contains the evidence, seven-test disposition and hardware QA limits. Ignored probes/logs under `.expo/roll-investigation-2026-10-11/`; no commit/push in this analysis.
+
+---
+
+## Session 2026-10-11: Historical Tester Roll Recovery Assessment
+
+* **Agent / Author:** Codex / Trav
+* **Scope:** Owner requested assessing whether the tester's original roll is recoverable. Read-only production D1/public chain/metadata checks and an unsigned simulation only; no signing, broadcast, refund, delegate mutation, record repair or deployment.
+* **Verified Truth:** At 10:28:59 Brisbane the original 0.084038086 SOL payment, collection creation and handoff are finalized successfully. Original roll remains COMPLETE 0/12, no database frames, collection numMinted/currentSize both zero. Tester retains root update authority; Worker delegate absent. No other roll or pending creation. Martha is identified by metadata; original aspect remains unknown. Protocol-v2 capability exists server-side, device possession unverified.
+* **Simulation:** At 10:30:49 Brisbane an unsigned single-instruction owner approval successfully simulated delegate restoration with unchanged root authority/metadata/frame counts. Estimated debit 167,560 lamports (5,000 network fee plus 162,560 collection rent); no new roll payment needed. Signature verification was disabled for simulation; this is not actual authorization or a landed repair.
+* **Open / Next:** Resolve tester installation/capability and local vault state; existing endpoint cannot rotate an already claimed v2 capability. Restoration needs tester-signed delegate approval plus audited/guarded reopening and reset of the active handoff checkpoint while preserving original audit evidence. No automatic COMPLETE reopen. See [the concrete recovery assessment](../TESTER-ROLL-RECOVERY-ASSESSMENT-2026-10-11.md). Private evidence/scripts remain ignored. No new commit/push in this assessment.
+
+---
+
 ## Session 2026-10-11: Owner Roll Resume QA
 
 * **Agent / Author:** Codex / Trav

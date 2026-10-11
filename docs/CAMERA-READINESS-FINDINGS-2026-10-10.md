@@ -133,6 +133,61 @@ The following are recommended coverage areas, not a claim that all other feature
 
 The preferred approach is to retain lifecycle and stale-callback protections, revise policy-specific assertions, and add coverage around the newer capture paths. The seven failures alone are an incomplete measure of camera quality and do not justify restoring the old implementation wholesale.
 
+## Reassessment after camera partner feedback — 11 October 2026
+
+Reviewed current branch at `36d5421`. The camera partner confirms that fresh-auto capture, nine binding attempts, recovery by tapping the shutter and the revised mint sentence are intentional V2 behavior. This resolves the design-intent question for those changes. It does not establish that every earlier safety guarantee is obsolete or that physical capture timing is verified.
+
+Focused baseline rerun remains **22/29 passing, the same seven failures**:
+
+```powershell
+node --test tests/camera-readiness.test.cjs tests/privacy.test.cjs
+```
+
+Additional ignored diagnostic probes execute the real hooks with controlled native promises:
+
+```powershell
+node --test .expo/roll-investigation-2026-10-11/camera-policy-probes.cjs
+```
+
+Result: **four policy/retained-guarantee probes pass; two proposed transition-safety probes fail**. These two diagnostic failures are not two additional confirmed device bugs and are not added to the maintained suite.
+
+Passing probes establish:
+
+- Fresh default-auto streaming permits capture before settings acknowledgment, as intended.
+- With nondefault white balance, an old session's completion does not enable the rebound session; only its own acknowledgment does.
+- With nondefault white balance, a settings timeout remains visible, blocks capture and can recover by explicit retry plus acknowledgment.
+- The new binding policy makes nine total attempts, with 150/300/450/600/600/600/600/600 ms delays, then stops. These delays total 3.9 seconds, excluding request execution time.
+
+The two proposed safety checks exercise a different situation from fresh startup:
+
+1. Apply and acknowledge manual ISO/shutter settings on a streaming session.
+2. Request `reset()` on that same session.
+3. Leave the native auto application unresolved, or reject it with `ERR_CAMERA_STATE_TIMEOUT`.
+
+The current hook reports capture-ready immediately in step 2. After the rejected reset it reports no controls error and still permits capture. `isAutoDefault` examines desired JS settings, not whether that session previously applied nondefault settings or whether resetting them succeeded. This is a confirmed gate/error-handling behavior requiring an explicit reset policy; it is not proof that an actual photograph retained manual exposure.
+
+Native nuance matters: `applyCameraState` runs on the Android main queue, attempts the still-pipeline configuration update before calling `setCaptureRequestOptions`, then waits for the preview-control future. A delayed/failed acknowledgment therefore does not prove that the still reset failed. Conversely, still-pipeline reflection failures are logged/swallowed, and the returned acknowledgment does not certify that still configuration was updated. Neither the old blanket acknowledgment rule nor the new blanket auto exception alone proves correct sensor exposure.
+
+### Disposition of the original failures
+
+| Original failure | Current disposition |
+| --- | --- |
+| 1: startup must wait for controls acknowledgment | Revise: fresh default-auto startup may be ready while streaming. Keep nondefault/manual acknowledgment checks and add same-session reset coverage. |
+| 2: stale completion after rebound | Keep the guarantee. Change the setup to nondefault settings so default-auto readiness does not obscure the assertion. The focused replacement probe passes. |
+| 3: exactly three binding attempts | Replace the obsolete count/timing with nine-attempt policy. Keep bounded retries, error classification and session/unmount cancellation. |
+| 4: retry at 100 ms then wait for acknowledgment | Use 150 ms initially and nondefault settings for the acknowledgment portion; test fresh auto separately. |
+| 5: settings errors always block default-auto capture | Split by context. Manual/nondefault failures still need visibility and successful recovery. Fresh-auto acknowledgment failures may use the intended fallback; failures returning a previously manual session to auto need a separate safety decision. |
+| 6: literal shutter-disabled expression | Remove that literal requirement. Keep behavioral checks that an unready press requests recovery without sensor work or queue entry. Split native identity/timeout assertions so an obsolete UI check cannot hide them. |
+| 7: literal mint-status sentence | Replace the obsolete wording assertion. Preserve the pending-propagation behavior checks, which already pass; a copy mismatch alone does not establish a privacy defect. |
+
+The preferred revision preserves fast fresh-auto launch while requiring evidence that a previously configured session has safely reset, or rebinding to a known-default session before treating it as fresh. Track this per session and include exposure, focus, white balance, metering and lock state. The exact implementation remains a design choice; no camera code or maintained test expectation was changed in this reassessment.
+
+Expanded features make lifecycle coverage more relevant. The normal single-shot handler rechecks `canCapture()` after recipe download and torch delay. Kino checks it at entry but not after recipe download or inside its snapshot loop; its loop currently continues based on the crank flag. Existing Kino tests cover store settings, not this lifecycle behavior. Add a targeted burst cancellation/recheck test for backgrounding, stop and lens changes. This is a separate code-coverage concern, not an explanation for any of the seven historical failures or a demonstrated device fault.
+
+Next physical checks should compare immediate fresh-auto capture with manual ISO/shutter/focus/WB/lock-to-auto transitions, checking the captured image/EXIF where available, plus burst stop/background/lens transitions. The partner's explanation supports revising obsolete assertions, but does not justify discarding lifecycle, reset or error-visibility coverage wholesale.
+
+Private baseline and diagnostic logs remain under ignored `.expo/roll-investigation-2026-10-11/`. No APK rebuild, deployment, signing or hardware fault-injection was performed for this analysis.
+
 ## Recommended follow-up
 
 First decide and verify whether default-auto capture may safely proceed before settings acknowledgment, especially when returning from manual controls to auto. Confirm what the user should see if that settings application fails. This should precede weakening the failing readiness assertions.
