@@ -220,35 +220,6 @@ export default function ReviewScreen() {
           style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: 230 }}
         />
 
-        {/* Kino sequence badge */}
-        {item.kinoId && (
-          <View
-            style={{
-              position: 'absolute',
-              top: 80,
-              left: 18,
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 6,
-              paddingVertical: 6,
-              paddingHorizontal: 12,
-              borderRadius: 999,
-              backgroundColor: 'rgba(243, 156, 18, 0.9)',
-            }}
-          >
-            <Text
-              style={{
-                fontFamily: fonts.monoBold,
-                fontSize: 10,
-                letterSpacing: tracking(0.06, 10),
-                color: colors.white,
-              }}
-            >
-              🎞️ KINO #{item.kinoIndex !== undefined ? item.kinoIndex + 1 : ''}
-            </Text>
-          </View>
-        )}
-
         {/* Marked-action badge */}
         {item.action !== 'pending' && (
           <View
