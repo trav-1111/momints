@@ -4,6 +4,17 @@
 
 ---
 
+## Session 2026-10-11: Paid Roll Recovery Production Deployment
+
+* **Agent / Author:** Codex / Trav
+* **Authorization / Source:** Owner explicitly requested “deploy changes” after reviewing the Worker/migrations/dashboard rollout. Deployed source `02fa7445ea00d32840a7994a1b952f83676604c2` on `codex/submission-v2-candidate`. Installed QA client remains `73b0665`; subsequent changes were Worker-only. No push or new APK rebuild needed.
+* **Deployment:** Previous Worker `95ac9894-4830-4c64-8e3d-d8f86ad17338`; maintenance version `8dd3268e-d0b2-44f0-8e36-f8a64b8971a6`; active version `016c1c21-7eb7-4938-9890-dab6c86047bd` at `api.momints.xyz`. Additive migrations 0011–0012 applied to `momints-rolls`, no pending migrations. Dashboard published to existing production project/main branch, deployment `b5514261-fa9b-4e14-a883-39e62ad4a34e`. Final live verification 10:09 Brisbane.
+* **Verified Truth:** Public D1 health, new unsigned SOL quote, signer/treasury identity, sufficient funding, operator authentication and preserved dashboard CORS pass. Queue delivery restored, exactly one consumer on each production queue, one finalize producer and exactly both original cron schedules. Retired/disposable services remain detached and paused. Published dashboard JavaScript hash matches source. All plain-text settings and secret binding names, R2 lifecycle rules, catalogue and 11 immutable asset hashes unchanged. Tester remains COMPLETE 0/12 with its original handoff signature and null new closure audit fields; no refund, replacement mint, delegate regrant or manual recovery triggered.
+* **Verification / Operations:** Rechecked app TypeScript and fast suite 99/106 (same seven baseline failures); Worker TypeScript and 39/39 tests pass. Saved pre-deployment D1 recovery bookmark and private receipts under ignored `.expo/roll-investigation-2026-10-11/`. Cloudflare initially rejected the expired session; Wrangler refreshed it and preflight succeeded before mutations. Maintenance config omission does not delete existing schedules/consumers: explicitly cleared schedules and detached consumers after pausing delivery, verified full maintenance, then migrated and reactivated. Use `--keep-vars` to preserve the live dashboard origin. Code-only rollout preserved deployed filmstock assets despite the unrelated local LUT validation mismatch.
+* **Open / Next:** Installed QA APK is ready for owner-driven purchase/shoot/resume testing. No paid end-to-end hardware flow has been performed by the agent. New job heartbeats await their first scheduled run; do not mistake empty new history for a stopped cron. Existing dashboard incidents still need separate evidence-based remedies. See [the implementation and rollout record](../ROLL-PAYMENT-RECOVERY-IMPLEMENTATION-2026-10-11.md).
+
+---
+
 ## Session 2026-10-11: Paid Roll Recovery Implementation and QA Update
 
 * **Agent / Author:** Codex / Trav
