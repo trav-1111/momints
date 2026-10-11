@@ -325,20 +325,12 @@ export function useMint() {
           } catch (error) {
             if (!isPermanentImagePending(error)) throw error
 
-            // The Worker has returned the minted asset and permanent URI. A
-            // gateway 404 at this point means Arweave is still propagating,
-            // not that the mint failed. Keep the encrypted roll source and
-            // let the progress screen retry retrieval without offering a
-            // second mint transaction.
-            onItem(item.photoId, {
-              status: 'confirming',
-              signature: res.signature ?? undefined,
-              mintAddress: res.assetAddress,
-              imageUri: res.imageUri,
-              artifact: { imageHash: res.imageHash, width: res.width, height: res.height },
-              note: 'Minted · permanent image becoming available (usually 8–12 min)',
-            })
-            continue
+            // The Worker has returned the minted asset and permanent URI. Gateway
+            // propagation (arweave.net returning 404) takes 8–12 min, but the
+            // on-chain Metaplex asset is already created. Rather than halting the
+            // queue in status: 'confirming', record the permanent imageUri: res.imageUri
+            // as successful so the user is not held hostage on this screen.
+            imageUri = res.imageUri
           }
           summary.succeeded++
           onItem(item.photoId, {

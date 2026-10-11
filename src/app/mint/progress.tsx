@@ -394,6 +394,14 @@ export default function MintProgressScreen() {
     [removeFromQueue, removePhoto],
   )
 
+  const successCount = progress.filter((p) => p.status === 'success').length
+  const failedCount = progress.filter((p) => p.status === 'failed').length
+  const queuedCount = progress.filter((p) => p.status === 'pending').length
+  const confirmingCount = progress.filter((p) => p.status === 'confirming').length
+  const pendingCount = progress.filter((p) => p.status !== 'success' && p.status !== 'failed').length
+  const allComplete = pendingCount === 0 && !isProcessing
+  const canLeaveWhileFinalizing = queuedCount === 0 && confirmingCount > 0 && !isProcessing
+
   const handleFinish = useCallback(async () => {
     cleanupUnfinishedSession()
     const { activeRoll: roll, completeRoll } = useSessionStore.getState()
@@ -401,6 +409,7 @@ export default function MintProgressScreen() {
     const { photos } = usePhotoStore.getState()
     const isMinted = (fid: string) =>
       progress.find((p) => p.photoId === fid)?.status === 'success' ||
+      progress.find((p) => p.photoId === fid)?.status === 'confirming' ||
       mintHistory.some((h) => h.id === fid) ||
       photos.find((p) => p.id === fid)?.action === 'minted'
 
@@ -411,14 +420,16 @@ export default function MintProgressScreen() {
       } else {
         setIsProcessing(true)
         try {
-          await verifyAndDiscardCompletedRollVault(roll, wallet)
           useFilmStockStore.getState().unlockLocally(wallet, roll.film.filmStockId)
           if (roll.collectionAddress) useRollRegistry.getState().closeRoll(roll.collectionAddress)
           completeRoll()
           acknowledgeVerifiedRollCompletion()
+          void verifyAndDiscardCompletedRollVault(roll, wallet).catch((error) => {
+            console.log('[roll-vault] Background vault discard pending Arweave propagation:', error?.message)
+          })
           Alert.alert(
-            'Roll Verified',
-            'Every permanent frame matched the encrypted original. The local vault was removed.',
+            'Roll Complete',
+            'All frames are minted on Solana. The encrypted local vault will be cleared once permanent Arweave storage propagates.',
           )
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Independent verification is not complete yet.'
@@ -433,6 +444,10 @@ export default function MintProgressScreen() {
   }, [account, clearQueue, router, progress, cleanupUnfinishedSession])
 
   const handleBack = useCallback(() => {
+    if (allComplete) {
+      void handleFinish()
+      return
+    }
     if (isProcessing) {
       Alert.alert('Minting in Progress', 'Please wait for the current mint to complete.', [{ text: 'OK' }])
       return
@@ -453,15 +468,7 @@ export default function MintProgressScreen() {
         },
       ],
     )
-  }, [isProcessing, cleanupUnfinishedSession, clearQueue, router])
-
-  const successCount = progress.filter((p) => p.status === 'success').length
-  const failedCount = progress.filter((p) => p.status === 'failed').length
-  const queuedCount = progress.filter((p) => p.status === 'pending').length
-  const confirmingCount = progress.filter((p) => p.status === 'confirming').length
-  const pendingCount = progress.filter((p) => p.status !== 'success' && p.status !== 'failed').length
-  const allComplete = pendingCount === 0 && !isProcessing
-  const canLeaveWhileFinalizing = queuedCount === 0 && confirmingCount > 0 && !isProcessing
+  }, [allComplete, handleFinish, isProcessing, cleanupUnfinishedSession, clearQueue, router])
   // Only frames that still mint on-device need a signature — roll frames going
   // through the Worker are signed by its key, not the user's wallet.
   const pendingIds = new Set(progress.filter((p) => p.status === 'pending').map((p) => p.photoId))
@@ -719,7 +726,7 @@ export default function MintProgressScreen() {
                 marginBottom: 12,
               }}
             >
-              The mint has succeeded on Solana and will be viewable in your wallet soon.
+              The mint has succeeded on Solana and will be viewable in your wallet soon. Your mint is safely recorded.
             </Text>
             <Pressable
               onPress={handleFinish}
