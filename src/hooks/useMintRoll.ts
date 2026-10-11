@@ -10,6 +10,7 @@ import { useWalletDomain } from './useWalletDomain'
 import { acknowledgeVerifiedRollCompletion, verifyAndDiscardCompletedRollVault } from '../services/rollVault'
 import { useFilmStockStore } from '../store/filmstocks'
 import { ensureWorkerRollAuthorization } from '../services/rollApi'
+import { repairActiveRollFrameNumbers } from '../services/repairRollFrameNumbers'
 
 /**
  * Mint the active (developed) roll: auto-queue every remaining frame with
@@ -76,6 +77,12 @@ export function useMintRoll() {
             },
           ],
         )
+        return false
+      }
+      try {
+        await repairActiveRollFrameNumbers(walletAddress)
+      } catch (error) {
+        Alert.alert('Roll Safely Retained', error instanceof Error ? error.message : String(error))
         return false
       }
     }

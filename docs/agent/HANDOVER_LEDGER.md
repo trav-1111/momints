@@ -4,6 +4,45 @@
 
 ---
 
+## Session 2026-10-11: Burst Roll Repair Publication
+
+* **Agent / Author:** Codex / Trav
+* **Authorization / Scope:** Owner explicitly authorized committing the roll fix to the remote submission candidate. Target is existing `origin/codex/submission-v2-candidate`; this direct owner instruction overrides the generic remote restriction. Scoped publication contains burst allocation, guarded saved-roll repair, regression tests and implementation/APK notes. Unrelated research/deck work and local handoff export files are excluded.
+* **Verified Truth:** Remote branch is still at base `22b1b4d` before publication. Runtime source matches the installed build commit `2710ee5f9b916f960bb8078ef33cf86c9d3cfbaf`. TypeScript and all 19 new regression tests pass; required fast check remains 118/125 with the exact same seven camera/privacy baseline failures. No Worker changes or new deployment are needed for this client repair.
+* **Next / Limits:** Publish with a non-force push and verify remote HEAD. Installed APK already contains this runtime source; no rebuild is required for this documentation-inclusive commit. Actual saved-roll recovery to 12/12 and fresh device burst QA remain owner tests. Contact Sheet implementation remains separate and pending.
+
+---
+
+## Session 2026-10-11: Burst Repair APK Built and Installed
+
+* **Agent / Author:** Codex / Trav
+* **Scope:** Owner requested building the earlier repair and updating connected Seeker `SM02G406193022`. Isolated local build commit `2710ee5f9b916f960bb8078ef33cf86c9d3cfbaf` contains exactly the 13-file partner patch on base `22b1b4d`; original working changes and unrelated research/deck work remain preserved. No remote push, Drive upload, Worker deployment or mint operation.
+* **Artifact:** Standalone non-debuggable arm64 `com.momints.v2qa`, existing QA certificate, 73,030,818 bytes. APK `.expo/submission-candidate-apk-20261001/momints-hackathon-only-debug-signed-2710ee5f-arm64.apk`, SHA-256 `fb778bccbdcf3687bad4966d0788c231d1ca8e3a777847f9ab55dc62524089c9`. See [delivery and recovery details](../BURST-REPAIR-APK-2026-10-11.md).
+* **Verified Truth:** Frozen-source TypeScript and all 19 new regression tests pass; fast suite retains 118/125 with the same seven baseline assertions. Static APK audit passes, including embedded repair absent from the previous APK. In-place installation succeeded; pulled installed hash matches, first-install timestamp/app ID/data directory retained, no uninstall or data clear. Explicit MainActivity cold launch succeeded in 266 ms; follow-up process check passed.
+* **Build Note / Next:** Longer managed path failed native compilation; the same clean commit succeeded at the established shorter export path. Local source archive/logs/receipts are retained. Actual owner recovery of the saved roll remains unverified: authenticated repair must preserve existing slots and mint the two missing images. Earlier public/chain reads show OPEN 10/12, missing 3/6 and retained Worker authority; admin D1 access was unavailable. Contact Sheet implementation remains separate; existing Drive APK still predates this repair.
+
+---
+
+## Session 2026-10-11: Partner Burst Fix Export and Contact Sheet Handoff
+
+* **Agent / Author:** Codex / Trav
+* **Scope:** Owner requested an executable partner-agent export of the implemented burst fix, with code and reasoning, plus a separate Contact Sheet issue handoff. No further application changes, APK build/install, deployment, production repair or external messaging.
+* **Artifacts:** `docs/handoffs/2026-10-11/` contains the burst handoff, complete patch and separate Contact Sheet plan; the ZIP includes full changed-file snapshots and SHA-256 manifest. Patch base is `22b1b4daee479d2abbc9c2cb11c8f7e94fdbbe0f`. Unrelated research, deck changes and this mixed-purpose ledger are excluded from the export.
+* **Verified Truth:** Patch check/apply against isolated copies of the exact base succeeds; all 13 resulting files match the exported working source after LF normalization. Partner branch compatibility/device recovery remains unverified. Focused tests and required fast check are recorded in the export verification receipt; known camera/privacy baseline remains separate.
+* **Next:** Partner agent applies/adapts the patch preserving newer camera features, verifies contract prerequisites and builds an in-place update. Contact Sheet remains unimplemented; its handoff specifies shared wallet portfolio loading, ownership/scoping, stable IDs, complete-roll evidence, selection/rendering and acceptance tests. Existing Drive APK predates the burst fix.
+
+---
+
+## Session 2026-10-11: Burst Roll Frame Numbering and Guarded Local Repair
+
+* **Agent / Author:** Codex / Trav
+* **Scope / Cause:** Owner confirmed duplicate Frame 2/5 failures were burst captures on the latest QA APK and requested applying the fix. Actual callback/store reproduction proved the render-time roll snapshot assigned identical frame numbers to multiple burst photos; the Worker's artifact guard correctly rejected the second image. See [implementation and recovery notes](../BURST-ROLL-NUMBERING-FIX-2026-10-11.md).
+* **Change:** Current-state burst allocation/capacity/completion, immediate overlap guard, roll-identity checks, failed-commit cleanup. Existing duplicates receive a guarded local repair before re-queue/Retry: authenticated server reservations matched uniquely to verified encrypted originals; occupied slots preserved; only unused slots assigned. Encrypted manifest committed/read back before photo/queue updates; manifest writes serialized against metadata updates. No Worker, production-record, payment, delegate or authorization changes.
+* **Verified Truth:** Nineteen new maintained tests pass. TypeScript passes; fast suite 118/125, full app suite 189/196, with exactly the same seven camera/privacy baseline failures. Real AES-GCM vault round trips, unchanged image ciphertext, queue alignment, pending-slot reservations, ambiguity/owner/corruption guards, metadata concurrency, crash continuation and torn-write recovery covered locally. No new APK, install, paid flow, device recovery, commit or push performed in this request.
+* **Next / Limits:** Build/install a new APK in place before owner-driven saved-roll Retry and a fresh roll-burst test. Existing APK/Drive artifact still predates this fix. Preserve the user's encrypted vault. Separate contact-sheet discrepancy diagnosed: picker uses local history/complete roll groups while History merges on-chain wallet assets; picker integration remains pending. Pre-existing pitch-deck ledger entry and untracked research preserved.
+
+---
+
 ## Session 2026-10-11: Review Badge APK Build, Device Update and Drive Replacement
 
 * **Agent / Author:** Codex / Trav

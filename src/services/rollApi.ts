@@ -213,6 +213,10 @@ async function rollAuthorization(collectionAddress: string): Promise<Record<stri
 // mint-progress screen, or a fresh remount calling mintWorkerFrame again.
 const inFlightFrameMints = new Map<string, Promise<MintFrameResponse>>()
 
+export function hasInFlightRollFrameMints(collectionAddress: string): boolean {
+  return [...inFlightFrameMints.keys()].some((key) => key.startsWith(`${collectionAddress}:`))
+}
+
 /**
  * Mint one frame. Idempotent by (collection, frameIndex): re-POSTing a frame
  * that already minted returns the existing asset, and a partially-processed

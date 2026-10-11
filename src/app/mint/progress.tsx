@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { View, Text, Pressable, ScrollView, ActivityIndicator, Linking, Alert } from 'react-native'
 import { useRouter } from 'expo-router'
 import { useMobileWallet } from '@wallet-ui/react-native-kit'
@@ -16,6 +16,7 @@ import { IconBack } from '../../components/icons'
 import { PrivatePhotoImage } from '../../components/PrivatePhotoImage'
 import { deleteCapture, isPermanentImagePending, verifyPermanentImage } from '../../services/imagePrivacy'
 import { recordMintSuccess } from '../../services/recordMintSuccess'
+import { repairActiveRollFrameNumbers } from '../../services/repairRollFrameNumbers'
 
 type MintStatus = 'pending' | 'uploading' | 'signing' | 'confirming' | 'success' | 'failed'
 
@@ -81,6 +82,7 @@ export default function MintProgressScreen() {
   const [progress, setProgress] = useState<MintProgress[]>([])
   const [isProcessing, setIsProcessing] = useState(false)
   const [hasStarted, setHasStarted] = useState(false)
+  const mintOperationRef = useRef(false)
 
   // Snapshot the mint session once on mount: photos marked for mint, with the
   // roll's frames included only when queued (developed + sent to mint) so a
@@ -259,7 +261,7 @@ export default function MintProgressScreen() {
   // tapping their row, not here — the button stays disabled until none are
   // left, so this only ever mints.
   const startMinting = useCallback(async () => {
-    if (isProcessing || !account) return
+    if (isProcessing || mintOperationRef.current || !account) return
 
     const { queue: currentQueue } = useMintQueue.getState()
     const pending = progress.filter((p) => p.status === 'pending')
@@ -302,19 +304,44 @@ export default function MintProgressScreen() {
     )
 
     setHasStarted(true)
+    mintOperationRef.current = true
     setIsProcessing(true)
     try {
       await mintBatch(items, onItemUpdate)
     } finally {
+      mintOperationRef.current = false
       setIsProcessing(false)
     }
   }, [isProcessing, account, progress, mintBatch, onItemUpdate])
 
   const handleRetry = useCallback(
-    (photoId: string) => {
-      updateProgress(photoId, { status: 'pending', error: undefined })
+    async (photoId: string) => {
+      if (isProcessing || mintOperationRef.current || !account) return
+      mintOperationRef.current = true
+      setIsProcessing(true)
+      try {
+        const item = useMintQueue.getState().queue.find((queued) => queued.photoId === photoId)
+        if (item?.rollContext) {
+          const roll = useSessionStore.getState().activeRoll
+          if (roll?.id !== item.rollContext.rollId) throw new Error('Restore the original local roll before retrying.')
+          await repairActiveRollFrameNumbers(account.address.toString())
+          const repairedQueue = useMintQueue.getState().queue
+          setProgress((current) =>
+            current.map((row) => ({
+              ...row,
+              title: repairedQueue.find((queued) => queued.photoId === row.photoId)?.title ?? row.title,
+            })),
+          )
+        }
+        updateProgress(photoId, { status: 'pending', error: undefined })
+      } catch (error) {
+        Alert.alert('Roll Safely Retained', error instanceof Error ? error.message : String(error))
+      } finally {
+        mintOperationRef.current = false
+        setIsProcessing(false)
+      }
     },
-    [updateProgress],
+    [account, isProcessing, updateProgress],
   )
 
   const handleViewOnSolscan = useCallback((signature: string) => {
@@ -645,6 +672,7 @@ export default function MintProgressScreen() {
               {item.status === 'failed' && (
                 <Pressable
                   onPress={() => handleRetry(item.photoId)}
+                  disabled={isProcessing}
                   style={{
                     paddingVertical: 5,
                     paddingHorizontal: 10,

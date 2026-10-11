@@ -8,7 +8,8 @@ import type { Photo, CaptureMeta, PhotoArtifact } from '../store/photos'
 import type { ActiveRoll, AspectRatio } from '../store/session'
 import { createMintUmi } from './mint'
 import { getClusterRpc } from '../store/network'
-import { getWorkerRoll } from './rollApi'
+import { getWorkerRoll, hasInFlightRollFrameMints } from './rollApi'
+import { planRollFrameNumbers } from './rollFrameNumbers'
 import { deleteRollCapability } from './rollCapability'
 import { CAPTURE_TEMP_DIRECTORY, deleteCapture, isPermanentArweaveUri, normalizeArweaveUri } from './imagePrivacy'
 import { assertPermanentImageArtifact } from '../config/imageArtifact'
@@ -24,6 +25,21 @@ const IV_BYTES = 12
 const TAG_BYTES = 16
 const MANIFEST_VERSION = 2
 const VERIFIED_RECEIPT = new File(Paths.document, 'roll-vault-verified.json')
+const manifestMutations = new Map<string, Promise<unknown>>()
+
+// Metadata updates and frame commits must not overwrite a numbering repair
+// with an older manifest generation (or overwrite each other).
+function mutateManifest<T>(rollId: string, operation: () => Promise<T>): Promise<T> {
+  const previous = manifestMutations.get(rollId) ?? Promise.resolve()
+  const next = previous.catch(() => {}).then(operation)
+  manifestMutations.set(rollId, next)
+  void next
+    .finally(() => {
+      if (manifestMutations.get(rollId) === next) manifestMutations.delete(rollId)
+    })
+    .catch(() => {})
+  return next
+}
 
 interface StoredRollFrame {
   id: string
@@ -268,7 +284,7 @@ async function upgradeLegacyManifest(
   return { ...manifest, version: 2, revision: manifest.revision + 1, frames }
 }
 
-function verifiedPhotoArtifact(photo: Photo, bytes: Uint8Array): PhotoArtifact {
+function verifiedPhotoArtifact(photo: Pick<Photo, 'artifact'>, bytes: Uint8Array): PhotoArtifact {
   const artifact = photo.artifact
   if (!artifact || artifact.renderer === 'legacy-v1' || !artifact.recipeSha256) {
     throw new Error('The roll frame does not have a complete verified processing receipt.')
@@ -289,78 +305,139 @@ function verifiedPhotoArtifact(photo: Photo, bytes: Uint8Array): PhotoArtifact {
 
 export async function persistRollFrame(photo: Photo, frameNumber: number): Promise<string> {
   if (!photo.rollId || !photo.rollName) throw new Error('A roll frame must have roll membership.')
-  if (!photo.filmStockId) throw new Error('A roll frame must have immutable film identity.')
-  assertSafeId(photo.id, 'photo id')
-  const key = await vaultKey()
-  const directory = directoryForRoll(photo.rollId)
-  ensureDirectory(VAULT_ROOT)
-  ensureDirectory(directory)
-  const source = new File(photo.uri)
-  const bytes = await source.bytes()
-  const artifact = verifiedPhotoArtifact(photo, bytes)
-  const fileName = `${photo.id}.frame`
-  const encryptedFrame = new File(directory, fileName)
-  encryptedFrame.write(seal(bytes, key))
-  let manifestCommitted = false
+  return mutateManifest(photo.rollId, async () => {
+    if (!photo.rollId || !photo.rollName) throw new Error('A roll frame must have roll membership.')
+    if (!photo.filmStockId) throw new Error('A roll frame must have immutable film identity.')
+    assertSafeId(photo.id, 'photo id')
+    const key = await vaultKey()
+    const directory = directoryForRoll(photo.rollId)
+    ensureDirectory(VAULT_ROOT)
+    ensureDirectory(directory)
+    const source = new File(photo.uri)
+    const bytes = await source.bytes()
+    const artifact = verifiedPhotoArtifact(photo, bytes)
+    const fileName = `${photo.id}.frame`
+    const encryptedFrame = new File(directory, fileName)
+    encryptedFrame.write(seal(bytes, key))
+    let manifestCommitted = false
 
-  try {
-    const persisted = open(await encryptedFrame.bytes(), key)
-    if (hashBytes(persisted) !== artifact.imageHash)
-      throw new Error('The encrypted roll frame failed commit verification.')
-    const existing = await readManifest(photo.rollId, key)
-    const current = existing ? await upgradeLegacyManifest(existing, key, photo.filmStockId) : null
-    const frame: StoredRollFrame = {
-      id: photo.id,
-      fileName,
-      sha256: artifact.imageHash,
-      capturedAt: photo.capturedAt,
-      frameNumber,
-      aspect: photo.aspect,
-      meta: photo.meta,
-      filmStockId: photo.filmStockId,
-      artifact,
-    }
-    const frames = [...(current?.frames.filter((item) => item.id !== photo.id) ?? []), frame].sort(
-      (a, b) => a.frameNumber - b.frameNumber,
-    )
-    await writeManifest(
-      {
-        version: MANIFEST_VERSION,
-        revision: (current?.revision ?? 0) + 1,
-        rollId: photo.rollId,
-        rollName: photo.rollName,
-        frames,
-      },
-      key,
-    )
-    manifestCommitted = true
-    if (!deleteCapture(photo.uri) && !deleteCapture(photo.uri)) {
-      // Do not make a durably committed prepaid exposure look failed and invite
-      // a duplicate frame. The exact capture directory is swept next startup.
-      console.error('The encrypted roll frame was committed but plaintext cleanup needs the startup sweep.')
-    }
-    return createRollVaultUri(photo.rollId, photo.id) as string
-  } catch (error) {
     try {
-      if (!manifestCommitted && encryptedFrame.exists) encryptedFrame.delete()
-    } catch {}
-    throw error
-  }
+      const persisted = open(await encryptedFrame.bytes(), key)
+      if (hashBytes(persisted) !== artifact.imageHash)
+        throw new Error('The encrypted roll frame failed commit verification.')
+      const existing = await readManifest(photo.rollId, key)
+      const current = existing ? await upgradeLegacyManifest(existing, key, photo.filmStockId) : null
+      const frame: StoredRollFrame = {
+        id: photo.id,
+        fileName,
+        sha256: artifact.imageHash,
+        capturedAt: photo.capturedAt,
+        frameNumber,
+        aspect: photo.aspect,
+        meta: photo.meta,
+        filmStockId: photo.filmStockId,
+        artifact,
+      }
+      const frames = [...(current?.frames.filter((item) => item.id !== photo.id) ?? []), frame].sort(
+        (a, b) => a.frameNumber - b.frameNumber,
+      )
+      await writeManifest(
+        {
+          version: MANIFEST_VERSION,
+          revision: (current?.revision ?? 0) + 1,
+          rollId: photo.rollId,
+          rollName: photo.rollName,
+          frames,
+        },
+        key,
+      )
+      manifestCommitted = true
+      if (!deleteCapture(photo.uri) && !deleteCapture(photo.uri)) {
+        // Do not make a durably committed prepaid exposure look failed and invite
+        // a duplicate frame. The exact capture directory is swept next startup.
+        console.error('The encrypted roll frame was committed but plaintext cleanup needs the startup sweep.')
+      }
+      return createRollVaultUri(photo.rollId, photo.id) as string
+    } catch (error) {
+      try {
+        if (!manifestCommitted && encryptedFrame.exists) encryptedFrame.delete()
+      } catch {}
+      throw error
+    }
+  })
 }
 
 export async function updateStoredRollFrameMeta(rollId: string, photoId: string, meta: CaptureMeta): Promise<void> {
-  if (!directoryForRoll(rollId).exists) return
-  const key = await vaultKey()
-  const current = await readManifest(rollId, key)
-  if (!current || !current.frames.some((frame) => frame.id === photoId)) return
-  await writeManifest(
-    {
-      ...current,
-      revision: current.revision + 1,
-      frames: current.frames.map((frame) => (frame.id === photoId ? { ...frame, meta } : frame)),
-    },
-    key,
-  )
+  return mutateManifest(rollId, async () => {
+    if (!directoryForRoll(rollId).exists) return
+    const key = await vaultKey()
+    const current = await readManifest(rollId, key)
+    if (!current || !current.frames.some((frame) => frame.id === photoId)) return
+    await writeManifest(
+      {
+        ...current,
+        revision: current.revision + 1,
+        frames: current.frames.map((frame) => (frame.id === photoId ? { ...frame, meta } : frame)),
+      },
+      key,
+    )
+  })
+}
+
+/** Local metadata repair only: no server writes, uploads, mints or image changes. */
+export async function repairRollVaultFrameNumbers(
+  roll: ActiveRoll,
+  wallet: string,
+  mintedPhotoIds: ReadonlySet<string>,
+): Promise<Map<string, number>> {
+  return mutateManifest(roll.id, async () => {
+    const key = await vaultKey()
+    const manifest = await readManifest(roll.id, key)
+    if (!manifest || manifest.version !== 2)
+      throw new Error('The encrypted originals are unavailable. The roll has been preserved.')
+    if (
+      manifest.frames.length !== roll.frameIds.length ||
+      manifest.frames.some((frame) => !roll.frameIds.includes(frame.id))
+    )
+      throw new Error('The local roll and encrypted vault disagree. Restart to restore the vault before retrying.')
+    const numbers = new Map(manifest.frames.map((frame) => [frame.id, frame.frameNumber]))
+    if (new Set(numbers.values()).size === numbers.size) return numbers
+    if (!roll.collectionAddress || (!roll.developed && roll.frameIds.length < roll.size))
+      throw new Error('Finish shooting this roll before repairing its duplicate frame numbers.')
+    const collection = roll.collectionAddress
+    if (hasInFlightRollFrameMints(collection)) throw new Error('Wait for frame uploads to finish before retrying.')
+    const detail = await getWorkerRoll(collection)
+    if (
+      detail.wallet !== wallet ||
+      detail.collectionAddress !== collection ||
+      detail.size !== roll.size ||
+      detail.status !== 'OPEN'
+    )
+      throw new Error('Reconnect the original wallet to its open roll before repairing frame numbers.')
+    const repaired = planRollFrameNumbers(manifest.frames, detail.frames, roll.size, mintedPhotoIds)
+    // Validate the actual encrypted bytes before changing their slot metadata.
+    for (const frame of manifest.frames) {
+      const encrypted = new File(directoryForRoll(roll.id), frame.fileName)
+      const bytes = open(await encrypted.bytes(), key)
+      verifiedPhotoArtifact({ artifact: frame.artifact }, bytes)
+    }
+    const current = await getWorkerRoll(collection)
+    if (hasInFlightRollFrameMints(collection) || JSON.stringify(current) !== JSON.stringify(detail))
+      throw new Error('The server roll changed during repair. Wait for minting to finish and retry.')
+    const updated = {
+      ...manifest,
+      revision: manifest.revision + 1,
+      frames: manifest.frames.map((frame) => ({ ...frame, frameNumber: repaired.get(frame.id)! })),
+    }
+    await writeManifest(updated, key)
+    const saved = await readManifest(roll.id, key)
+    if (
+      saved?.revision !== updated.revision ||
+      saved.frames.some((frame) => frame.frameNumber !== repaired.get(frame.id))
+    )
+      throw new Error('Frame-number repair could not be verified. Keep the app data and restart before retrying.')
+    return repaired
+  })
 }
 
 export function isRollVaultPhotoUri(uri: unknown): boolean {

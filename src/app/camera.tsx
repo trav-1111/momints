@@ -175,6 +175,7 @@ export default function CameraScreen() {
   const [crankCount, setCrankCount] = useState(0)
   const [kinoDevelopingCount, setKinoDevelopingCount] = useState<number | null>(null)
   const isCrankingRef = useRef(false)
+  const burstInFlightRef = useRef(false)
   const crankHoldTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const didCrankRef = useRef(false)
   const crankAnim = useRef(new Animated.Value(0)).current
@@ -391,7 +392,7 @@ export default function CameraScreen() {
   }, [cameraPosition])
 
   const handleCapture = useCallback(async () => {
-    if (!cameraRef.current || isCapturing || !canCapture()) return
+    if (!cameraRef.current || isCapturing || burstInFlightRef.current || !canCapture()) return
 
     if (!isFilmStockDownloaded(effectiveFilm.filmStockId)) {
       const stock = filmCatalogue.find((item) => item.filmStockId === effectiveFilm.filmStockId)
@@ -418,7 +419,7 @@ export default function CameraScreen() {
     }
 
     // Recipe downloads can take long enough for a lens/focus/app transition.
-    if (!canCapture()) return
+    if (burstInFlightRef.current || !canCapture()) return
     setIsCapturing(true)
     // takePhoto's own flash:'on' (CameraX's AE-precapture-driven still
     // flash) silently doesn't fire on this hardware — confirmed via EXIF
@@ -648,141 +649,201 @@ export default function CameraScreen() {
   ])
 
   const handleStartCrank = useCallback(async () => {
-    if (!cameraRef.current || isCapturing || !canCapture()) return
+    if (!cameraRef.current || isCapturing || burstInFlightRef.current || !canCapture()) return
 
-    if (!isFilmStockDownloaded(effectiveFilm.filmStockId)) {
-      const stock = filmCatalogue.find((item) => item.filmStockId === effectiveFilm.filmStockId)
-      if (!stock) {
-        Alert.alert('Film recipe missing', 'Reconnect and refresh the Film Shelf before shooting this film.')
-        return
-      }
-      try {
-        await ensureFilmStockRecipe(stock)
-      } catch {
-        Alert.alert('Connect to download', `${stock.displayName} must be downloaded before this shot can be processed.`)
-        return
-      }
-    }
-
-    if (activeRoll?.developed || rollIsFull) {
-      Alert.alert('Roll Complete', 'Every frame on this roll is shot. Mint the roll to see them.', [
-        { text: 'Later', style: 'cancel' },
-        { text: 'Mint Roll', onPress: () => mintRoll() },
-      ])
-      return
-    }
-
-    isCrankingRef.current = true
-    didCrankRef.current = true
-    setIsCranking(true)
-    setCrankCount(0)
-
-    const rawSnapshots: string[] = []
-    const isRoll = activeMode === 'roll' && activeRoll !== null
-    const maxRollFrames = activeRoll ? activeRoll.size - activeRoll.frameIds.length : 24
-    const kinoSeqId = `kino-${Date.now()}`
-
-    // Initial mechanical crank pulse
-    Vibration.vibrate(30)
-
-    const targetIntervalMs = CAPTURE_CADENCE_MS[captureFps] ?? 0
-
+    burstInFlightRef.current = true
     try {
-      while (isCrankingRef.current) {
-        if (isRoll && rawSnapshots.length >= maxRollFrames) {
-          break
+      if (!isFilmStockDownloaded(effectiveFilm.filmStockId)) {
+        const stock = filmCatalogue.find((item) => item.filmStockId === effectiveFilm.filmStockId)
+        if (!stock) {
+          Alert.alert('Film recipe missing', 'Reconnect and refresh the Film Shelf before shooting this film.')
+          return
         }
-        if (rawSnapshots.length >= 24) {
-          break
-        }
-
-        const frameStart = performance.now()
-        const photo = await cameraRef.current.takeSnapshot({ quality: 85 })
-        rawSnapshots.push(photo.path)
-        setCrankCount(rawSnapshots.length)
-        // Mechanical gear-tooth tactile feedback
-        Vibration.vibrate(20)
-
-        if (targetIntervalMs > 0) {
-          const snapElapsed = performance.now() - frameStart
-          const remainingDelay = Math.max(0, targetIntervalMs - snapElapsed)
-          if (remainingDelay > 0 && isCrankingRef.current) {
-            await new Promise((r) => setTimeout(r, remainingDelay))
-          }
-        } else {
-          // Yield briefly for React batching and gesture polling
-          await new Promise((r) => setTimeout(r, 10))
+        try {
+          await ensureFilmStockRecipe(stock)
+        } catch {
+          Alert.alert(
+            'Connect to download',
+            `${stock.displayName} must be downloaded before this shot can be processed.`,
+          )
+          return
         }
       }
-    } catch (err) {
-      console.error('[Kino] burst capture error:', err)
-    } finally {
-      isCrankingRef.current = false
-      setIsCranking(false)
-    }
 
-    // Develop captured Kino frames sequentially through verified film processor
-    if (rawSnapshots.length > 0) {
-      setKinoDevelopingCount(rawSnapshots.length)
-      setIsCapturing(true)
+      const isRoll = activeMode === 'roll' && activeRoll !== null
+      const startingRoll = isRoll ? useSessionStore.getState().activeRoll : null
+      if (
+        isRoll &&
+        (!startingRoll || startingRoll.id !== activeRoll.id || useSessionStore.getState().activeMode !== 'roll')
+      ) {
+        Alert.alert('Roll changed', 'Return to the current roll before shooting another burst.')
+        return
+      }
+      if (
+        isRoll &&
+        (startingRoll?.developed ||
+          rollIsFull ||
+          (startingRoll && startingRoll.frameIds.length >= startingRoll.size))
+      ) {
+        Alert.alert('Roll Complete', 'Every frame on this roll is shot. Mint the roll to see them.', [
+          { text: 'Later', style: 'cancel' },
+          { text: 'Mint Roll', onPress: () => mintRoll() },
+        ])
+        return
+      }
+
+      isCrankingRef.current = true
+      didCrankRef.current = true
+      setIsCranking(true)
+      setCrankCount(0)
+
+      const rawSnapshots: string[] = []
+      const maxRollFrames = startingRoll ? startingRoll.size - startingRoll.frameIds.length : 24
+      const kinoSeqId = `kino-${Date.now()}`
+
+      // Initial mechanical crank pulse
+      Vibration.vibrate(30)
+
+      const targetIntervalMs = CAPTURE_CADENCE_MS[captureFps] ?? 0
+
       try {
-        for (let i = 0; i < rawSnapshots.length; i++) {
-          const rawPath = rawSnapshots[i]
-          let captureUri: string | null = adoptTemporaryCapture(`file://${rawPath}`)
-
-          if (effectiveAspect !== 'full') {
-            captureUri = await cropToAspect(captureUri, effectiveAspect)
+        while (isCrankingRef.current) {
+          if (isRoll && rawSnapshots.length >= maxRollFrames) {
+            break
           }
-          let receipt = await processFilm(captureUri, effectiveFilm)
-          captureUri = receipt.outputUri
-          captureUri = await ensureUnderCeiling(captureUri)
-          receipt = await verifyCompressedFilmOutput(receipt, captureUri)
-
-          const photoId = addPhoto(
-            receipt.outputUri,
-            isRoll && activeRoll !== null
-              ? { id: activeRoll.id, name: activeRoll.name, frameNumber: activeRoll.frameIds.length + 1 }
-              : undefined,
-            effectiveAspect,
-            receipt.filmStockId,
-            {
-              mime: receipt.mime,
-              byteLength: receipt.byteLength,
-              width: receipt.width,
-              height: receipt.height,
-              imageHash: receipt.outputSha256,
-              renderer: receipt.renderer,
-              recipeSha256: receipt.recipeSha256,
-              lutSha256: receipt.lutSha256,
-            },
-            { id: kinoSeqId, index: i },
-          )
-
-          if (isRoll && activeRoll !== null) {
-            setAction(photoId, 'mint')
-            const storedPhoto = usePhotoStore.getState().photos.find((candidate) => candidate.id === photoId)
-            if (!storedPhoto) throw new Error('The captured roll frame could not be registered.')
-
-            const vaultUri = await persistRollFrame(storedPhoto, activeRoll.frameIds.length + 1)
-            updatePhotoUri(photoId, vaultUri)
-            addFrameToRoll(photoId)
+          if (rawSnapshots.length >= 24) {
+            break
           }
-        }
 
-        if (isRoll && activeRoll && activeRoll.frameIds.length >= activeRoll.size) {
-          developRoll()
-          Alert.alert('Roll Complete! 🎞️', `All ${activeRoll.size} frames are shot. Mint the roll?`, [
-            { text: 'Later', style: 'cancel' },
-            { text: 'Mint Roll', onPress: () => mintRoll() },
-          ])
+          const frameStart = performance.now()
+          const photo = await cameraRef.current.takeSnapshot({ quality: 85 })
+          rawSnapshots.push(photo.path)
+          setCrankCount(rawSnapshots.length)
+          // Mechanical gear-tooth tactile feedback
+          Vibration.vibrate(20)
+
+          if (targetIntervalMs > 0) {
+            const snapElapsed = performance.now() - frameStart
+            const remainingDelay = Math.max(0, targetIntervalMs - snapElapsed)
+            if (remainingDelay > 0 && isCrankingRef.current) {
+              await new Promise((r) => setTimeout(r, remainingDelay))
+            }
+          } else {
+            // Yield briefly for React batching and gesture polling
+            await new Promise((r) => setTimeout(r, 10))
+          }
         }
       } catch (err) {
-        console.error('[Burst] failed to develop frames:', err)
-        Alert.alert('Error', 'Failed to develop some burst frames.')
+        console.error('[Kino] burst capture error:', err)
       } finally {
-        setKinoDevelopingCount(null)
-        setIsCapturing(false)
+        isCrankingRef.current = false
+        setIsCranking(false)
       }
+
+      // Develop captured Kino frames sequentially through verified film processor
+      if (rawSnapshots.length > 0) {
+        setKinoDevelopingCount(rawSnapshots.length)
+        setIsCapturing(true)
+        try {
+          for (let i = 0; i < rawSnapshots.length; i++) {
+            const rawPath = rawSnapshots[i]
+            let captureUri: string | null = adoptTemporaryCapture(`file://${rawPath}`)
+
+            if (effectiveAspect !== 'full') {
+              captureUri = await cropToAspect(captureUri, effectiveAspect)
+            }
+            let receipt = await processFilm(captureUri, effectiveFilm)
+            captureUri = receipt.outputUri
+            captureUri = await ensureUnderCeiling(captureUri)
+            receipt = await verifyCompressedFilmOutput(receipt, captureUri)
+
+            // Zustand replaces activeRoll on each commit. The render-time roll
+            // captured by this callback cannot supply the next burst frame number.
+            const currentRoll = isRoll ? useSessionStore.getState().activeRoll : null
+            if (
+              isRoll &&
+              (!currentRoll ||
+                currentRoll.id !== activeRoll?.id ||
+                currentRoll.developed ||
+                useSessionStore.getState().activeMode !== 'roll' ||
+                currentRoll.frameIds.length >= currentRoll.size)
+            ) {
+              deleteCapture(captureUri)
+              throw new Error('The active roll changed while the burst was developing.')
+            }
+            const frameNumber = currentRoll ? currentRoll.frameIds.length + 1 : undefined
+            const photoId = addPhoto(
+              receipt.outputUri,
+              currentRoll && frameNumber !== undefined
+                ? { id: currentRoll.id, name: currentRoll.name, frameNumber }
+                : undefined,
+              effectiveAspect,
+              receipt.filmStockId,
+              {
+                mime: receipt.mime,
+                byteLength: receipt.byteLength,
+                width: receipt.width,
+                height: receipt.height,
+                imageHash: receipt.outputSha256,
+                renderer: receipt.renderer,
+                recipeSha256: receipt.recipeSha256,
+                lutSha256: receipt.lutSha256,
+              },
+              { id: kinoSeqId, index: i },
+            )
+
+            if (currentRoll && frameNumber !== undefined) {
+              setAction(photoId, 'mint')
+              const storedPhoto = usePhotoStore.getState().photos.find((candidate) => candidate.id === photoId)
+              if (!storedPhoto) throw new Error('The captured roll frame could not be registered.')
+
+              let vaultUri: string
+              try {
+                vaultUri = await persistRollFrame(storedPhoto, frameNumber)
+              } catch (error) {
+                removePhoto(photoId)
+                deleteCapture(captureUri)
+                throw error
+              }
+              updatePhotoUri(photoId, vaultUri)
+              const committingRoll = useSessionStore.getState().activeRoll
+              if (
+                committingRoll?.id !== currentRoll.id ||
+                committingRoll.developed ||
+                committingRoll.frameIds.length !== frameNumber - 1 ||
+                useSessionStore.getState().activeMode !== 'roll'
+              ) {
+                throw new Error(
+                  'The captured frame is encrypted and safe. Restart to restore its original roll before continuing.',
+                )
+              }
+              addFrameToRoll(photoId)
+            }
+          }
+
+          const completedRoll = useSessionStore.getState().activeRoll
+          if (
+            isRoll &&
+            completedRoll?.id === activeRoll?.id &&
+            completedRoll &&
+            completedRoll.frameIds.length >= completedRoll.size
+          ) {
+            developRoll()
+            Alert.alert('Roll Complete! 🎞️', `All ${completedRoll.size} frames are shot. Mint the roll?`, [
+              { text: 'Later', style: 'cancel' },
+              { text: 'Mint Roll', onPress: () => mintRoll() },
+            ])
+          }
+        } catch (err) {
+          console.error('[Burst] failed to develop frames:', err)
+          Alert.alert('Error', 'Failed to develop some burst frames.')
+        } finally {
+          setKinoDevelopingCount(null)
+          setIsCapturing(false)
+        }
+      }
+    } finally {
+      burstInFlightRef.current = false
     }
   }, [
     activeMode,
@@ -801,6 +862,7 @@ export default function CameraScreen() {
     rollIsFull,
     setAction,
     updatePhotoUri,
+    removePhoto,
   ])
 
   const handleShutterPressIn = useCallback(() => {
