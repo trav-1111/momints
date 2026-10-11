@@ -4,6 +4,15 @@
 
 ---
 
+## Session 2026-10-11: Owner Roll Resume QA
+
+* **Agent / Author:** Codex / Trav
+* **Scope:** Record owner-reported manual QA after the recovery deployment and the owner's request to commit and merge the fix into `codex/submission-v2-candidate`. Implementation commits `73b0665` and `02fa744` are already ancestors of this branch; no separate merge is needed. No application, Worker, device or production-record changes in this documentation update.
+* **Owner Results:** New roll creation succeeded. Roll remained after app restart and after offline restart. After taking one roll shot, restarting resumed directly into the roll. Switching to Quick, taking one shot and opening Darkroom before another restart also resumed the existing roll.
+* **Acceptance / Evidence Boundary:** After the follow-up checks for the roll thumbnail, exposure count, next frame index and Quick final mint status, the owner confirmed “all works.” This is owner-reported acceptance, not independent inspection of each counter or transaction receipt. Lost-response payment replay retains automated coverage but was not explicitly tested on the device. Original tester's COMPLETE 0/12 remedy remains separate. See [the updated implementation notes](../ROLL-PAYMENT-RECOVERY-IMPLEMENTATION-2026-10-11.md).
+
+---
+
 ## Session 2026-10-11: Paid Roll Recovery Production Deployment
 
 * **Agent / Author:** Codex / Trav

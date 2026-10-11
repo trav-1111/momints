@@ -8,6 +8,17 @@ Device update completed: client source `73b06658116b53cae160686c4ed8bed7749365cf
 
 Production rollout was explicitly authorized and completed on **11 October 2026**, verified at **10:09 Brisbane**. Worker source `02fa7445ea00d32840a7994a1b952f83676604c2` is active as version `016c1c21-7eb7-4938-9890-dab6c86047bd`; migrations 0011–0012 are applied. Dashboard production deployment is `b5514261-fa9b-4e14-a883-39e62ad4a34e`, and its served JavaScript hash matches the reviewed file. Public health, an unsigned SOL quote, funding sufficiency, protected dashboard authentication/CORS, queue consumers/delivery and both cron schedules pass live checks. All existing plain-text variables and secret binding names, R2 lifecycle rules, catalogue and 11 immutable asset hashes are preserved. The tester's COMPLETE 0/12 roll and its handoff signature are unchanged. No payment or paid recovery was manually triggered. The installed QA APK is ready for owner-driven roll testing.
 
+## Owner-reported device QA after deployment
+
+On 11 October 2026, the owner reported these results on the installed V2 QA build:
+
+- Created a new roll successfully, closed and reopened the app, and the roll remained available.
+- Closed the app, disconnected the internet and reopened it; the roll remained available offline.
+- Took one roll shot, closed and reopened the app; it resumed directly into the roll.
+- Switched to Quick mode, took one shot, opened Darkroom, then closed and reopened the app; the existing roll resumed again.
+
+After the follow-up checks for the saved roll photo, remaining exposure count, next frame index and Quick final mint status, the owner confirmed “all works” and requested committing and merging the fix into `codex/submission-v2-candidate`. This records owner-reported acceptance of the tested flows; individual transaction receipts and frame counters were not independently inspected by the agent. Lost-response payment replay has automated regression coverage but was not explicitly tested on the device. The original tester's separate closed-roll remedy remains unresolved.
+
 ## Changed behavior
 
 - The client durably saves the original wallet, film, exposure count, aspect, capability and immutable quote before signing. It saves and verifies the signed receipt before broadcasting. Concurrent taps share one operation; restart/retry uses the same receipt rather than charging again.
