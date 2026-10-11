@@ -548,7 +548,7 @@ export function useMint() {
                     signature: info.signature,
                     mintAddress: info.mintAddress,
                     artifact: quick.artifact,
-                    note: 'Paid · finalizing on Arweave (usually 8–12 min)',
+                    note: 'Paid · finalizing',
                   })
                   void startPendingFinalizePolling().catch(() => {})
                 }
