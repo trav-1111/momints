@@ -352,7 +352,7 @@ export default function MintProgressScreen() {
     const { queue: currentQueue } = useMintQueue.getState()
     const rollFrameIds = new Set(useSessionStore.getState().activeRoll?.frameIds ?? [])
     for (const item of progress) {
-      if (item.status === 'success') continue
+      if (item.status === 'success' || item.status === 'confirming') continue
       const queueItem = currentQueue.find((queued) => queued.photoId === item.photoId)
       if (queueItem?.rollContext || rollFrameIds.has(item.photoId)) {
         removeFromQueue(item.photoId)
@@ -444,7 +444,7 @@ export default function MintProgressScreen() {
   }, [account, clearQueue, router, progress, cleanupUnfinishedSession])
 
   const handleBack = useCallback(() => {
-    if (allComplete) {
+    if (allComplete || canLeaveWhileFinalizing) {
       void handleFinish()
       return
     }

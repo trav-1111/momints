@@ -201,7 +201,17 @@ async function finalizeAndCheck(entry: {
 }): Promise<string | null> {
   try {
     const finalized = await finalizeQuickMint(entry)
-    return tryPermanentQuickImage(entry.assetAddress, finalized.imageUri)
+    let imageUri = await tryPermanentQuickImage(entry.assetAddress, finalized.imageUri)
+    if (imageUri) return imageUri
+
+    // If the Worker enqueued the Arweave upload to a queue, poll briefly (up to 4.5s)
+    // so the item can resolve to 'success' in the foreground without delay.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      imageUri = await tryPermanentQuickImage(entry.assetAddress)
+      if (imageUri) return imageUri
+    }
+    return null
   } catch (err) {
     console.warn(`[mint] finalize deferred for ${entry.assetAddress}:`, err instanceof Error ? err.message : err)
     throw err

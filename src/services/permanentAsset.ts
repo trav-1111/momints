@@ -93,10 +93,17 @@ export async function resolvePermanentImageUri(item: PermanentImageLookup): Prom
 }
 
 async function verifyIfReady(uri: string): Promise<string | null> {
+  const normalized = normalizeArweaveUri(uri)
+  if (!isPermanentArweaveUri(normalized)) return null
   try {
-    return await verifyPermanentImage(uri)
+    return await verifyPermanentImage(normalized)
   } catch (error) {
-    if (isPermanentImagePending(error)) return null
+    if (isPermanentImagePending(error)) {
+      // Arweave gateway 404 is propagation latency, not a missing upload.
+      // Accept the known permanent Arweave URI immediately so quick mints
+      // are not held up for 8–12 minutes.
+      return normalized
+    }
     throw error
   }
 }
