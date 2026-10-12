@@ -235,6 +235,19 @@ node scripts/build-submission-apk.cjs \
 
 ---
 
+## 🔮 Roadmap: V3 & Protocol Architecture
+
+**V3 (Coming Soon):**
+* 10 curated 3D LUT analog stocks, native landscape capture, and 4-frame motorized burst shooting.
+
+**Coming Next:**
+* **Hardware Attestation (TEE / C2PA):** Enclave-signed camera sensor hashes proving physical photons against AI deepfakes.
+* **Biometric Negative Signing:** Seed Vault authentication to cryptographically sign and verify external lab scans.
+* **Anchor On-Chain State:** Trustless Solana PDAs replacing centralized backend coordination for film roll lifecycles.
+* **Curator Economy & Exhibitions:** On-chain LUT royalty splits, 1-tap Metaplex Core listings, and interactive Solana Blinks.
+
+---
+
 ## 👥 Authors & Provenance
 
 - **Zaac** ([@ZaacIsHere](https://github.com/ZaacIsHere)) — Native Client Architecture, Camera2 HAL, Seeker DVT Hardware Verification, UI/UX.
