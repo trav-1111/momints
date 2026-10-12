@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://drive.google.com/open?id=1VjTt1PufCO_M8B7y506mZWi9zdloVcKI">
+  <a href="https://github.com/trav-1111/momints/releases/latest">
     <img src="https://img.shields.io/badge/Download-Submission_APK_(arm64)-14F195?style=for-the-badge&logo=android&logoColor=black" alt="Download APK" />
   </a>
   <img src="https://img.shields.io/badge/Target-Solana_Seeker_(Android_16)-9945FF?style=for-the-badge&logo=solana&logoColor=white" alt="Solana Seeker" />
@@ -22,18 +22,18 @@
 
 ## ⚡ Quick Start & Installation
 
-Users can install and launch the verified build directly without compiling from source:
+Users can install and launch the verified build directly from [GitHub Releases](https://github.com/trav-1111/momints/releases/latest) without compiling from source:
 
 ### 1. Download & Install
 
-| Target Environment                                | Recommended Artifact                                                                            | One-Line ADB Install Command             |
-| :------------------------------------------------ | :---------------------------------------------------------------------------------------------- | :--------------------------------------- |
-| **Physical Solana Seeker** _(Tested hardware)_    | [`momints-v2.0-seeker.apk`](https://drive.google.com/open?id=1VjTt1PufCO_M8B7y506mZWi9zdloVcKI) | `adb install -r momints-v2.0-seeker.apk` |
-| **Android Studio Emulator** _(arm64 / API 34–36)_ | [`momints-v2.0-seeker.apk`](https://drive.google.com/open?id=1VjTt1PufCO_M8B7y506mZWi9zdloVcKI) | `adb install -r momints-v2.0-seeker.apk` |
+| Target Environment                                | Recommended Artifact                                                                                                    | SHA-256 Checksum                                                   | One-Line ADB Install Command                                                 |
+| :------------------------------------------------ | :---------------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------- | :--------------------------------------------------------------------------- |
+| **Physical Solana Seeker** _(Tested hardware)_    | [**v2.0-hackathon APK**](https://github.com/trav-1111/momints/releases/download/v2.0-hackathon/momints-hackathon-only-debug-signed-d39c6c3e-arm64.apk) | `1fccdb6af0d61c5586a2df29b561760f89505b103d63643817c6f03751f148c5` | `adb install -r momints-hackathon-only-debug-signed-d39c6c3e-arm64.apk`      |
+| **Android Studio Emulator** _(arm64 / API 34–36)_ | [**v2.0-hackathon APK**](https://github.com/trav-1111/momints/releases/download/v2.0-hackathon/momints-hackathon-only-debug-signed-d39c6c3e-arm64.apk) | `1fccdb6af0d61c5586a2df29b561760f89505b103d63643817c6f03751f148c5` | `adb install -r momints-hackathon-only-debug-signed-d39c6c3e-arm64.apk`      |
 
 ```bash
 # In-place installation (preserves existing wallet credentials and encrypted roll state)
-adb install -r momints-v2.0-seeker.apk
+adb install -r momints-hackathon-only-debug-signed-d39c6c3e-arm64.apk
 
 # Launch the application
 adb shell am start -n com.momints.v2qa/.MainActivity
