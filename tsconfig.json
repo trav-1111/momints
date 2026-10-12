@@ -18,7 +18,6 @@
     "android",
     "ios",
     "worker",
-    "worker-turbo-spike",
     "docs",
     ".worktrees"
   ]

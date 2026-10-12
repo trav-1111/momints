@@ -38,7 +38,7 @@ modules/*/android/.gradle/
 **/.wrangler/
 **/.wrangler-dry-run/
 **/.bundle-check/
-/worker-turbo-spike/.out/
+/docs/spikes/worker-turbo-spike/.out/
 
 # Preserve immutable published packages, source LUTs, contract fixtures and locks
 /worker/filmstock-assets/
