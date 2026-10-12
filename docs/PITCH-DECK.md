@@ -80,14 +80,14 @@
 
 - Visual breakdown of the newly integrated **Lomokino motor drive (Burst mode)**:
   - Continuous motor-drive cadence selector: 3 FPS, 5 FPS, 8 FPS.
-  - Synchronized rotary shutter blade blackout playback effect.
+  - Rapid motor-drive capture of sequential still frames.
   - Contact-sheet film strip reel viewer.
 
 ### Key Points
 
 - **Cinema in Your Pocket:** Inspired by the legendary Lomography 35mm hand-cranked movie camera.
 - **Tactile Burst Capture:** Hold the shutter to crank through a sequence of sequential exposures across your roll.
-- **Rotary Blade Playback:** On-device review replicates the physical shutter gate of early cinema projectors with custom shutter gap intervals (`subtle`, `classic`, `deep`).
+- **Sequential Still Action:** Rapid bursts advance cleanly across the film roll, capturing fast motion as individual sovereign negatives.
 
 ---
 

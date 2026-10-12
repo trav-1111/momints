@@ -15,7 +15,7 @@
 ```text
 [ 0:00 - 0:25 ] Part 1: The Hook — Why Mobile Needs Analog Intentionality
 [ 0:25 - 1:05 ] Part 2: Hands-On with Seeker — Camera Ergonomics & Pro Controls
-[ 1:05 - 1:45 ] Part 3: The LomoKino Revolution — Tactile Burst & Shutter Blade Playback
+[ 1:05 - 1:45 ] Part 3: Lomokino Motor Drive — Tactile Burst Capture of Sequential Stills
 [ 1:45 - 2:25 ] Part 4: The Darkroom — GPU Development, Metaplex Core & Arweave Turbo
 [ 2:25 - 2:45 ] Part 5: The Ecosystem — .skr Identity & On-Chain Film Unlocks
 [ 2:45 - 3:00 ] Part 6: Outro — The Vision for Solana Seeker
@@ -58,11 +58,11 @@
 - **Visual:**
   - [1:05 - 1:18]: Open the **Film Shelf**. Swipe through available stocks: _House Color_, _House B&W_, and _Bali 400_. Select _Bali 400_. Show the roll counter: **Frame 1 / 12**.
   - [1:18 - 1:30]: Switch to **Lomokino motor drive (Burst mode)**. Toggle the burst button to set cadence between 3, 5, and 8 FPS.
-  - [1:30 - 1:45]: Hold down the shutter button. An authentic motor-drive sound clicks as the frame counter advances: 1, 2, 3, 4, 5... Release. Jump into review: swipe to play back the burst with a synchronized rotary shutter blade blackout effect, giving it that classic 35mm motion-picture feel.
+  - [1:30 - 1:45]: Hold down the shutter button. An authentic motor-drive sound clicks as the frame counter advances: 1, 2, 3, 4, 5... Release. Jump into review: swipe to inspect the captured burst of sequential still negatives advancing across the film roll.
 - **Audio / Voiceover:**
   > _"In Momints, you don't just shoot photos—you commit to a roll. Here we load a 12-frame roll of Bali 400._
   >
-  > _And for moments in motion, we built Lomokino motor drive (Burst mode)—inspired by vintage hand-cranked 35mm movie cameras. You can dial your cadence from 3 up to 8 frames per second. Hold the shutter, capture the burst, and review it with a synchronized rotary shutter blade blackout that brings mechanical projection back to life."_
+  > _And for moments in motion, we built Lomokino motor drive (Burst mode)—inspired by vintage hand-cranked 35mm cameras. You can dial your cadence from 3 up to 8 frames per second. Hold the shutter, capture the burst of sequential stills, and advance the roll frame by frame."_
 
 ---
 
@@ -106,7 +106,7 @@
 
 1. **Audio Recording:**
    - Use an external condenser mic or clean podcast mic for the voiceover.
-   - Add subtle, authentic Foley sound effects: mechanical camera shutter click on capture, rotary click on the dial, subtle projection rattle on LomoKino playback.
+   - Add subtle, authentic Foley sound effects: mechanical camera shutter click on capture, rotary click on the dial, subtle motor-drive gear click on burst capture.
 2. **Screen Capture & Device Footage:**
    - Record the physical Seeker device with a real camera (using a 35mm or 50mm lens with shallow depth of field) for the opening and closing shots to prove native execution on real hardware.
    - Capture clean internal screen recording using `scrcpy` (`scrcpy --record screen.mp4 --max-fps 60`) or ADB screen recording during the UI interactions.

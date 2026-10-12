@@ -115,6 +115,18 @@ adb shell am start -n com.momints.v2qa/.MainActivity
       <sub>Captured on Seeker • Metaplex Core <code>4akY...Ywof</code> • Arweave Turbo</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/sample-photo-long-exposure.webp" alt="Quick Shot: Long exposure" width="100%" /><br />
+      <strong>"Long Exposure" (Bulb Mode Capture)</strong><br />
+      <sub>Captured on Seeker • Metaplex Core <code>9u6A...xDcT</code> • Arweave Turbo</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/sample-photo-mint1.webp" alt="Quick Shot: Mint1" width="100%" /><br />
+      <strong>"Mint1" (Point-and-Shoot Landscape)</strong><br />
+      <sub>Captured on Seeker • Metaplex Core <code>GsZm...3q6e</code> • Arweave Turbo</sub>
+    </td>
+  </tr>
 </table>
 
 ---
@@ -132,7 +144,7 @@ Momints brings the deliberate craft, tactile friction, and permanent digital pro
    - **Prepaid Film Roll Mode (12 or 24 Frames):** The authentic analog experience. Purchase a roll on-chain. Frames are held inside an on-device AES-encrypted sandbox—**photos cannot be previewed or dopamine-scrolled until the entire roll is finished**, restoring the authentic anticipation of film development.
 3. **Dial In Exposure & Crank the Shutter:**
    - **Pro Manual Controls:** Tap `PRO` to expand tactile dials for ISO (50–3200), calibrated Shutter Speeds (1/8000s to 1/2s + bulb), manual AF diopter focus, and edge-aware EV compensation.
-   - **Lomokino motor drive (Burst mode):** Toggle the burst button to 3, 5, or 8 FPS. Hold the shutter button to crank continuous motor-drive bursts, complete with mechanical haptics and rotary shutter blade blackout playback.
+   - **Lomokino motor drive (Burst mode):** Toggle the burst button to 3, 5, or 8 FPS. Hold the shutter button to crank continuous motor-drive bursts of sequential still frames, complete with mechanical haptics.
    - **Multiple Exposure (MX):** Capture frame one to project a live ghost overlay in your viewfinder, then fire frame two to blend an additive double exposure.
 4. **Develop & Mint to Permanence:**  
    On roll completion, the on-device GPU shader darkroom applies authentic 33³ 3D LUTs, optical halation bloom, and procedural silver grain in under 60ms. The roll is batch-minted as an immutable Metaplex Core Collection on Solana Mainnet, with full-resolution negatives permanently archived on Arweave via Turbo.

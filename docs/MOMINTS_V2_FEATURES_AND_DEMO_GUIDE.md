@@ -132,7 +132,7 @@ Located directly beneath the manual controls strip in an ergonomic 34dp chip tra
   - **State 3 (8 FPS):** Displays `🎞️ 8 FPS` (active gold). High-speed motor drive cadence.
   - **State 4 (Cycle Off):** Returns to single-shot mode.
 - **Cranking Feedback:** Holding the shutter triggers continuous bursts with haptic gear-tooth vibrations and a rotating mechanical dashed animation around the shutter ring.
-- **Darkroom Playback:** Review burst sequences with a synchronized mechanical rotary shutter blade blackout effect (simulating authentic 180° rotary shutter flicker at 3, 5, 8, 12, 18, or 24 FPS).
+- **Sequential Stills Capture:** Burst frames are saved as discrete, full-resolution still exposures that advance across your film roll, ready for contact sheet review and darkroom development.
 
 ---
 
@@ -196,10 +196,10 @@ We have decoupled focus and exposure lock rings, edge-aware EV compensation, and
 Visual:
 - In the Pro accessory row, toggle the burst button: button turns gold displaying '🎞️ 3 FPS', tap to '5 FPS', tap to '8 FPS'.
 - Hold down the shutter button: dashed crank gear spins, haptic vibrations buzz, counter counts up (1.. 2.. 3.. 4.. 5.. 6..).
-- Release. Show quick review with mechanical rotary shutter blade flicker.
+- Release. Show quick review of captured sequential still frames on the contact sheet.
 - Show 'MX' button: tap MX, take shot of desk lamp, show ghost overlay on screen, frame second shot, snap double exposure!
 Voiceover Cue:
-"In Momints, creative tools are tactile. With Lomokino motor drive (Burst mode), tap to cycle 3, 5, or 8 frames per second. Hold the shutter to crank a high-speed motor burst, reviewed with authentic rotary shutter blade flicker.
+"In Momints, creative tools are tactile. With Lomokino motor drive (Burst mode), tap to cycle 3, 5, or 8 frames per second. Hold the shutter to crank a high-speed motor burst of sequential stills, capturing action frame-by-frame directly to your roll.
 And with our multiple-exposure engine, frame one creates a live ghost overlay in your viewfinder, blending seamlessly into an additive double exposure."
 ```
 
