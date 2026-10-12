@@ -78,7 +78,7 @@
 
 ### Visual
 
-- Visual breakdown of the newly integrated **LomoKino burst mode**:
+- Visual breakdown of the newly integrated **Lomokino motor drive (Burst mode)**:
   - Continuous motor-drive cadence selector: 3 FPS, 5 FPS, 8 FPS.
   - Synchronized rotary shutter blade blackout playback effect.
   - Contact-sheet film strip reel viewer.

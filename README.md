@@ -46,13 +46,76 @@ adb shell am start -n com.momints.v2qa/.MainActivity
 
 ## 📸 Visual Showcase
 
-<p align="center">
-  <img src="docs/screenshots/showcase-placeholder.svg" width="85%" alt="Seeker Hardware Showcase Placeholder" />
-</p>
+<table align="center">
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/01-seeker-viewfinder-quick.webp" alt="Camera Viewfinder" width="100%" /><br />
+      <strong>Camera HUD & Viewfinder</strong><br />
+      <sub>Live 108MP stream, film stock selector, reverse .skr identity</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/02-seeker-pro-manual-dials.webp" alt="Pro Manual Controls" width="100%" /><br />
+      <strong>Pro Manual Controls</strong><br />
+      <sub>Calibrated ISO, shutter speeds, manual diopter & EV compensation</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/03-seeker-wallet-seed-vault.webp" alt="Seed Vault MWA" width="100%" /><br />
+      <strong>Seed Vault & MWA</strong><br />
+      <sub>Hardware enclave authentication & wallet auto-connect</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/04-seeker-capture-exposure.webp" alt="Exposure Capture" width="100%" /><br />
+      <strong>Point & Shoot Exposure</strong><br />
+      <sub>Instant on-device GPU develop & EXIF metadata burn</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/06-seeker-roll-review.webp" alt="Film Roll & Metadata Review" width="100%" /><br />
+      <strong>Pre-Mint Metadata Review</strong><br />
+      <sub>Roll frames, custom title, artist handle & geotag details</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/08-seeker-seed-vault-signing.webp" alt="Hardware Enclave Signing" width="100%" /><br />
+      <strong>Biometric Enclave Signing</strong><br />
+      <sub>Qualcomm Seed Vault biometric fingerprint authorization</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/07-seeker-payment-cleared.webp" alt="Payment Cleared" width="100%" /><br />
+      <strong>On-Chain Payment Cleared</strong><br />
+      <sub>Mainnet fee verification & state checkpointing</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/09-seeker-on-chain-minted.webp" alt="On-Chain Minted" width="100%" /><br />
+      <strong>Metaplex Core Minted</strong><br />
+      <sub>Direct Solscan & permanent Arweave verification links</sub>
+    </td>
+    <td align="center" width="33%">
+      <img src="docs/screenshots/10-seeker-past-mints-gallery.webp" alt="Past Mints Portfolio" width="100%" /><br />
+      <strong>Past Mints Portfolio</strong><br />
+      <sub>DAS-indexed gallery of permanent sovereign negatives</sub>
+    </td>
+  </tr>
+</table>
 
-<p align="center">
-  <em>High-resolution hardware viewfinder captures, tactile Pro manual strip reels, and darkroom samples will be loaded here.</em>
-</p>
+<h4 align="center">Sample Physical Seeker Captures (35mm Emulation on Arweave)</h4>
+
+<table align="center">
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/sample-photo-forest.webp" alt="Quick Shot: Forest" width="100%" /><br />
+      <strong>"Forest" (Quick Shot)</strong><br />
+      <sub>Captured on Seeker • Metaplex Core <code>6r4e...kob1</code> • Arweave Turbo</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/sample-photo-roll-frame-01.webp" alt="Roll Frame 001/12" width="100%" /><br />
+      <strong>Roll 2026-10-11.01 — Frame 001/12</strong><br />
+      <sub>Captured on Seeker • Metaplex Core <code>4akY...Ywof</code> • Arweave Turbo</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
@@ -69,7 +132,7 @@ Momints brings the deliberate craft, tactile friction, and permanent digital pro
    - **Prepaid Film Roll Mode (12 or 24 Frames):** The authentic analog experience. Purchase a roll on-chain. Frames are held inside an on-device AES-encrypted sandbox—**photos cannot be previewed or dopamine-scrolled until the entire roll is finished**, restoring the authentic anticipation of film development.
 3. **Dial In Exposure & Crank the Shutter:**
    - **Pro Manual Controls:** Tap `PRO` to expand tactile dials for ISO (50–3200), calibrated Shutter Speeds (1/8000s to 1/2s + bulb), manual AF diopter focus, and edge-aware EV compensation.
-   - **LomoKino Motor Drive:** Toggle the `KINO` chip to 3, 5, or 8 FPS. Hold the shutter button to crank continuous motor-drive bursts, complete with mechanical haptics and rotary shutter blade blackout playback.
+   - **Lomokino motor drive (Burst mode):** Toggle the burst button to 3, 5, or 8 FPS. Hold the shutter button to crank continuous motor-drive bursts, complete with mechanical haptics and rotary shutter blade blackout playback.
    - **Multiple Exposure (MX):** Capture frame one to project a live ghost overlay in your viewfinder, then fire frame two to blend an additive double exposure.
 4. **Develop & Mint to Permanence:**  
    On roll completion, the on-device GPU shader darkroom applies authentic 33³ 3D LUTs, optical halation bloom, and procedural silver grain in under 60ms. The roll is batch-minted as an immutable Metaplex Core Collection on Solana Mainnet, with full-resolution negatives permanently archived on Arweave via Turbo.

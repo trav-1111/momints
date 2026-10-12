@@ -124,13 +124,13 @@ Located directly beneath the manual controls strip in an ergonomic 34dp chip tra
   2. Frame your second exposure using the ghost overlay for perfect composition.
   3. Fire the shutter: An additive luminance blending shader fuses both exposures into a single composite negative.
 
-#### 3. LomoKino Motor Drive & Shutter Blade Cinema
-- **Action:** Multi-state toggle & cycle chip:
-  - **State 0 (Off):** Displays `KINO` (dark chip). Shutter acts as normal single-shot.
+#### 3. Lomokino motor drive (Burst mode)
+- **Action:** Toggle the burst button to cycle cadence:
+  - **State 0 (Off):** Single-shot mode (burst off).
   - **State 1 (3 FPS):** Displays `🎞️ 3 FPS` (active gold). Slow vintage hand-crank cadence.
-  - **State 2 (5 FPS):** Displays `🎞️ 5 FPS` (active gold). Classic LomoKino 35mm movie camera cadence.
+  - **State 2 (5 FPS):** Displays `🎞️ 5 FPS` (active gold). Classic 35mm movie camera cadence.
   - **State 3 (8 FPS):** Displays `🎞️ 8 FPS` (active gold). High-speed motor drive cadence.
-  - **State 4 (Cycle Off):** Returns to `KINO`.
+  - **State 4 (Cycle Off):** Returns to single-shot mode.
 - **Cranking Feedback:** Holding the shutter triggers continuous bursts with haptic gear-tooth vibrations and a rotating mechanical dashed animation around the shutter ring.
 - **Darkroom Playback:** Review burst sequences with a synchronized mechanical rotary shutter blade blackout effect (simulating authentic 180° rotary shutter flicker at 3, 5, 8, 12, 18, or 24 FPS).
 
@@ -192,14 +192,14 @@ We have decoupled focus and exposure lock rings, edge-aware EV compensation, and
 ```
 
 ```
-[ 1:05 - 1:45 ] SCENE 3: LOMOKINO BURST & DOUBLE EXPOSURE
+[ 1:05 - 1:45 ] SCENE 3: LOMOKINO BURST MODE & DOUBLE EXPOSURE
 Visual:
-- In the Pro accessory row, tap 'KINO': chip turns gold displaying '🎞️ 3 FPS', tap to '5 FPS', tap to '8 FPS'.
+- In the Pro accessory row, toggle the burst button: button turns gold displaying '🎞️ 3 FPS', tap to '5 FPS', tap to '8 FPS'.
 - Hold down the shutter button: dashed crank gear spins, haptic vibrations buzz, counter counts up (1.. 2.. 3.. 4.. 5.. 6..).
 - Release. Show quick review with mechanical rotary shutter blade flicker.
 - Show 'MX' button: tap MX, take shot of desk lamp, show ghost overlay on screen, frame second shot, snap double exposure!
 Voiceover Cue:
-"In Momints, creative tools are tactile. With LomoKino mode, tap to cycle 3, 5, or 8 frames per second. Hold the shutter to crank a high-speed motor burst, reviewed with authentic rotary shutter blade flicker.
+"In Momints, creative tools are tactile. With Lomokino motor drive (Burst mode), tap to cycle 3, 5, or 8 frames per second. Hold the shutter to crank a high-speed motor burst, reviewed with authentic rotary shutter blade flicker.
 And with our multiple-exposure engine, frame one creates a live ghost overlay in your viewfinder, blending seamlessly into an additive double exposure."
 ```
 

@@ -53,16 +53,16 @@
 
 ---
 
-#### Scene 3: The Film Roll & LomoKino Burst (1:05 – 1:45 | 40s)
+#### Scene 3: The Film Roll & Lomokino Burst (1:05 – 1:45 | 40s)
 
 - **Visual:**
   - [1:05 - 1:18]: Open the **Film Shelf**. Swipe through available stocks: _House Color_, _House B&W_, and _Bali 400_. Select _Bali 400_. Show the roll counter: **Frame 1 / 12**.
-  - [1:18 - 1:30]: Switch to **LomoKino mode**. Toggle the motor-drive cadence between 3, 5, and 8 FPS.
+  - [1:18 - 1:30]: Switch to **Lomokino motor drive (Burst mode)**. Toggle the burst button to set cadence between 3, 5, and 8 FPS.
   - [1:30 - 1:45]: Hold down the shutter button. An authentic motor-drive sound clicks as the frame counter advances: 1, 2, 3, 4, 5... Release. Jump into review: swipe to play back the burst with a synchronized rotary shutter blade blackout effect, giving it that classic 35mm motion-picture feel.
 - **Audio / Voiceover:**
   > _"In Momints, you don't just shoot photos—you commit to a roll. Here we load a 12-frame roll of Bali 400._
   >
-  > _And for moments in motion, we built LomoKino mode—inspired by vintage hand-cranked 35mm movie cameras. You can dial your cadence from 3 up to 8 frames per second. Hold the shutter, capture the burst, and review it with a synchronized rotary shutter blade blackout that brings mechanical projection back to life."_
+  > _And for moments in motion, we built Lomokino motor drive (Burst mode)—inspired by vintage hand-cranked 35mm movie cameras. You can dial your cadence from 3 up to 8 frames per second. Hold the shutter, capture the burst, and review it with a synchronized rotary shutter blade blackout that brings mechanical projection back to life."_
 
 ---
 
