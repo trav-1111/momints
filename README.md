@@ -20,9 +20,9 @@
 
 ---
 
-## ⚡ 60-Second Evaluator Quick Start
+## ⚡ Quick Start & Installation
 
-Judges and evaluators can install and launch the verified submission APK directly without compiling from source:
+Users can install and launch the verified build directly without compiling from source:
 
 ### 1. Download & Install
 
@@ -159,5 +159,3 @@ node scripts/build-submission-apk.cjs \
 
 - **Zaac** ([@ZaacIsHere](https://github.com/ZaacIsHere)) — Native Client Architecture, Camera2 HAL, Seeker DVT Hardware Verification, UI/UX.
 - **Travis** ([@trav-1111](https://github.com/trav-1111)) — Cloudflare Worker Architecture, D1 Ledger, Metaplex Core Smart Contracts, Arweave Turbo Pipeline.
-
-_Repository maintained for the **CLOCK IN: Solana Mobile Hackathon 2026**._
