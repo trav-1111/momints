@@ -4,7 +4,7 @@
 > **Platform:** Solana Seeker Native Android Application  
 > **Repository:** `trav-1111/momints` & `izaacsalway/momints`  
 > **Release Candidate:** Momints V2.0 (`momints-v2.0-seeker.apk`)  
-> **Target Device:** Solana Seeker (`SM02G40619133790`, Android 16 / API 36)
+> **Target Device:** Solana Seeker (DVT / Android 16 / API 36)
 
 ---
 

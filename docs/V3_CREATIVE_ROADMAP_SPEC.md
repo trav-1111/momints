@@ -1,6 +1,6 @@
 # Momints V3 Creative Features: Technical Roadmap & Architecture Specification
 
-**Target Hardware:** Solana Seeker (`SM02` / `SM02G40619133790`), Android 16 (API 36), MediaTek SoC (`MtkCam` HAL)  
+**Target Hardware:** Solana Seeker (`SM02` / DVT Hardware), Android 16 (API 36), MediaTek SoC (`MtkCam` HAL)  
 **Status:** Approved for Implementation
 
 ---

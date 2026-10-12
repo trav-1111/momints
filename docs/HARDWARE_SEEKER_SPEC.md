@@ -1,6 +1,6 @@
 # Solana Seeker Hardware Specification & Camera Reality Reference
 
-**Device Target:** Solana Seeker (SM02 / `SM02G40619133790` / `SM02G406193022`)  
+**Device Target:** Solana Seeker (SM02 / DVT Hardware)  
 **OS / Platform:** Android 16 (API 36) — arm64-v8a  
 **Display Matrix:** 1200 × 2670 px (~20:9 native viewport)  
 **Package:** `com.momints.app`  

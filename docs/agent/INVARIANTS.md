@@ -58,7 +58,7 @@
 
 ## 4. Hardware & Camera HAL Invariants (Solana Seeker)
 
-* **Target Device:** Solana Seeker (`SM02G40619133790` / `SM02G406193022`), Android 16 (API 36).
+* **Target Device:** Solana Seeker (`Seeker-DVT-Device-A` / `Seeker-DVT-Device-B`), Android 16 (API 36).
 * **Sensor Letterbox Geometry:**
   * Sensor array is 4:3 (Rear 108MP). Display is ~20:9.
   * Any touch focus / exposure reticle coordinate must be transformed using contain-fit scaling and orientation offsets before submitting `MeteringRectangle` to Camera2.
