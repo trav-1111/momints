@@ -42,6 +42,11 @@ adb shell am start -n com.momints.v2qa/.MainActivity
 > **Android Security Verification:**  
 > When installing standalone APKs outside the Google Play Store, Android Play Protect may show a prompt. Click **More details** ➔ **Install anyway**.
 
+### 2. On-Chain Proof of End-to-End Minting (Solana Mainnet)
+
+- **SOL Mint txID:** [`5nmtxUgiPFhWU6LYCHgpm9GfGi5ZK3D1PhZWMHg2Trwjoa9wWwJ4XCaJtYAxByuCVPWPnCFUWeTCGDUKBFhZetW7`](https://solscan.io/tx/5nmtxUgiPFhWU6LYCHgpm9GfGi5ZK3D1PhZWMHg2Trwjoa9wWwJ4XCaJtYAxByuCVPWPnCFUWeTCGDUKBFhZetW7)
+- **SKR Mint txID:** [`55NpiAv2ZR6Bmh5kfaxwHGv4N6hXNHFwAcn3jC29uQr4Nzck4A4o7Y9iGhUcrekLyzL1CiNPvz7xqApkGsr4Z6RD`](https://solscan.io/tx/55NpiAv2ZR6Bmh5kfaxwHGv4N6hXNHFwAcn3jC29uQr4Nzck4A4o7Y9iGhUcrekLyzL1CiNPvz7xqApkGsr4Z6RD)
+
 ---
 
 ## 📸 Visual Showcase
