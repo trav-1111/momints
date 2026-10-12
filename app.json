@@ -12,7 +12,7 @@
     "web": {
       "output": "static"
     },
-    "name": "Momints V2 QA",
+    "name": "Momints",
     "slug": "momints-v2-qa",
     "version": "1.0.0",
     "android": {
