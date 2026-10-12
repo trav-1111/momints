@@ -2,7 +2,7 @@
 
 ## Overview
 
-This directory contains the autonomous human-like testing agent designed to audit all user flows on the physical **Solana Seeker (`SM02G40619133790`)** via ADB.
+This directory contains the autonomous human-like testing agent designed to audit all user flows on the physical **Solana Seeker (DVT / Android 16)** via ADB.
 
 ## Architecture
 

@@ -38,7 +38,7 @@ This executes:
 
 ## 3. Solana Seeker Hardware & Testing Suite (Area B)
 
-- **Target Device:** Solana Seeker (`SM02G40619133790` / `SM02G406193022`), Android 16 (API 36).
+- **Target Device:** Solana Seeker (DVT / Android 16 / API 36).
 - **HAL Realities (`docs/HARDWARE_SEEKER_SPEC.md`):**
   1. **No Decoupled AE Priority Modes:** The vendor HAL requires manual mode lock (`CONTROL_AE_MODE_OFF`).
   2. **Coordinate Space:** Viewfinder is letterboxed (4:3 sensor in ~20:9 display). Screen touch coordinates must be mapped to `SENSOR_INFO_ACTIVE_ARRAY_SIZE` with orientation & contain-fit scaling. EV slider calibrated to 20dp increments.
@@ -87,7 +87,6 @@ This executes:
 ### 📋 Trav PR & Review Standard
 When preparing or reviewing contributions for Trav:
 1. Generate brief with `!review` (showing `git log origin/main..HEAD` and diff stat).
-2. Confirm verification: `npm run agent:check` (48/48 unit tests passing, 0 type errors).
-3. Confirm hardware verification: Tested on Solana Seeker `SM02G40619133790`.
-4. Upload capture screenshots or demo MP4 to Trav's Google Drive review folder:  
-   `https://drive.google.com/drive/folders/1K0kwhF01PWVq61XPSnTUr5M3zzdKMI0j?usp=drive_link`
+2. Confirm verification: `npm run agent:check` (109 passing unit tests in <2s, 0 type errors).
+3. Confirm hardware verification: Tested on physical Solana Seeker hardware.
+4. Upload capture screenshots or demo MP4 to PR review artifacts.

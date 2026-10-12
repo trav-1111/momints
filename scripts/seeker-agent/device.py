@@ -78,12 +78,12 @@ class UIElement:
 class SeekerDevice:
     """High-level ADB controller for the physical Solana Seeker."""
 
-    DEFAULT_SERIAL = "SM02G40619133790"
+    DEFAULT_SERIAL = os.environ.get("ANDROID_SERIAL", "")
     DEFAULT_PACKAGE = "com.momints.app"
     DEFAULT_ACTIVITY = "com.momints.app.MainActivity"
 
     def __init__(self, serial: Optional[str] = None, adb_path: Optional[str] = None):
-        self.serial = serial or os.environ.get("ANDROID_SERIAL") or self.DEFAULT_SERIAL
+        self.serial = serial or os.environ.get("ANDROID_SERIAL") or ""
         self.adb = self._locate_adb(adb_path)
         self.package = self.DEFAULT_PACKAGE
         self.width = 1200

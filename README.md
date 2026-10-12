@@ -168,7 +168,7 @@ Momints brings the deliberate craft, tactile friction, and permanent digital pro
 
 ```mermaid
 flowchart TD
-    subgraph SeekerHardware ["Solana Seeker Hardware (SM02G40619133790)"]
+    subgraph SeekerHardware ["Solana Seeker Hardware (DVT / Android 16)"]
         Sensor["108MP Sensor (Samsung ISOCELL JN1)"]
         SeedVault["Seed Vault Hardware Keystore"]
     end

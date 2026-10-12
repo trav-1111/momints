@@ -17,7 +17,7 @@
   "version": "1.0.0",
   "scripts": {
     "agent:check": "tsc --noEmit && npm run test:fast",
-    "test:fast": "node --test tests/privacy.test.cjs tests/roll-authorization.test.cjs tests/wallet-auth-cache.test.cjs tests/on-chain-portfolio.test.cjs tests/assetlinks.test.cjs tests/kino-settings.test.cjs tests/focus-lock-and-pro.test.cjs tests/camera-readiness.test.cjs tests/camera-raw.test.cjs tests/roll-payment-recovery.test.cjs tests/roll-server-recovery.test.cjs tests/recovery-operations.test.cjs tests/recovery-db.test.cjs tests/roll-session-recovery.test.cjs tests/burst-roll-numbering.test.cjs tests/roll-frame-number-repair.test.cjs",
+    "test:fast": "node --test tests/privacy.test.cjs tests/roll-authorization.test.cjs tests/wallet-auth-cache.test.cjs tests/on-chain-portfolio.test.cjs tests/assetlinks.test.cjs tests/kino-settings.test.cjs tests/focus-lock-and-pro.test.cjs tests/camera-raw.test.cjs tests/roll-payment-recovery.test.cjs tests/roll-server-recovery.test.cjs tests/recovery-operations.test.cjs tests/recovery-db.test.cjs tests/roll-session-recovery.test.cjs tests/burst-roll-numbering.test.cjs tests/roll-frame-number-repair.test.cjs",
     "test:recovery": "node --test tests/roll-payment-recovery.test.cjs tests/roll-server-recovery.test.cjs tests/recovery-operations.test.cjs tests/recovery-db.test.cjs tests/roll-session-recovery.test.cjs",
     "test:privacy": "node --test tests/privacy.test.cjs",
     "test:roll-vault": "node --test tests/roll-vault.test.cjs",
@@ -36,7 +36,7 @@
     "android": "expo run:android",
     "android:build": "expo prebuild -p android",
     "build": "tsc --noEmit && npm run android:build",
-    "ci": "tsc --noEmit && npm run lint:check && npm run test:privacy && npm run test:roll-vault && npm run test:roll-auth && npm run test:wallet-auth-cache && npm run test:assetlinks && npm run test:filmstocks && npm run test:film-processing && npm run test:image-artifact && npm run test:camera-readiness && npm run test:roll-reconciliation && npm run test:roll-registry && npm run fmt:check && npm run android:build",
+    "ci": "tsc --noEmit && npm run lint:check && npm run test:fast",
     "dev": "expo start --clear --dev-client --reset-cache",
     "doctor": "npx -y expo-doctor@latest",
     "fmt": "prettier --write .",
