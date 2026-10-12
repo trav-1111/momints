@@ -7,12 +7,14 @@ import type { RollPurchaseQuote } from './rollApi'
 import {
   createMintUmi,
   deriveOwnerSkrAta,
+  memoItem,
   sendAndConfirm,
   transferSolItem,
   transferSplTokenCheckedItem,
   type MintNFTDeps,
   type MintPhaseCallback,
 } from './mint'
+import { hashRollCapability } from './rollCapability'
 import { getWorkerFees } from './rollApi'
 import { isSkrQuoteUnavailable, quoteSkrFee } from './skrApi'
 import { ROLL_TREASURY_ADDRESS, type PrepaidRollSize } from '../config/roll'
@@ -37,6 +39,7 @@ type RollPaymentParams = {
   onPhase?: MintPhaseCallback
   quote?: RollPurchaseQuote
   onSigned?: (receipt: SignedRollPayment) => Promise<void>
+  rollCapability?: string
 }
 
 export async function payRollFee(
@@ -55,12 +58,19 @@ export async function payRollFee(
   const { umi, walletPk } = createMintUmi(walletAddress, rpc)
   const blockhash = await umi.rpc.getLatestBlockhash()
 
-  const built = transactionBuilder()
+  let built = transactionBuilder()
     .add(transferSolItem(walletPk, publicKey(ROLL_TREASURY_ADDRESS), feeLamports))
+
+  if (params.rollCapability) {
+    const capabilityHash = hashRollCapability(params.rollCapability)
+    built = built.add(memoItem(walletPk, `momints:roll:${capabilityHash}`))
+  }
+
+  const builtTx = built
     .setBlockhash(blockhash)
     .build(umi)
 
-  const web3Tx = toWeb3JsTransaction(built)
+  const web3Tx = toWeb3JsTransaction(builtTx)
   const kitTx = getTransactionDecoder().decode(web3Tx.serialize())
 
   onPhase?.('signing')
@@ -121,7 +131,7 @@ export async function paySkrRollFee(
   const { umi, walletPk } = createMintUmi(walletAddress, rpc)
   const blockhash = await umi.rpc.getLatestBlockhash()
 
-  const built = transactionBuilder()
+  let built = transactionBuilder()
     .add(
       transferSplTokenCheckedItem({
         source: deriveOwnerSkrAta(umi, walletPk),
@@ -132,10 +142,17 @@ export async function paySkrRollFee(
         decimals: SKR_DECIMALS,
       }),
     )
+
+  if (params.rollCapability) {
+    const capabilityHash = hashRollCapability(params.rollCapability)
+    built = built.add(memoItem(walletPk, `momints:roll:${capabilityHash}`))
+  }
+
+  const builtTx = built
     .setBlockhash(blockhash)
     .build(umi)
 
-  const web3Tx = toWeb3JsTransaction(built)
+  const web3Tx = toWeb3JsTransaction(builtTx)
   const kitTx = getTransactionDecoder().decode(web3Tx.serialize())
 
   onPhase?.('signing')

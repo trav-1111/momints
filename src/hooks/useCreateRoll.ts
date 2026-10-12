@@ -120,6 +120,7 @@ export function useCreateRoll() {
                       size: purchase.size,
                       rpc: getClusterRpc(),
                       quote: purchase.quote,
+                      rollCapability: purchase.rollCapability,
                       onPhase: (p) => setPhase(p),
                       onSigned: async (receipt) => {
                         signed = true

@@ -1,5 +1,5 @@
 import type { Umi } from '@metaplex-foundation/umi'
-import { getTransaction, type ParsedTransaction } from '../solana/confirm'
+import { extractTransactionMemos, getTransaction, type ParsedTransaction } from '../solana/confirm'
 import { checkSkrTransfer } from '../skr/verify'
 
 /**
@@ -28,6 +28,8 @@ export interface QuickVerifyRequest {
    * Ignored when `skr` is set — the fee moved in $SKR, not SOL, in that case.
    */
   requiredLamports: number
+  /** Staging identifier (row.id) bound to the mint transaction via SPL Memo */
+  expectedStagingKey?: string
   /**
    * Present only when this row's fee is being paid in $SKR (quick_mints.
    * fee_currency = 'SKR'). `quoteExpiresAt` is `null` when no quote was ever
@@ -119,6 +121,19 @@ export async function verifyQuickMintPayment(
     return reject(
       `Transaction ${req.signature} was paid by ${feePayer ?? 'nobody'}, not by the staging wallet ${req.wallet}`,
     )
+  }
+
+  if (req.expectedStagingKey) {
+    const memos = extractTransactionMemos(tx)
+    const expectedMemo = `momints:quick:${req.expectedStagingKey}`
+    const matchingMemo = memos.find((m) => m === expectedMemo)
+    if (!matchingMemo) {
+      const quickMemo = memos.find((m) => m.startsWith('momints:quick:'))
+      if (quickMemo) {
+        return reject(`Transaction ${req.signature} is bound to a different staged image`)
+      }
+      return reject(`Transaction ${req.signature} is missing quick staging memo binding`)
+    }
   }
 
   // Only meaningful for the SOL branch — see the success return below, where

@@ -557,23 +557,11 @@ export class RollDb {
    * rather than losing the DEAD marking over it — the row still needs to be
    * marked dead and alerted on either way.
    */
-  async markQuickMintDead(id: string, link?: { assetAddress: string; signature: string }): Promise<void> {
-    if (link) {
-      try {
-        await this.db
-          .prepare(`UPDATE quick_mints SET status = 'DEAD', asset_address = ?, signature = ? WHERE id = ?`)
-          .bind(link.assetAddress, link.signature, id)
-          .run()
-        return
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err)
-        if (!message.includes('UNIQUE constraint failed')) throw err
-        console.warn(
-          `[quick] markQuickMintDead(${id}): could not link ${link.assetAddress} (UNIQUE conflict) — marking dead unlinked`,
-        )
-      }
-    }
-    await this.db.prepare("UPDATE quick_mints SET status = 'DEAD' WHERE id = ?").bind(id).run()
+  async markQuickMintDead(id: string, _link?: { assetAddress: string; signature: string }): Promise<void> {
+    await this.db
+      .prepare("UPDATE quick_mints SET status = 'DEAD', asset_address = NULL, signature = NULL WHERE id = ?")
+      .bind(id)
+      .run()
   }
 
   /**

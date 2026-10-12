@@ -151,6 +151,7 @@ export async function finalizeQuickMint(
     treasury: treasuryAddress,
     placeholderUri,
     requiredLamports,
+    expectedStagingKey: row.id,
     // Set by POST /skr/quote (recordQuickSkrQuote) the moment a quote is
     // issued — a row's OWN fee_currency, not the request body, decides which
     // branch verify takes, so a client can never claim a different currency

@@ -205,6 +205,7 @@ export async function createRoll(deps: CreateRollDeps, req: CreateRollRequest) {
       skr,
       quoteCreatedAt,
       quoteExpiresAt,
+      expectedCapabilityHash: authHash,
     })
     if (!verdict.ok)
       throw new HttpError(

@@ -5,6 +5,7 @@
 // getSignatureStatuses over raw JSON-RPC fetch. This is a bounded per-request
 // wait, not continuous background polling.
 import type { Transaction, Umi } from '@metaplex-foundation/umi'
+import bs58 from 'bs58'
 import { withBackoff } from '../lib/retry'
 import { signatureToBase58 } from './client'
 
@@ -57,7 +58,12 @@ export interface ParsedTokenBalance {
 export interface ParsedTransaction {
   slot: number
   blockTime: number | null
-  transaction: { message: { accountKeys: ParsedTransactionAccount[] } }
+  transaction: {
+    message: {
+      accountKeys: ParsedTransactionAccount[]
+      instructions?: any[]
+    }
+  }
   meta: {
     err: unknown
     fee: number
@@ -65,7 +71,73 @@ export interface ParsedTransaction {
     postBalances: number[]
     preTokenBalances?: ParsedTokenBalance[]
     postTokenBalances?: ParsedTokenBalance[]
+    logMessages?: string[] | null
+    innerInstructions?: { instructions: any[] }[] | null
   } | null
+}
+
+/**
+ * Extract all SPL Memo strings from a confirmed transaction.
+ * Inspects parsed instructions, raw base58 instruction data, inner
+ * instructions, and Solana runtime program execution logs.
+ */
+export function extractTransactionMemos(tx: ParsedTransaction): string[] {
+  const memos: string[] = []
+
+  function checkInstruction(ix: any) {
+    if (!ix) return
+    const program = typeof ix.program === 'string' ? ix.program : ''
+    const programId = typeof ix.programId === 'string' ? ix.programId : ''
+    const isMemo =
+      program === 'spl-memo' ||
+      programId === 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr' ||
+      programId === 'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo'
+
+    if (isMemo) {
+      if (typeof ix.parsed === 'string') {
+        memos.push(ix.parsed)
+      } else if (ix.parsed && typeof ix.parsed === 'object' && typeof ix.parsed.info?.memo === 'string') {
+        memos.push(ix.parsed.info.memo)
+      } else if (typeof ix.data === 'string') {
+        try {
+          const decoded = bs58.decode(ix.data)
+          memos.push(new TextDecoder().decode(decoded))
+        } catch {
+          // ignore invalid base58
+        }
+      }
+    }
+  }
+
+  const instructions = (tx.transaction?.message as any)?.instructions
+  if (Array.isArray(instructions)) {
+    for (const ix of instructions) {
+      checkInstruction(ix)
+    }
+  }
+
+  const inner = tx.meta?.innerInstructions
+  if (Array.isArray(inner)) {
+    for (const group of inner) {
+      if (Array.isArray(group?.instructions)) {
+        for (const ix of group.instructions) {
+          checkInstruction(ix)
+        }
+      }
+    }
+  }
+
+  const logs = tx.meta?.logMessages
+  if (Array.isArray(logs)) {
+    for (const log of logs) {
+      const match = /^Program log: Memo \(len \d+\): ("?)(.*?)\1$/.exec(log)
+      if (match && match[2]) {
+        memos.push(match[2])
+      }
+    }
+  }
+
+  return Array.from(new Set(memos))
 }
 
 /** Lamport balance of any account — dashboard wallet reads (ops/dashboard.ts). Zero for an unfunded/nonexistent account, same as the RPC itself. */

@@ -273,3 +273,65 @@ test('real Umi derives a stable domain-separated collection signer and round-tri
   assert.equal(signatureToBase58(decoded.signatures[0]), signatureToBase58(tx.signatures[0]))
   assert.deepEqual(decoded.serializedMessage, tx.serializedMessage)
 })
+
+test('SEC-001: roll fee verification enforces roll capability memo binding', async () => {
+  const victimHash = '1111111111111111111111111111111111111111111111111111111111111111'
+  const attackerHash = '2222222222222222222222222222222222222222222222222222222222222222'
+
+  const makeLoader = (memos) =>
+    loader({
+      'worker/src/solana/confirm.ts': {
+        getTransaction: async () => ({
+          blockTime: Math.floor(Date.now() / 1000),
+          transaction: {
+            message: {
+              accountKeys: [{ pubkey: wallet }, { pubkey: 'treasury' }],
+              instructions: memos.map((m) => ({
+                program: 'spl-memo',
+                programId: 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr',
+                parsed: m,
+              })),
+            },
+          },
+          meta: { err: null, preBalances: [1000, 0], postBalances: [500, 500] },
+        }),
+        extractTransactionMemos: () => memos,
+      },
+    })('worker/src/rolls/verify.ts')
+
+  // Case 1: Legitimate payer with matching capability memo -> OK
+  const legitimate = await makeLoader([`momints:roll:${victimHash}`]).verifyRollFeePayment('unused', {
+    signature: 'receipt',
+    wallet,
+    treasury: 'treasury',
+    size: 12,
+    requiredLamports: 500,
+    expectedCapabilityHash: victimHash,
+  })
+  assert.equal(legitimate.ok, true)
+
+  // Case 2: Attacker attempting to claim victim payment with attacker capability -> REJECTED
+  const hijacked = await makeLoader([`momints:roll:${victimHash}`]).verifyRollFeePayment('unused', {
+    signature: 'receipt',
+    wallet,
+    treasury: 'treasury',
+    size: 12,
+    requiredLamports: 500,
+    expectedCapabilityHash: attackerHash,
+  })
+  assert.equal(hijacked.ok, false)
+  assert.match(hijacked.reason, /different roll capability/)
+
+  // Case 3: Payment without any capability memo -> REJECTED
+  const missingMemo = await makeLoader([]).verifyRollFeePayment('unused', {
+    signature: 'receipt',
+    wallet,
+    treasury: 'treasury',
+    size: 12,
+    requiredLamports: 500,
+    expectedCapabilityHash: victimHash,
+  })
+  assert.equal(missingMemo.ok, false)
+  assert.match(missingMemo.reason, /missing roll capability memo/)
+})
+

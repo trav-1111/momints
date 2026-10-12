@@ -102,6 +102,20 @@ export function transferSolItem(from: UmiPublicKey, to: UmiPublicKey, lamports: 
   }
 }
 
+export const MEMO_PROGRAM_ID = publicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
+
+export function memoItem(walletPk: UmiPublicKey, memo: string) {
+  return {
+    instruction: {
+      programId: MEMO_PROGRAM_ID,
+      keys: [{ pubkey: walletPk, isSigner: true, isWritable: false }],
+      data: new TextEncoder().encode(memo),
+    },
+    signers: [],
+    bytesCreatedOnChain: 0,
+  }
+}
+
 // Well-known, network-wide program ids — never configuration, never secrets.
 const TOKEN_PROGRAM_ID = publicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 const ASSOCIATED_TOKEN_PROGRAM_ID = publicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
@@ -193,6 +207,8 @@ export interface QuickMintTerms {
   treasury: string
   feeLamports: number
   updateAuthority: string
+  /** Staging identifier returned by POST /quick/stage; bound to the on-chain mint via SPL Memo */
+  stagingKey?: string
   /**
    * Present only when this mint's FEE is being paid in $SKR instead of SOL —
    * `feeLamports` above is then unused. Both `atomicAmount` and
@@ -419,10 +435,16 @@ async function buildQuickCoreTransaction(
         decimals: SKR_DECIMALS,
       })
     : transferSolItem(walletPk, publicKey(item.terms.treasury), item.terms.feeLamports)
-  const built = transactionBuilder()
+  let builder = transactionBuilder()
     .add(limitItem)
     .add(priceItem)
     .add(feeItem)
+
+  if (item.terms.stagingKey) {
+    builder = builder.add(memoItem(walletPk, `momints:quick:${item.terms.stagingKey}`))
+  }
+
+  const builtTx = builder
     .add(
       createCoreAsset(umi, {
         asset: assetSigner,
@@ -439,7 +461,7 @@ async function buildQuickCoreTransaction(
     .setBlockhash(blockhash)
     .build(umi)
 
-  const assetSignedUmi = await umiSignTransaction(built, [assetSigner])
+  const assetSignedUmi = await umiSignTransaction(builtTx, [assetSigner])
   const web3Tx = toWeb3JsTransaction(assetSignedUmi)
   const kitTx = getTransactionDecoder().decode(web3Tx.serialize())
   return { kitTx, mintAddress: assetSigner.publicKey.toString() }

@@ -154,6 +154,7 @@ async function stageAndRecord(params: {
     treasury: staged.treasury,
     feeLamports: staged.feeLamports,
     updateAuthority: staged.updateAuthority,
+    stagingKey: staged.stagingKey,
   }
   if (
     staged.mime !== params.artifact.mime ||

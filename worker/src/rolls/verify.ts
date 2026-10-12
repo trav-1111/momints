@@ -1,4 +1,4 @@
-import { getTransaction, type ParsedTransaction } from '../solana/confirm'
+import { extractTransactionMemos, getTransaction, type ParsedTransaction } from '../solana/confirm'
 import { checkSkrTransfer } from '../skr/verify'
 import type { RollSize } from './config'
 
@@ -30,6 +30,8 @@ export interface RollVerifyRequest {
   requiredLamports: number
   quoteCreatedAt?: string
   quoteExpiresAt?: string
+  /** Expected SHA-256 hash of the bearer rollCapability bound in the on-chain payment SPL Memo */
+  expectedCapabilityHash?: string
   /** Present only when this roll's fee is being paid in $SKR — see quick/verify.ts's identical field for the shape rationale. */
   skr?: {
     treasurySkrAta: string
@@ -90,6 +92,19 @@ export async function verifyRollFeePayment(rpcUrl: string, req: RollVerifyReques
   const feePayer = tx.transaction.message.accountKeys[0]?.pubkey
   if (feePayer !== req.wallet) {
     return reject(`Transaction ${req.signature} was paid by ${feePayer ?? 'nobody'}, not by ${req.wallet}`)
+  }
+
+  if (req.expectedCapabilityHash) {
+    const memos = extractTransactionMemos(tx)
+    const expectedMemo = `momints:roll:${req.expectedCapabilityHash}`
+    const matchingMemo = memos.find((m) => m === expectedMemo)
+    if (!matchingMemo) {
+      const rollMemo = memos.find((m) => m.startsWith('momints:roll:'))
+      if (rollMemo) {
+        return reject(`Transaction ${req.signature} is bound to a different roll capability`)
+      }
+      return reject(`Transaction ${req.signature} is missing roll capability memo binding`)
+    }
   }
 
   const expiresAt = req.quoteExpiresAt ?? req.skr?.quoteExpiresAt

@@ -223,3 +223,78 @@ test('a quick receipt alone cannot authorize paid retention, an upload or treasu
   )
   assert.deepEqual(states, [['id', 'UNKNOWN', 'RPC_PENDING']])
 })
+
+test('SEC-002: quick payment verification enforces staging key memo binding', async () => {
+  const victimStage = 'victim-staging-key-123'
+  const attackerStage = 'attacker-staging-key-456'
+  const wallet = '11111111111111111111111111111111'
+  const treasury = '22222222222222222222222222222222'
+  const asset = '33333333333333333333333333333333'
+
+  const makeVerifier = (memos) =>
+    sourceLoader({
+      'worker/src/solana/confirm.ts': {
+        getTransaction: async () => ({
+          blockTime: Math.floor(Date.now() / 1000),
+          transaction: {
+            message: {
+              accountKeys: [{ pubkey: wallet }, { pubkey: treasury }, { pubkey: asset }],
+            },
+          },
+          meta: { err: null, preBalances: [1000, 0, 0], postBalances: [500, 500, 1] },
+        }),
+        extractTransactionMemos: () => memos,
+      },
+      '@metaplex-foundation/mpl-core': {
+        safeFetchAssetV1: async () => ({
+          uri: 'https://arweave.net/placeholder',
+          owner: { toString: () => wallet },
+          updateAuthority: { type: 'Address', address: { toString: () => 'worker-authority' } },
+        }),
+      },
+      '@metaplex-foundation/umi': {
+        publicKey: (x) => x,
+      },
+    })('worker/src/quick/verify.ts').verifyQuickMintPayment
+
+  const umi = { identity: { publicKey: { toString: () => 'worker-authority' } } }
+
+  // Case 1: Matching staging key memo -> OK
+  const legitimate = await makeVerifier([`momints:quick:${victimStage}`])(umi, 'unused', {
+    signature: 'a'.repeat(88),
+    assetAddress: asset,
+    wallet,
+    treasury,
+    placeholderUri: 'https://arweave.net/placeholder',
+    requiredLamports: 500,
+    expectedStagingKey: victimStage,
+  })
+  assert.equal(legitimate.ok, true)
+
+  // Case 2: Attacker attempting image substitution with attacker staging key -> REJECTED
+  const substituted = await makeVerifier([`momints:quick:${victimStage}`])(umi, 'unused', {
+    signature: 'a'.repeat(88),
+    assetAddress: asset,
+    wallet,
+    treasury,
+    placeholderUri: 'https://arweave.net/placeholder',
+    requiredLamports: 500,
+    expectedStagingKey: attackerStage,
+  })
+  assert.equal(substituted.ok, false)
+  assert.match(substituted.reason, /different staged image/)
+
+  // Case 3: Missing memo binding -> REJECTED
+  const missingMemo = await makeVerifier([])(umi, 'unused', {
+    signature: 'a'.repeat(88),
+    assetAddress: asset,
+    wallet,
+    treasury,
+    placeholderUri: 'https://arweave.net/placeholder',
+    requiredLamports: 500,
+    expectedStagingKey: victimStage,
+  })
+  assert.equal(missingMemo.ok, false)
+  assert.match(missingMemo.reason, /missing quick staging memo binding/)
+})
+

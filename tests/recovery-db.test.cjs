@@ -187,3 +187,38 @@ test('actual SQL preserves review state during transient verification and record
     sqlite.close()
   }
 })
+
+test('SEC-002: markQuickMintDead releases unique receipt fields so rejected attempts cannot poison receipts', async () => {
+  const { sqlite, db } = database()
+  try {
+    const { RollDb } = sourceLoader()('worker/src/db/index.ts')
+    const rolls = new RollDb(db)
+    // Stage two distinct quick mint rows
+    sqlite.exec(
+      "INSERT INTO quick_mints (id,wallet,metadata_json,staging_key,mime,status) VALUES ('attacker-stage','attacker-wallet','{}','quick-staging/att','image/jpeg','STAGED')",
+    )
+    sqlite.exec(
+      "INSERT INTO quick_mints (id,wallet,metadata_json,staging_key,mime,status) VALUES ('victim-stage','victim-wallet','{}','quick-staging/vic','image/jpeg','STAGED')",
+    )
+
+    // Attacker submits victim receipt -> records attempt on attacker-stage
+    await rolls.recordFinalizeAttempt('attacker-stage', 'victim-asset', 'victim-signature')
+
+    // Attacker attempt is rejected -> markQuickMintDead is called
+    await rolls.markQuickMintDead('attacker-stage')
+
+    const attackerRow = await rolls.getQuickMint('attacker-stage')
+    assert.equal(attackerRow.status, 'DEAD')
+    assert.equal(attackerRow.signature, null)
+    assert.equal(attackerRow.asset_address, null)
+
+    // Legitimate victim attempt can now claim the signature without 409 UNIQUE constraint conflict
+    await rolls.recordFinalizeAttempt('victim-stage', 'victim-asset', 'victim-signature')
+    const victimRow = await rolls.getQuickMint('victim-stage')
+    assert.equal(victimRow.signature, 'victim-signature')
+    assert.equal(victimRow.asset_address, 'victim-asset')
+  } finally {
+    sqlite.close()
+  }
+})
+
