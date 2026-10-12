@@ -47,14 +47,11 @@ adb shell am start -n com.momints.v2qa/.MainActivity
 ## 📸 Visual Showcase
 
 <p align="center">
-  <img src="docs/screenshots/01_viewfinder.png" width="22%" alt="Seeker Viewfinder" />
-  <img src="docs/screenshots/02_pro_controls.png" width="22%" alt="Pro Manual Controls" />
-  <img src="docs/screenshots/03_film_shelf.png" width="22%" alt="Film Shelf Stocks" />
-  <img src="docs/screenshots/04_darkroom_review.png" width="22%" alt="Darkroom & Mint Review" />
+  <img src="docs/screenshots/showcase-placeholder.svg" width="85%" alt="Seeker Hardware Showcase Placeholder" />
 </p>
 
 <p align="center">
-  <em>(1) Live Seeker Viewfinder with decoupled AF/AE rings & .skr badge · (2) Pro Manual Strip & LomoKino cadence selector · (3) Curated Film Stock Shelf · (4) GPU darkroom review & Arweave permanent proof</em>
+  <em>High-resolution hardware viewfinder captures, tactile Pro manual strip reels, and darkroom samples will be loaded here.</em>
 </p>
 
 ---
