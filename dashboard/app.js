@@ -91,7 +91,13 @@ function el(tag, attrs = {}, children = []) {
   for (const [k, v] of Object.entries(attrs)) {
     if (k === 'class') node.className = v
     else if (k === 'text') node.textContent = v
-    else if (k === 'html') node.innerHTML = v
+    else if (k === 'html') {
+      const parsed = new DOMParser().parseFromString(v, 'image/svg+xml')
+      const svg = parsed.documentElement
+      if (svg && !parsed.querySelector('parsererror')) {
+        node.appendChild(svg)
+      }
+    }
     else node.setAttribute(k, v)
   }
   for (const child of [].concat(children)) node.appendChild(child)
