@@ -238,7 +238,7 @@ node scripts/build-submission-apk.cjs \
 ## 🔮 Roadmap: V3 & Protocol Architecture
 
 **V3 (Coming Soon):**
-* 10 curated 3D LUT analog stocks, native landscape mode, optical DoF / aperture emulation, and LomoKino motion camera features.
+* 10 curated 3D LUT analog stocks, native landscape mode, optical DoF / aperture emulation, Momints gallery, and motion-frame playback camera features.
 
 **Coming Next:**
 * **Hardware Attestation (TEE / C2PA):** Enclave-signed camera sensor hashes proving physical photons against AI deepfakes.
