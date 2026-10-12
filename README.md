@@ -49,9 +49,9 @@ adb shell am start -n com.momints.v2qa/.MainActivity
 <table align="center">
   <tr>
     <td align="center" width="33%">
-      <img src="docs/screenshots/01-seeker-viewfinder-quick.webp" alt="Camera Viewfinder" width="100%" /><br />
+      <img src="docs/screenshots/01-seeker-viewfinder-trav.webp" alt="Camera Viewfinder" width="100%" /><br />
       <strong>Camera HUD & Viewfinder</strong><br />
-      <sub>Live 108MP stream, film stock selector, reverse .skr identity</sub>
+      <sub>Live 108MP stream, Bali 400 stock, verified .skr identity</sub>
     </td>
     <td align="center" width="33%">
       <img src="docs/screenshots/02-seeker-pro-manual-dials.webp" alt="Pro Manual Controls" width="100%" /><br />
@@ -66,26 +66,26 @@ adb shell am start -n com.momints.v2qa/.MainActivity
   </tr>
   <tr>
     <td align="center" width="33%">
-      <img src="docs/screenshots/04-seeker-capture-exposure.webp" alt="Exposure Capture" width="100%" /><br />
-      <strong>Point & Shoot Exposure</strong><br />
-      <sub>Instant on-device GPU develop & EXIF metadata burn</sub>
+      <img src="docs/screenshots/04-seeker-mint-details-skr.webp" alt="Quick Mint & $SKR Option" width="100%" /><br />
+      <strong>Quick Mint & $SKR Option</strong><br />
+      <sub>Custom metadata, geotag burn & native $SKR token fees</sub>
     </td>
     <td align="center" width="33%">
       <img src="docs/screenshots/06-seeker-roll-review.webp" alt="Film Roll & Metadata Review" width="100%" /><br />
-      <strong>Pre-Mint Metadata Review</strong><br />
-      <sub>Roll frames, custom title, artist handle & geotag details</sub>
+      <strong>Film Roll Contact Sheet</strong><br />
+      <sub>Frame numbering, AES-encrypted negative reel & title review</sub>
     </td>
     <td align="center" width="33%">
-      <img src="docs/screenshots/08-seeker-seed-vault-signing.webp" alt="Hardware Enclave Signing" width="100%" /><br />
-      <strong>Biometric Enclave Signing</strong><br />
-      <sub>Qualcomm Seed Vault biometric fingerprint authorization</sub>
+      <img src="docs/screenshots/06-seeker-batch-mint-queue.webp" alt="Live Batch Mint Queue" width="100%" /><br />
+      <strong>Live Batch Mint Queue</strong><br />
+      <sub>Concurrent Arweave upload, checkpointing & D1 state tracking</sub>
     </td>
   </tr>
   <tr>
     <td align="center" width="33%">
-      <img src="docs/screenshots/07-seeker-payment-cleared.webp" alt="Payment Cleared" width="100%" /><br />
-      <strong>On-Chain Payment Cleared</strong><br />
-      <sub>Mainnet fee verification & state checkpointing</sub>
+      <img src="docs/screenshots/08-seeker-seed-vault-signing.webp" alt="Hardware Enclave Signing" width="100%" /><br />
+      <strong>Biometric Enclave Signing</strong><br />
+      <sub>Qualcomm Seed Vault biometric fingerprint authorization</sub>
     </td>
     <td align="center" width="33%">
       <img src="docs/screenshots/09-seeker-on-chain-minted.webp" alt="On-Chain Minted" width="100%" /><br />
