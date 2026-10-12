@@ -238,7 +238,7 @@ node scripts/build-submission-apk.cjs \
 ## 🔮 Roadmap: V3 & Protocol Architecture
 
 **V3 (Coming Soon):**
-* 10 curated 3D LUT analog stocks, native landscape capture, and 4-frame motorized burst shooting.
+* 10 curated 3D LUT analog stocks, native landscape capture, and LomoKino motion camera features.
 
 **Coming Next:**
 * **Hardware Attestation (TEE / C2PA):** Enclave-signed camera sensor hashes proving physical photons against AI deepfakes.
