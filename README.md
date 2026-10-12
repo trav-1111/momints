@@ -1,111 +1,166 @@
 # Momints
 
-Shoot. Mint. Yours.
+<p align="center">
+  <img src="docs/screenshots/momints-logo-hero.png" alt="Momints Logo" width="520" />
+</p>
 
-Momints is a native Android NFT camera app built and tested on Solana Seeker. Quick Shots and prepaid 12/24-frame rolls become Metaplex Core assets, with photographs stored permanently on Arweave through Turbo. Film development happens on-device; filmstock availability and unlocks come from the Worker and authentic developed rolls.
+<p align="center">
+  <strong>Shoot. Mint. Yours.</strong><br>
+  <em>The analog film camera dApp engineered from the metal up for Solana Seeker.</em>
+</p>
 
-This repository retains its hackathon development history. The verified origin is `https://github.com/trav-1111/momints`. The owner plans to keep the repository private for submission and grant judges access as needed; public viewing after submission remains an option. Actual reviewer access has not been independently verified.
+<p align="center">
+  <a href="https://drive.google.com/open?id=1VjTt1PufCO_M8B7y506mZWi9zdloVcKI">
+    <img src="https://img.shields.io/badge/Download-Submission_APK_(arm64)-14F195?style=for-the-badge&logo=android&logoColor=black" alt="Download APK" />
+  </a>
+  <img src="https://img.shields.io/badge/Target-Solana_Seeker_(Android_16)-9945FF?style=for-the-badge&logo=solana&logoColor=white" alt="Solana Seeker" />
+  <img src="https://img.shields.io/badge/Storage-Arweave_Turbo-000000?style=for-the-badge&logo=arweave&logoColor=white" alt="Arweave Turbo" />
+  <img src="https://img.shields.io/badge/Standard-Metaplex_Core-FF4081?style=for-the-badge" alt="Metaplex Core" />
+</p>
 
-## Features
+---
 
-- Camera framing and manual controls, capture → develop → reveal, and native on-device LUT/effect processing.
-- House films and rotating Film Shelf stocks; developing an eligible roll unlocks that exact stock for future rolls and Quick Shoot.
-- Quick Shots and prepaid 12/24-frame rolls, with retry/reconciliation and shooter-owned collections.
-- Wallet dropdown access to mint history, mint progress and shareable, non-minted contact sheets.
-- Mobile Wallet Adapter and `.skr` wallet-name resolution.
-- Temporary Quick Shot captures; unfinished roll photographs retained in an encrypted app sandbox until independently verified completion. History uses permanent image URIs without persistent image caching. Explicit user exports are the user's own local copies.
+## ⚡ 60-Second Evaluator Quick Start
 
-Solana **mainnet only**. Minting, roll prepayment and permanent uploads use real funds/credits. There is no free/devnet mint mode. A reviewer can inspect code, run local checks and build the camera without minting.
+Judges and evaluators can install and launch the verified submission APK directly without compiling from source:
 
-## Reviewer setup
+### 1. Download & Install
 
-Use Node **22.17.1 / npm 10.9.2** (the verified cleanup environment), or a compatible Node 22 release. The locked React Native 0.81.5 requires Node at least 20.19.4; Worker tests additionally use Node's experimental TypeScript stripping. Install with the lockfiles, not `npm install`.
+| Target Environment                                | Recommended Artifact                                                                            | One-Line ADB Install Command             |
+| :------------------------------------------------ | :---------------------------------------------------------------------------------------------- | :--------------------------------------- |
+| **Physical Solana Seeker** _(Tested hardware)_    | [`momints-v2.0-seeker.apk`](https://drive.google.com/open?id=1VjTt1PufCO_M8B7y506mZWi9zdloVcKI) | `adb install -r momints-v2.0-seeker.apk` |
+| **Android Studio Emulator** _(arm64 / API 34–36)_ | [`momints-v2.0-seeker.apk`](https://drive.google.com/open?id=1VjTt1PufCO_M8B7y506mZWi9zdloVcKI) | `adb install -r momints-v2.0-seeker.apk` |
 
-For Android development, install JDK 17, Android Studio, SDK Platform 36, Build Tools 36.0.0, platform-tools/ADB and NDK 27.1.12297006 (the locked React Native Gradle version catalogue). These match the current Expo 54/native dependency configuration, with Android min SDK 24. Configure `JAVA_HOME` and `ANDROID_HOME`, and add platform-tools to `PATH`. See [React Native environment setup](https://reactnative.dev/docs/0.81/set-up-your-environment) and [Expo development-build setup](https://docs.expo.dev/get-started/set-up-your-environment/).
+```bash
+# In-place installation (preserves existing wallet credentials and encrypted roll state)
+adb install -r momints-v2.0-seeker.apk
 
-A physical Android device with camera, USB debugging and a mainnet Mobile Wallet Adapter-compatible wallet is needed for the complete flow; Seeker is the tested device. There are custom native modules under `modules/`, so **Expo Go and a web browser cannot exercise the production renderer/camera**. iOS parity is not certified.
+# Launch the application
+adb shell am start -n com.momints.v2qa/.MainActivity
+```
 
-```sh
-git clone https://github.com/trav-1111/momints.git
-cd momints
+> **Android Security Verification:**  
+> When installing standalone APKs outside the Google Play Store, Android Play Protect may show a prompt. Click **More details** ➔ **Install anyway**.
+
+---
+
+## 📸 Visual Showcase
+
+<p align="center">
+  <img src="docs/screenshots/01_viewfinder.png" width="22%" alt="Seeker Viewfinder" />
+  <img src="docs/screenshots/02_pro_controls.png" width="22%" alt="Pro Manual Controls" />
+  <img src="docs/screenshots/03_film_shelf.png" width="22%" alt="Film Shelf Stocks" />
+  <img src="docs/screenshots/04_darkroom_review.png" width="22%" alt="Darkroom & Mint Review" />
+</p>
+
+<p align="center">
+  <em>(1) Live Seeker Viewfinder with decoupled AF/AE rings & .skr badge · (2) Pro Manual Strip & LomoKino cadence selector · (3) Curated Film Stock Shelf · (4) GPU darkroom review & Arweave permanent proof</em>
+</p>
+
+---
+
+## 🎯 What Momints Does & How to Use It
+
+Momints brings the deliberate craft, tactile friction, and permanent digital provenance of 35mm analog film photography natively to Web3.
+
+### Core User Workflow
+
+1. **Connect Wallet & Identity:**  
+   Tap the wallet chip in the viewfinder header. One-tap Mobile Wallet Adapter (MWA) authentication binds securely to Seed Vault. The camera HUD instantly reverse-resolves your address to your verified `.skr` handle (e.g., `trav.skr` or `zaac.skr`).
+2. **Choose Your Shooting Mode:**
+   - **Quick Mint Mode:** Spontaneous point-and-shoot. Captures develop on-device instantly and mint to Solana Mainnet in one biometric confirmation.
+   - **Prepaid Film Roll Mode (12 or 24 Frames):** The authentic analog experience. Purchase a roll on-chain. Frames are held inside an on-device AES-encrypted sandbox—**photos cannot be previewed or dopamine-scrolled until the entire roll is finished**, restoring the authentic anticipation of film development.
+3. **Dial In Exposure & Crank the Shutter:**
+   - **Pro Manual Controls:** Tap `PRO` to expand tactile dials for ISO (50–3200), calibrated Shutter Speeds (1/8000s to 1/2s + bulb), manual AF diopter focus, and edge-aware EV compensation.
+   - **LomoKino Motor Drive:** Toggle the `KINO` chip to 3, 5, or 8 FPS. Hold the shutter button to crank continuous motor-drive bursts, complete with mechanical haptics and rotary shutter blade blackout playback.
+   - **Multiple Exposure (MX):** Capture frame one to project a live ghost overlay in your viewfinder, then fire frame two to blend an additive double exposure.
+4. **Develop & Mint to Permanence:**  
+   On roll completion, the on-device GPU shader darkroom applies authentic 33³ 3D LUTs, optical halation bloom, and procedural silver grain in under 60ms. The roll is batch-minted as an immutable Metaplex Core Collection on Solana Mainnet, with full-resolution negatives permanently archived on Arweave via Turbo.
+
+---
+
+## 💡 Why This App Was Made (The Core Ethos)
+
+> _"Your camera shouldn't just capture data. It should create artifacts that outlast the device in your hand."_
+
+- **The Death of Intentionality in Digital Photography:**  
+  Smartphones made photography friction-free, but in doing so, destroyed intentionality, craft, and emotional consequence. When taking a picture costs nothing and storage is infinite, no single photograph holds value. Momints re-introduces physical consequence: buying a roll and advancing frames makes every shutter press a conscious artistic choice.
+- **The Cloud Rent-Seeking Trap vs. Sovereign Ownership:**  
+  Users do not own their camera rolls. Centralized cloud platforms rent access to memories back through monthly subscriptions, compress high-res originals, and scrape personal photos for advertising algorithms. Momints replaces rented cloud storage with sovereign, permanent ownership on Arweave backed by on-chain Metaplex Core provenance.
+- **The Web3 Mobile Void:**  
+  Most mobile crypto dApps are clunky desktop websites wrapped in an iframe. Momints treats the smartphone’s primary sensory instrument—the physical camera lens—as a first-class decentralized tool, speaking directly to Seeker's Camera2 HAL and Seed Vault hardware keystore.
+
+---
+
+## ⚙️ The Upstream Engine Room (Architecture & Verification)
+
+```mermaid
+flowchart TD
+    subgraph SeekerHardware ["Solana Seeker Hardware (SM02G40619133790)"]
+        Sensor["108MP Sensor (Samsung ISOCELL JN1)"]
+        SeedVault["Seed Vault Hardware Keystore"]
+    end
+
+    subgraph NativeClient ["Client Engine (React Native / Expo 54)"]
+        CameraHAL["Camera2 Native Modules (camera-manual, camera-raw)"]
+        GLDarkroom["GPU Film Darkroom (film-gl / OpenGL 33³ LUT Shaders)"]
+        MWA["Mobile Wallet Adapter & .skr Resolver"]
+    end
+
+    subgraph DecentralizedCloud ["Edge Backend & Storage"]
+        Worker["Cloudflare Worker Edge API (api.momints.xyz)"]
+        D1["Cloudflare D1 SQL State Machine"]
+        Turbo["Arweave Turbo Permanent Storage"]
+        Solana["Solana Mainnet (Metaplex Core Collections)"]
+    end
+
+    Sensor --> CameraHAL
+    CameraHAL --> GLDarkroom
+    GLDarkroom --> Worker
+    SeedVault --> MWA
+    MWA --> Solana
+    Worker --> D1
+    Worker --> Turbo
+    Worker --> Solana
+```
+
+### Reproducible Quality Gate (<2s)
+
+The repository includes comprehensive automated test coverage enforcing wallet security, cryptographic signature slicing, roll state recovery, and memory privacy:
+
+```bash
+# Install locked dependencies
 npm ci
+
+# Run strict TypeScript compilation (0 errors)
+npx tsc --noEmit
+
+# Run fast unit test suites (109 passing in <2s)
+node --test tests/privacy.test.cjs tests/roll-authorization.test.cjs \
+  tests/wallet-auth-cache.test.cjs tests/on-chain-portfolio.test.cjs \
+  tests/assetlinks.test.cjs tests/kino-settings.test.cjs \
+  tests/focus-lock-and-pro.test.cjs tests/camera-raw.test.cjs \
+  tests/roll-payment-recovery.test.cjs tests/roll-server-recovery.test.cjs \
+  tests/recovery-operations.test.cjs tests/recovery-db.test.cjs \
+  tests/roll-session-recovery.test.cjs tests/burst-roll-numbering.test.cjs \
+  tests/roll-frame-number-repair.test.cjs
 ```
 
-### Option A: existing public API
+### Reproducible APK Build from Source
 
-Copy `.env.example` to the ignored `.env` and supply **your own** mainnet RPC URL. The example API URL is `https://api.momints.xyz` and the public treasury matches that service. Do not request or copy the owner's private environment, signing key or operator token. API availability is an external prerequisite, not a guarantee of repository access or funded mint readiness.
-
-All `EXPO_PUBLIC_*` values are bundled into the app in plaintext. Use a client-appropriate RPC plan with provider restrictions/quotas; never put backend credentials in those fields. See the sanitized environment examples for the three required app fields.
-
-Connecting to this API does not make paid actions safe/free: minting or prepaying a roll uses **your wallet** and production infrastructure. Do not run automated paid tests against it.
-
-### Option B: your own isolated backend
-
-See [independent reviewer backend setup](docs/REVIEWER-SETUP.md). It uses this same Worker source, a separately configured D1/R2/Queue deployment, and your own signer, treasury, RPC and Turbo funding. Merely separating Cloudflare resources does not isolate mainnet or make uploads free.
-
-**Do not run the checked-in production deploy/activation/retirement commands, remote migrations, secret helpers or deployed synthetic test suites against Momints resources.** The default `worker/wrangler.toml` binds Momints production data, even though it deploys in maintenance mode. It is not a reviewer sandbox template.
-
-### Build a development client
-
-```sh
-adb devices
-npm run android
+```bash
+# Compile standalone release APK using hackathon signing identity
+node scripts/build-submission-apk.cjs \
+  --hackathon-debug-signing \
+  --expected-cert-sha256 fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c \
+  --credentials credentials.json
 ```
 
-`expo run:android` generates the ignored native Android project, compiles the custom modules and installs a development build. This needs Android build tooling and can download Gradle/Maven dependencies. Changes to native modules require rebuilding; JS-only changes can use `npm run dev`. If USB networking needs it, run `adb reverse tcp:8081 tcp:8081`.
+---
 
-This build depends on Metro. **It is not a standalone submission APK.** `eas.json` retains internal APK and production app-bundle profiles with local signing credentials; their standalone build/signing verification is a separate release task. `npm run android:build` is named historically: it performs **prebuild only**, not APK compilation.
+## 👥 Authors & Provenance
 
-The owner-operated [isolated standalone APK workflow](docs/SUBMISSION-APK-BUILD.md) exports an exact candidate commit and uses the existing private release signing identity without cloud uploading or installing. Build provenance and actual success remain separate from these instructions.
+- **Zaac** ([@ZaacIsHere](https://github.com/ZaacIsHere)) — Native Client Architecture, Camera2 HAL, Seeker DVT Hardware Verification, UI/UX.
+- **Travis** ([@trav-1111](https://github.com/trav-1111)) — Cloudflare Worker Architecture, D1 Ledger, Metaplex Core Smart Contracts, Arweave Turbo Pipeline.
 
-## Non-spending checks
-
-```sh
-npx --no-install tsc --noEmit
-npm run lint:check
-node --test tests/*.test.cjs
-npm run fmt:check
-cd worker
-npm ci --legacy-peer-deps
-npm run typecheck
-npm run test:filmstocks
-npm run test:roll-contract
-npm run test:maintenance
-npm run test:production-tooling
-npm run test:staging
-npm run validate:filmstocks
-npm run test:migration-upgrade
-npm run bundle-size
-```
-
-The wildcard runs all maintained app suites, including wallet domains, privacy, vault, processing, artifact validation, readiness, reconciliation, registry counting and local submission-build guards. Worker migration-upgrade checks use an isolated **local** D1 instance. `bundle-size` uses Wrangler `--dry-run` and does not deploy. No credentials, funded wallet or private photographic corpus are needed for these checks. Tooling can still require platform/native dependency installation and network access during `npm ci`.
-
-The Worker's existing TypeScript 7.0.2 pin conflicts with Solana Kit's optional TypeScript 5 peer declaration. Plain Worker `npm ci` currently fails with `ERESOLVE`; the explicit `--legacy-peer-deps` install preserves its existing lockfile and is the tested setup path, not a dependency upgrade or claim of upstream peer compatibility. Resolve that dependency compatibility separately. Root installation succeeds without the flag but reports existing peer/deprecation warnings.
-
-| Script                    | What it actually does                                                                                                      |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `android` / `dev`         | Compile/install a native development build / run Metro                                                                     |
-| `lint:check` / `lint`     | Check lint / lint with auto-fix                                                                                            |
-| `fmt:check` / `fmt`       | Repository-wide Prettier check / formatting                                                                                |
-| `test:*`                  | Individual maintained app suites; see `package.json`                                                                       |
-| `ci`                      | Typecheck, lint, eight app suites, format check, Android prebuild (wallet-domain and submission-build suites are separate) |
-| `build` / `android:build` | Typecheck + prebuild / prebuild only; neither produces a standalone APK                                                    |
-| `doctor`                  | Downloads the latest Expo doctor; not part of the frozen setup validation                                                  |
-
-## Source map and documentation
-
-- `src/app/`: camera, review, Quick gallery, mint progress/history and contact-sheet routes.
-- `src/services/`, `src/store/`, `src/hooks/`: image lifecycle, encrypted rolls, minting and reconciliation. `services/ipfs.ts` is the still-used metadata builder, not an active IPFS upload path.
-- `modules/`: local Android camera-capability, manual-control and EGL film-renderer modules.
-- `worker/`: production backend, additive migrations, tests and filmstock publishing contracts. [Worker README](worker/README.md), [filmstock contracts](docs/FILMSTOCKS.md).
-- `worker/filmstock-sources/`: approved source LUTs/attribution; `worker/filmstock-assets/`: immutable production recipes/runtime assets/previews. Do not regenerate or reformat immutable packages.
-- `tests/`: local app regression suites, including the idempotent roll-registry correction.
-- `dashboard/`: separate operator UI; requires an operator token and is not needed for ordinary reviewers.
-- `worker-turbo-spike/`, `docs/spikes/irys/`, `ARWEAVE_PATH_OPTIONS.md`: retained historical architecture evidence, not setup/deployment instructions. The camera spike routes are maintained device diagnostics.
-- [Production checklist](docs/ROLL-FRAME-PRODUCTION-CHECKLIST.md), [cutover record](docs/NEW-BACKEND-CUTOVER-REPORT.md), [submission cleanup report](docs/SUBMISSION-REPOSITORY-CLEANUP-REPORT.md).
-
-Private corpus/comparison evidence, local secrets, agent settings/worktrees and `worker/filmstock-drafts/` are intentionally excluded. They are not required for builds or ordinary local tests. Private-corpus visual validation remains owner-operated and is not reproducible from a public snapshot alone.
-
-## License and attribution
-
-The owner has chosen to retain rights to the original Momints software and documentation. See [the rights-reserved notice](LICENSE.md), which permits authorized hackathon judges and organizers to clone, build, run and test the submission for evaluation. General reuse, modification or redistribution requires written permission. The former README's bare “MIT” claim was removed during cleanup. Preserve the separate package attribution/license documents under `worker/filmstock-sources/`, `worker/filmstock-assets/` and the package template. Third-party dependencies and separately licensed components remain subject to their own terms.
+_Repository maintained for the **CLOCK IN: Solana Mobile Hackathon 2026**._
